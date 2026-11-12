@@ -1,0 +1,899 @@
+diff --git a/frontend/src/components/circuitiny/physicalModels.ts b/frontend/src/components/circuitiny/physicalModels.ts
+--- a/frontend/src/components/circuitiny/physicalModels.ts
++++ b/frontend/src/components/circuitiny/physicalModels.ts
+@@ -1,5 +1,6 @@
+ /** Reviewed presentation models. Product choice is a proposed design, not photo evidence. */
+ import cad from './physicalBoardData.json';
++import {rotate,type V} from './assemblyMath';
+ export type Pad={element:string;pad:string;at:[number,number];drill:number};
+ export type BoardPart={name:string;package:string;kind:string;at:[number,number];rotation:number;pads:Pad[]};
+ export type BoardLayout={width:number;depth:number;pads:Pad[];parts:BoardPart[];holes:Array<{at:[number,number];drill:number}>;source:string;source_sha256:string;license:string;author:string};
+@@ -25,9 +26,10 @@
+   ports:{GPIO40:[0,8,-24.25],'M1.left':terminalPort(hat,'J1','5'),'M1.right':terminalPort(hat,'J1','4'),'M2.left':terminalPort(hat,'J1','2'),'M2.right':terminalPort(hat,'J1','1'),'PWR.positive':terminalPort(hat,'MPOWER','2'),'PWR.negative':terminalPort(hat,'MPOWER','1')},
+   labels:{GPIO40:'40핀 헤더 전체 결합','PWR.positive':'모터 전원 +','PWR.negative':'모터 전원 −'},source:'https://github.com/adafruit/Adafruit-DC-Stepper-Motor-HAT-PCB',basis:'공개 Rev A PCB의 패드·부품 배치 기준. 부품 높이와 기판 모서리는 간략 모델입니다.'},
+  'adafruit-motor-shield-v2':{id:'adafruit-motor-shield-v2',name:'Adafruit Motor Shield V2.3',kind:'shield',width:shield.width,depth:shield.depth,height:13,
+-  ports:{SDA:boardPort(shield,'JP3','2',7),SCL:boardPort(shield,'JP3','1',7),'5V':boardPort(shield,'JP2','4',7),GND:boardPort(shield,'JP2','2',7),
++  // The manufacturer's AD4/SDA and AD5/SCL nets also connect these stacking pads.
++  ports:{SDA:boardPort(shield,'U$1','A4',7),SCL:boardPort(shield,'U$1','A5',7),'5V':boardPort(shield,'U$1','5V',7),GND:boardPort(shield,'U$1','GND@2',7),
+    'M1.left':terminalPort(shield,'J1','5'),'M1.right':terminalPort(shield,'J1','4'),'M2.left':terminalPort(shield,'J1','2'),'M2.right':terminalPort(shield,'J1','1'),'PWR.positive':terminalPort(shield,'MPOWER','2'),'PWR.negative':terminalPort(shield,'MPOWER','1')},
+-  labels:{'PWR.positive':'모터 전원 +','PWR.negative':'모터 전원 −'},source:'https://github.com/adafruit/Adafruit-Motor-Shield-V2-PCB',basis:'공개 V2.3 PCB의 패드·부품 배치 기준. 실물은 Uno 위에 장착하며 여기서는 분리해 표시합니다.'},
++  labels:{'PWR.positive':'모터 전원 +','PWR.negative':'모터 전원 −'},source:'https://github.com/adafruit/Adafruit-Motor-Shield-V2-PCB',basis:'공개 V2.3 PCB의 패드·부품 배치 기준. 실물은 Uno 위에 장착하며 조립 배치에서도 적층합니다.'},
+  'adafruit-micro-dc-2941':{id:'adafruit-micro-dc-2941',name:'Adafruit DC 모터 #2941',kind:'motor',width:32.3,depth:12.3,height:29.9,
+   ports:{black:[-21,3,-1.27],red:[-21,3,1.27]},source:'https://www.adafruit.com/product/2941',basis:'제조사 외곽 치수·제품 형상 기준. 서보 케이스의 2선 DC 모터이며 3선 서보가 아닙니다. 케이블은 개략 배치입니다.'},
+  'dc-supply-generic':{id:'dc-supply-generic',name:'모터 DC 전원 · 일반형',kind:'dc-power',width:40,depth:28,height:22,
+@@ -57,6 +59,7 @@
+  const model=physicalModelFor(part);
+  if(!model||!geometry.pins.length||geometry.pins.some(p=>!model.ports[p.name]))return undefined;
+  const angle=geometry.rotation*Math.PI/180,c=Math.cos(angle),s=Math.sin(angle);
+- const pins=geometry.pins.map(pin=>{const [x,y,z]=model.ports[pin.name];return {...pin,position:[(x*c-z*s)/1000,y/1000,(x*s+z*c)/1000] as Point};});
++ const r=(part.properties?.evAssembly as {pose?:{rotation?:V}}|undefined)?.pose?.rotation;
++ const pins=geometry.pins.map(pin=>{const [x,y,z]=r?rotate(model.ports[pin.name],r):model.ports[pin.name];return {...pin,position:[(x*c-z*s)/1000,y/1000,(x*s+z*c)/1000] as Point};});
+  return {model,pins};
+ }
+diff --git a/frontend/src/components/circuitiny/bridge.ts b/frontend/src/components/circuitiny/bridge.ts
+--- a/frontend/src/components/circuitiny/bridge.ts
++++ b/frontend/src/components/circuitiny/bridge.ts
+@@ -5,6 +5,8 @@
+ import { nearestHole, computeSeating } from '../../utils/breadboardSnap';
+ import { geometryFor } from './geometry';
+ import {physicalPresentation} from './physicalModels';
++import {mountedPose,rotate} from './assemblyGeometry';
++import {routeAssembly} from './assemblyPlanner';
+ import { ComponentRegistry } from '../../services/ComponentRegistry';
+ import { resolvePin } from './project/pins';
+ import { getRenderedPoints } from '../../utils/wireHitDetection';
+@@ -28,6 +30,8 @@
+     const g = geometryFor(item),
+       isBoard = g.board;
+     const physical='properties' in item?physicalPresentation(item,g):undefined;
++    const mounted=mountedPose(item,[...s.components,...s.boards]);
++    const position=mounted?mounted.position.map(n=>n/1000) as [number,number,number]:g.position;
+     const structure='properties' in item&&g.kind==='ev-structure'?item.properties:undefined;
+     const metadataId = g.kind,
+       metadata = registry.getById(metadataId);
+@@ -35,8 +39,8 @@
+       ? item.properties.chipName
+       : metadata?.name || metadataId;
+     const cid = metadataId + '@' + item.id;
+-    offsets.set(item.id, g.offset);
+-    const pins = (physical?.pins||g.pins).map((p) =>
++    offsets.set(item.id,mounted?{x:position[0]/PX-item.x,y:position[2]/PX-item.y,h:position[1]}:g.offset);
++    const pins = (physical?.pins||(mounted?g.pins.map(p=>({...p,position:rotate(p.position,mounted.rotation)})):g.pins)).map((p) =>
+       pin(
+         encodePin(p.name),
+         isBreadboard(metadataId)
+@@ -80,7 +84,7 @@
+     return {
+       instance: item.id,
+       componentId: cid,
+-      position: g.position,
++      position,
+       pinAssignments: {},
+       config: {
+         ...('properties' in item ? item.properties : {}),
+@@ -161,6 +165,12 @@
+       handles: w.waypoints.map((p) => [p.x * PX, 0.012, p.y * PX] as [number, number, number]),
+     };
+   });
++  if([...s.components,...s.boards].some(p=>p.properties?.evAssembly)){
++    const routing=routeAssembly([...s.components,...s.boards],s.wires);
++    project.nets=project.nets.map(n=>({...n,physicalRoute:true,connectorBinding:routing.routes[n.id]?.binding,routeBlocked:!routing.routes[n.id]?.clear,
++      route:routing.routes[n.id]?.points.map(p=>p.map(x=>x/1000) as [number,number,number])||[]}));
++    useStore.setState({assemblyRouting:routing});
++  }else useStore.setState({assemblyRouting:null});
+   return project;
+ }
+ export function endpoint(ref: string, s: NativeState): WireEndpoint {
+diff --git a/frontend/src/components/circuitiny/EmbeddedBodies.tsx b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -8,6 +8,8 @@
+ import { useStore } from './store';
+ import { NativeFace } from './NativeFace';
+ import {PhysicalBody} from './PhysicalBodies';
++import {inverseRotate,type V} from './assemblyMath';
++import {registerAssemblyScene} from './assemblyScene';
+ import {
+   UnoModel,
+   LedModel,
+@@ -25,14 +27,15 @@
+ export function UnoBody({
+   componentId,
+   rotation = 0,
+-}: { componentId?: string; rotation?: number } = {}) {
++  assemblyRotation,
++}: { componentId?: string; rotation?: number;assemblyRotation?:V } = {}) {
+   const board = componentId ? definitions.get(componentId) : catalog.getBoard('arduino-uno');
+   return (
+     <UnoModel
+       id={componentId?.split('@')[1] || 'U1'}
+       width={UNO_W * PX}
+       depth={UNO_H * PX}
+-      pins={(board?.pins || []).map((p) => ({ ...p, position: unrotate(p.position, rotation) }))}
++      pins={(board?.pins || []).map((p) => {const local=unrotate(p.position,rotation);return {...p,position:assemblyRotation?inverseRotate(local,assemblyRotation):local};})}
+     />
+   );
+ }
+@@ -56,8 +59,9 @@
+     depth = Number(config?.depth) || 0.015,
+     center = (config?.bodyCenter || [0, 0, 0]) as [number, number, number],
+     id = String(config?.nativeId || componentId.split('@')[1]);
+-  if (kind === 'arduino-uno') return <UnoBody componentId={componentId} rotation={rotation} />;
+-  if (typeof config?.physicalModelId==='string')return <PhysicalBody modelId={config.physicalModelId} id={id}/>;
++  const assemblyRotation=(config?.evAssembly as {pose?:{rotation?:V}}|undefined)?.pose?.rotation;
++  if (kind === 'arduino-uno') return <group rotation={assemblyRotation}><UnoBody componentId={componentId} rotation={rotation} assemblyRotation={assemblyRotation}/></group>;
++  if (typeof config?.physicalModelId==='string')return <group rotation={assemblyRotation}><PhysicalBody modelId={config.physicalModelId} id={id} assembled={!!assemblyRotation}/></group>;
+   if (kind === 'led')
+     return <LedModel pins={pins} color={String(config?.color || 'red')} brightness={brightness} />;
+   if (kind.startsWith('breadboard'))
+@@ -113,6 +117,7 @@
+ });
+ export function FitScene() {
+   const { camera, scene, size, controls } = useThree();
++  useEffect(()=>registerAssemblyScene(()=>scene.getObjectByName('circuitiny-design')),[scene]);
+   const sceneKey = useStore((s) => s.sceneKey),
+     hasScene = useStore((s) => !!(s.project.components.length || s.project.boards?.length)),
+     fitRevision = useStore((s) => s.fitRevision);
+diff --git a/frontend/src/components/circuitiny/PhysicalBodies.tsx b/frontend/src/components/circuitiny/PhysicalBodies.tsx
+--- a/frontend/src/components/circuitiny/PhysicalBodies.tsx
++++ b/frontend/src/components/circuitiny/PhysicalBodies.tsx
+@@ -6,6 +6,7 @@
+ import * as T from 'three';
+ import {Lead} from './RealisticBodies';
+ import {boardLayouts,physicalModels,type BoardLayout} from './physicalModels';
++import {useStore} from './store';
+ type V=[number,number,number];
+ const m=(v:number)=>v/1000;
+ function Box({at,size,color,metal=0}:{at:V;size:V;color:string;metal?:number}){
+@@ -60,6 +61,7 @@
+  for(const name of ['M1','M2']){const a=model.ports[name+'.left'],b=model.ports[name+'.right'];labelItems.push([name,(a[0]+b[0])/2+(!shield?0:5),(a[2]+b[2])/2+(!shield?-8:0),1.7]);}
+  return <group><PCB width={layout.width} depth={layout.depth} color="#087cb6" holes={layout.holes}/>
+   {layout.pads.map((p,i)=><Hole key={i} x={p.at[0]} z={p.at[1]} drill={p.drill}/>)}
++  {shield&&layout.pads.filter(p=>p.element==='U$1'&&Math.abs(p.at[1])>20).map(p=><HeaderContact key={'stack-'+p.pad} x={p.at[0]} z={p.at[1]} female/>)}
+   {layout.parts.map(p=>{
+    const [x,z]=p.at;
+    if(p.kind==='terminal')return <group key={p.name}>{p.pads.map(pad=><Terminal key={pad.pad} x={pad.at[0]} z={pad.at[1]} angle={p.rotation}/>)}</group>;
+@@ -88,9 +90,10 @@
+   {usb?<><Lead points={[[.017,.006,0],[.021,.006,0],[.025,.006,0]]} radius={.0008}/><Box at={[24,6,0]} size={[5,2.7,7.8]} color="#b9c4c4" metal={.8}/></>:[-1,1].map(s=><group key={s}><Box at={[21,5,s*4]} size={[3,5,5]} color={s<0?'#bc3d36':'#191e22'}/></group>)}
+  </group>;
+ }
+-export function PhysicalBody({modelId,id}:{modelId:string;id:string}){
++export function PhysicalBody({modelId,id,assembled=false}:{modelId:string;id:string;assembled?:boolean}){
++ const selected=useStore(s=>s.selected===id);
+  const model=physicalModels[modelId];if(!model)return null;
+  return <group>{model.kind==='pi'?<PiBoard/>:model.kind==='hat'?<DriverBoard layout={boardLayouts.hat}/>:model.kind==='shield'?<DriverBoard layout={boardLayouts.shield} shield/>:model.kind==='motor'?<MicroMotor/>:<PowerBody usb={model.kind==='usb-power'}/>}
+-  <Html position={[0,m(model.height+3),m(model.depth/2+3)]} center style={{pointerEvents:'none',fontSize:10,color:'#294d39',whiteSpace:'nowrap',background:'#ffffffc9',padding:'2px 4px',borderRadius:3}}>{id} · {model.name}</Html>
++  {(!assembled||selected)&&<Html position={[0,m(model.height+3),m(model.depth/2+3)]} center style={{pointerEvents:'none',fontSize:10,color:'#294d39',whiteSpace:'nowrap',background:'#ffffffc9',padding:'2px 4px',borderRadius:3}}>{id} · {model.name}</Html>}
+  </group>;
+ }
+diff --git a/frontend/src/components/circuitiny/CircuitinyEditor.tsx b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -19,6 +19,9 @@
+ import { isBreadboard } from '../../utils/breadboardNets';
+ import { STRUCTURE_ID, newStructure, structureParameters, type StructureShape } from './structureObjects';
+ import {physicalModelFor} from './physicalModels';
++import {proposeAssembly,restoreAssembly} from './assemblyPlanner';
++import {getMotionSource} from '../embeddedMotionBridge';
++import {buildVlxPayload} from '../../utils/vlxFile';
+ import {
+   rotateSelected,
+   copySelected,
+@@ -79,6 +82,22 @@
+   const structure = component?.metadataId === STRUCTURE_ID ? structureParameters(component.properties) : null;
+   const physicalModel=component&&physicalModelFor(component);
+   const photoObjects=components.filter(c=>c.metadataId===STRUCTURE_ID&&c.properties?.evPhotoStructure);
++  const assemblyRouting=useStore(s=>s.assemblyRouting),interiorView=useStore(s=>s.interiorView);
++  const mounted=[...components,...boards].filter(p=>p.properties?.evAssembly);
++  const optimizeAssembly=()=>{
++   if(running)return;
++   const result=proposeAssembly({...buildVlxPayload({name:'차체 내부 배치'}),embeddedVision:getMotionSource()});
++   if(!result.changed){useStore.setState({message:result.error||'배치할 구조물과 부품을 확인하세요.'});return;}
++   const source=getMotionSource();if(source)source.assembly=result.project.embeddedVision.assembly;
++   atomic('구조 내부 배치·배선 계산',()=>native.setState({components:result.project.components,boards:result.project.boards}));
++   useStore.setState(s=>({fitRevision:s.fitRevision+1,message:'부품을 차체에 배치하고 배선 경로를 갱신했습니다. 실제 장착 치수는 확인이 필요합니다.'}));
++  };
++  const restoreLayout=()=>{
++   const result=restoreAssembly({...buildVlxPayload({name:'차체 내부 배치'}),embeddedVision:getMotionSource()});
++   const source=getMotionSource();if(source)source.assembly=result.embeddedVision.assembly;
++   atomic('이전 배치 복원',()=>native.setState({components:result.components,boards:result.boards}));
++   useStore.setState(s=>({fitRevision:s.fitRevision+1,message:'최적화 전 위치를 복원했습니다.'}));
++  };
+   const addStructure = (shape: StructureShape) => {
+     if (native.getState().running) return;
+     const state=native.getState(), base=state.boards[0], item=newStructure(shape,(base?.x ?? 120)+260,(base?.y ?? 120)+40);
+@@ -178,6 +197,9 @@
+           <button disabled={running} onClick={()=>addStructure('cylinder')}>원통 추가</button>
+           <small>전기 연결이 없는 가상 구조물입니다.</small>
+         </div></details>
++        {photoObjects.length>0&&<><button disabled={running} onClick={optimizeAssembly}>배치·배선 최적화</button><button aria-pressed={interiorView} onClick={()=>useStore.setState({interiorView:!interiorView})}>{interiorView?'내부 보기 켜짐':'내부 보기'}</button>{mounted.length>0&&<button disabled={running} onClick={restoreLayout}>이전 배치 복원</button>}</>}
++        {mounted.length>0&&<details className="ev-c3d-more"><summary>장착 부품 {mounted.length}개</summary><div>{mounted.map(p=><button key={p.id} onClick={()=>useStore.getState().select(p.id)}>{p.id} · {String(p.properties?.evRoverLabel||('name' in p?p.name:'시스템 부품'))}</button>)}</div></details>}
++        {assemblyRouting&&<details className="ev-c3d-more"><summary>배치·배선 결과</summary><p>케이블 경로 합계 {(assemblyRouting.wireLengthMm/1000).toFixed(2)} m · 경로 미해결 {assemblyRouting.unresolved.length}개</p>{assemblyRouting.unresolved.map(e=><p key={e.id}>{e.id}: {e.reason}</p>)}<p>표시 치수에서 계산한 경로입니다. 실제 절단 길이·고정 홀·케이스 인출구는 확인이 필요합니다.</p></details>}
+         {photoObjects.length>0&&<details className="ev-c3d-more"><summary>사진 구조물 {photoObjects.length}개</summary><div><small>사진에서 추정한 형상 · 실제 크기 미확인</small>{photoObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
+         {guide.steps.length > 0 && <button aria-pressed={guideOpen} onClick={() => { setGuideOpen(!guideOpen); setDetails(false); }}>
+           {guideOpen ? '조립 가이드 닫기' : '단계별 조립 가이드'}
+@@ -400,6 +422,7 @@
+             {selected} · {structure ? String(component?.properties?.label||(structure.shape==='box'?'구조물 상자':'구조물 원통')) : physicalModel?.name || meta?.name || board?.name || board?.boardKind || component?.metadataId}
+           </strong>
+           {physicalModel&&<details><summary>실물 형상 · {physicalModel.name}</summary><p>{physicalModel.source?'제안된 설계 부품의 제품 형상 모델입니다.':'제품 모델이 미확인인 일반형입니다.'} 전기 동작 모델과는 별개입니다.</p><p>{physicalModel.basis}</p>{physicalModel.source&&<><p>외곽 기준: {physicalModel.width} × {physicalModel.depth} mm</p><a href={physicalModel.source} target="_blank" rel="noreferrer">제조사 원문·도면</a></>}{['hat','shield'].includes(physicalModel.kind)&&<p><a href="/physical-models/hat-license.txt" target="_blank" rel="noreferrer">Adafruit PCB 자료 · CC BY-SA 3.0</a></p>}</details>}
++          {Boolean(component?.properties?.evAssembly)&&<details><summary>장착 위치 · 새 설계 추정</summary><p>{String((component!.properties.evAssembly as {note:string}).note)}</p><p>사진의 원래 장착을 복원한 결과가 아닙니다. 치수와 고정 방법은 실제 부품으로 검토하세요.</p></details>}
+           <p>
+             {running
+               ? '실행 중입니다. 버튼·다이얼·센서를 조작할 수 있습니다.'
+diff --git a/frontend/src/components/circuitiny/Viewer3D.tsx b/frontend/src/components/circuitiny/Viewer3D.tsx
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -379,14 +379,17 @@
+   isButton?: boolean;
+   simActive?: boolean;
+ }) {
++  const interior=useStore(s=>s.interiorView&&s.project.components.some(c=>!!c.config?.evAssembly));
+   if (config?.metadataId === STRUCTURE_ID) {
+     const p = structureParameters(config.structure as Record<string,unknown> | undefined), w=p.width/1000, h=p.height/1000, d=p.depth/1000;
+     const rad=Math.PI/180;
+     const orientation=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),p.rotation*rad).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rotationX*rad,-p.rotation*rad,p.rotationZ*rad)));
+     const props=config.structure as Record<string,unknown>|undefined;
+-    return <group><mesh position={[0, (p.elevation+p.height/2)/1000, 0]} quaternion={orientation} scale={[w,h,d]} castShadow receiveShadow>
++    const role=(props?.evPhotoStructure as {role?:string}|undefined)?.role;
++    const ghost=interior&&['housing','chassis','platform','frame'].includes(role||'');
++    return <group><mesh position={[0, (p.elevation+p.height/2)/1000, 0]} quaternion={orientation} scale={[w,h,d]} castShadow={!ghost} receiveShadow raycast={ghost?()=>{}:undefined}>
+       {p.shape === 'cylinder' ? <cylinderGeometry args={[.5,.5,1,40]} /> : <boxGeometry args={[1,1,1]} />}
+-      <meshStandardMaterial color={p.color} roughness={0.65} emissive={selected ? '#9bd1ff' : '#000000'} emissiveIntensity={selected ? 0.3 : 0} />
++      <meshStandardMaterial color={p.color} roughness={0.65} transparent={ghost} opacity={ghost ? 0.18 : 1} depthWrite={!ghost} emissive={selected ? '#9bd1ff' : '#000000'} emissiveIntensity={selected ? 0.3 : 0} />
+       {String(config.nativeId||'').startsWith('photo-wheel-')&&<mesh position={[0,.51,0]}><cylinderGeometry args={[.17,.17,.025,24]}/><meshStandardMaterial color="#aeb6b9" metalness={.5} roughness={.4}/></mesh>}
+     </mesh>{typeof props?.label==='string'&&(selected||String(config.nativeId||'').startsWith('photo-chassis-')||String(config.nativeId||'').startsWith('photo-wheel-'))&&<Html center position={[0,(p.elevation+p.height+8)/1000,0]} style={{pointerEvents:'none',whiteSpace:'nowrap',background:'#ffffffd9',borderRadius:3,padding:'2px 4px',fontSize:10,color:'#435b6e'}}>{props.label} · 사진 추정</Html>}</group>;
+   }
+@@ -710,8 +713,9 @@
+     if (isButton) runtimeButton(c.instance, false);
+   }
+   const content = (
+-    <group ref={groupRef} position={pos}>
++    <group ref={groupRef} position={pos} name={'ev-part:'+c.instance}>
+       <group
++        name={'ev-body:'+c.instance}
+         rotation={[0, (-Number(c.config?.rotation || 0) * Math.PI) / 180, 0]}
+         onPointerDown={handlePointerDown}
+         onClick={(e) => e.stopPropagation()}
+diff --git a/frontend/src/components/circuitiny/Wires3D.tsx b/frontend/src/components/circuitiny/Wires3D.tsx
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -34,7 +34,7 @@
+   }, [JSON.stringify(points)]);
+   useEffect(() => () => geometry.dispose(), [geometry]);
+   return (
+-    <group>
++    <group name="ev-cable">
+       <mesh geometry={geometry} onClick={onClick} onContextMenu={onClick} castShadow>
+         <meshStandardMaterial color={selected ? '#df923c' : color} roughness={0.4} />
+       </mesh>
+@@ -98,14 +98,16 @@
+           }
+           const lift = 0.012;
+           // This net represents the whole mating header, never one jumper wire.
+-          const headerAssembly = net.endpoints.length === 2 && net.endpoints.every(p => p.endsWith('.GPIO40'));
+-          const points: [number, number, number][] = [
++          const gpioHeader=net.endpoints.length===2&&net.endpoints.every(p=>p.endsWith('.GPIO40'));
++          const headerAssembly = net.connectorBinding||gpioHeader;
++          const points: [number, number, number][] = net.physicalRoute ? (net.route?.length?[a.position,...net.route.slice(1,-1),b.position]:[]) : [
+             a.position,
+             [a.position[0], lift, a.position[2]],
+             ...(net.route || []),
+             [b.position[0], lift, b.position[2]],
+             b.position,
+           ];
++          if(net.routeBlocked||points.length<2)return null;
+           const pick = (e: any) => {
+             e.stopPropagation();
+             if (useStore.getState().endpointDrag || e.delta > 3) return;
+@@ -121,7 +123,7 @@
+             <group key={net.id}>
+               {headerAssembly ? <>
+                 <Line points={points} color={selected === net.id ? '#df923c' : '#59718e'} lineWidth={3} dashed dashSize={0.003} gapSize={0.002} onClick={pick} />
+-                <Html center position={[(a.position[0]+b.position[0])/2,0.018,(a.position[2]+b.position[2])/2]} style={{pointerEvents:'none',whiteSpace:'nowrap',fontSize:10,background:'#edf2f8e8',color:'#354d67',border:'1px solid #a9b9ca',borderRadius:4,padding:'3px 6px'}}>40핀 헤더 결합 · 분리 표시</Html>
++                {(gpioHeader||net.endpoints[0]?.endsWith('.A4'))&&<Html center position={[(a.position[0]+b.position[0])/2,Math.max(a.position[1],b.position[1])+.008,(a.position[2]+b.position[2])/2]} style={{pointerEvents:'none',whiteSpace:'nowrap',fontSize:10,background:'#edf2f8e8',color:'#354d67',border:'1px solid #a9b9ca',borderRadius:4,padding:'3px 6px'}}>{gpioHeader?(net.physicalRoute?'40핀 적층 결합':'40핀 헤더 결합 · 분리 표시'):'실드 적층 헤더 결합'}</Html>}
+               </> : <JumperCable
+                 points={points}
+                 color={net.color || '#328260'}
+diff --git a/frontend/src/components/circuitiny/store.ts b/frontend/src/components/circuitiny/store.ts
+--- a/frontend/src/components/circuitiny/store.ts
++++ b/frontend/src/components/circuitiny/store.ts
+@@ -3,6 +3,8 @@
+ import type { LedOutputSample } from '../../simulation/ledOutput';
+ import type { Project } from './project/schema';
+ export type ViewerState = {
++  interiorView:boolean;
++  assemblyRouting:{wireLengthMm:number;unresolved:Array<{id:string;reason?:string}>}|null;
+   project: Project;
+   selected: string | null;
+   selectedNet: string | null;
+@@ -46,6 +48,8 @@
+   releaseButton: (p: string) => void;
+ };
+ export const useStore = create<ViewerState>((set) => ({
++  interiorView:true,
++  assemblyRouting:null,
+   project: {
+     schemaVersion: 1,
+     name: 'Arduino',
+diff --git a/frontend/src/components/circuitiny/project/schema.ts b/frontend/src/components/circuitiny/project/schema.ts
+--- a/frontend/src/components/circuitiny/project/schema.ts
++++ b/frontend/src/components/circuitiny/project/schema.ts
+@@ -45,6 +45,9 @@
+ }
+ 
+ export interface Net {
++  physicalRoute?: boolean;
++  routeBlocked?: boolean;
++  connectorBinding?: boolean;
+   id: string;
+   hidden?: boolean;
+   color?: string;
+diff --git a/frontend/src/types/board.ts b/frontend/src/types/board.ts
+--- a/frontend/src/types/board.ts
++++ b/frontend/src/types/board.ts
+@@ -114,6 +114,8 @@
+ }
+ 
+ export interface BoardInstance {
++  /** Visual mounting pose; does not change the board's electrical model. */
++  properties?: Record<string, unknown>;
+   id: string; // unique in canvas, e.g. 'arduino-uno', 'raspberry-pi-3'
+   /** Optional user-given display name. Falls back to the kind label when
+    *  empty. Lets the user tell two same-kind boards apart in the file
+diff --git a/frontend/src/utils/vlxFile.ts b/frontend/src/utils/vlxFile.ts
+--- a/frontend/src/utils/vlxFile.ts
++++ b/frontend/src/utils/vlxFile.ts
+@@ -53,6 +53,7 @@
+     activeFileGroupId: string;
+     languageMode?: string;
+     serialBaudRate?: number;
++    properties?: Record<string, unknown>;
+     sdFiles?: Array<{ name: string; contentB64: string }>;
+     /** Declared library manifest (compile scope). Absent in old files. */
+     libraries?: string[];
+@@ -78,6 +79,7 @@
+     activeFileGroupId: b.activeFileGroupId,
+     languageMode: b.languageMode,
+     serialBaudRate: b.serialBaudRate,
++    ...(b.properties ? {properties:b.properties} : {}),
+     // Built-in SD slot uploads (XIAO Sense etc.) travel with the project,
+     // exactly like a microsd-card component's properties.sdFiles do.
+     sdFiles: b.sdFiles,
+diff --git a/frontend/src/components/EmbeddedVisionBridge.tsx b/frontend/src/components/EmbeddedVisionBridge.tsx
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -12,6 +12,7 @@
+ import {translatedSimulationNotice} from './translatedSimulationNotice';
+ import {withLegacyPhysicalModels} from './circuitiny/physicalModels';
+ import {withPhotoStructures} from './circuitiny/photoStructures';
++import {withAssembly} from './circuitiny/assemblyPlanner';
+ 
+ export function EmbeddedVisionBridge({onReady,actions}:{onReady?:(ready:boolean,restored:boolean,simulationNotice?:string)=>void;actions?:ReactNode}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+@@ -57,6 +58,8 @@
+    if(motion)payload=ensureRobotCode(payload,source);
+    payload=withLegacyPhysicalModels(payload);
+    payload=withPhotoStructures(payload,original);
++   payload=withAssembly({...payload,embeddedVision:{...payload.embeddedVision,photo_structure:source.photo_structure}});
++   if(payload.embeddedVision?.assembly)source.assembly=payload.embeddedVision.assembly;
+    await importVlxFile(new File([JSON.stringify(payload)],'embedded.vlx',{type:'application/json'}));
+    if(cancelled)return;
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+diff --git a/frontend/src/components/embeddedMotionBridge.ts b/frontend/src/components/embeddedMotionBridge.ts
+--- a/frontend/src/components/embeddedMotionBridge.ts
++++ b/frontend/src/components/embeddedMotionBridge.ts
+@@ -45,6 +45,7 @@
+   send: (message: unknown, origin: string) => void;
+   sourceOverride?: Record<string, unknown>;
+   requestId?: string;
++  visualScene?: () => unknown;
+ }): MotionBridgeResult {
+   const query = new URLSearchParams(options.search);
+   if (query.get('motion') !== '1') return { handled: false };
+@@ -66,7 +67,9 @@
+     if (serialized.length > 1_000_000) throw new Error('프로젝트가 너무 큽니다.');
+     const popup = query.get('motion_tab') === '1';
+     if (popup && !/^[a-f0-9]{32,128}$/i.test(options.requestId || '')) throw new Error('운동 화면 연결 설정이 올바르지 않습니다.');
++    const visualScene=options.visualScene?.();
+     options.send({ type: 'ev:motion-request', channel, payload: JSON.parse(serialized),
++      ...(visualScene?{visualScene}:{}),
+       ...(popup ? {popup: true, requestId: options.requestId} : {}) }, origin);
+     return { handled: true };
+   } catch (error) {
+diff --git a/frontend/src/components/editor/EditorToolbar.tsx b/frontend/src/components/editor/EditorToolbar.tsx
+--- a/frontend/src/components/editor/EditorToolbar.tsx
++++ b/frontend/src/components/editor/EditorToolbar.tsx
+@@ -1,5 +1,6 @@
+ import { useState, useCallback, useRef, useEffect } from 'react';
+ import { shouldAutoRunPhoto } from './embeddedPhotoAutoRun';
++import {captureAssemblyVisual} from '../circuitiny/assemblyScene';
+ import { useTranslation } from 'react-i18next';
+ import { registerEditorCommand } from '../../lib/editorCommands';
+ import { publishCompileOutput } from '../../lib/intellisenseRegistry';
+@@ -809,6 +810,7 @@
+       isFramed: window.parent !== window,
+       snapshot: () => buildVlxPayload({ name: 'embedded-circuit' }),
+       sourceOverride: getMotionSource(),
++      visualScene:()=>captureAssemblyVisual([...useSimulatorStore.getState().components,...useSimulatorStore.getState().boards]),
+       requestId,
+       send: (message, origin) => window.parent.postMessage(message, origin),
+     });
+diff --git a/frontend/src/components/circuitiny/assemblyMath.ts b/frontend/src/components/circuitiny/assemblyMath.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assemblyMath.ts
+@@ -0,0 +1,8 @@
++export type V=[number,number,number];
++/** Same XYZ Euler convention as Three.js: R = Rx Ry Rz. */
++export function rotate(v:V,r:V):V{
++ const [x,y,z]=v,[a,b,c]=r,xc=x*Math.cos(c)-y*Math.sin(c),yc=x*Math.sin(c)+y*Math.cos(c);
++ const xb=xc*Math.cos(b)+z*Math.sin(b),zb=-xc*Math.sin(b)+z*Math.cos(b);
++ return [xb,yc*Math.cos(a)-zb*Math.sin(a),yc*Math.sin(a)+zb*Math.cos(a)];
++}
++export function inverseRotate(v:V,r:V):V{return ([[1,0,0],[0,1,0],[0,0,1]] as V[]).map(axis=>rotate(axis,r).reduce((n,x,i)=>n+x*v[i],0)) as V;}
+diff --git a/frontend/src/components/circuitiny/assemblyGeometry.ts b/frontend/src/components/circuitiny/assemblyGeometry.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assemblyGeometry.ts
+@@ -0,0 +1,75 @@
++import {physicalModelFor,type PhysicalModel} from './physicalModels';
++import {rotate,type V} from './assemblyMath';
++export {rotate};export type {V};
++export type Box={id:string;min:V;max:V};
++export type Pose={position:V;rotation:V};
++export const MM_PER_PX=25.4/96;
++export const plus=(a:V,b:V)=>a.map((v,i)=>v+b[i]) as V;
++export const minus=(a:V,b:V)=>a.map((v,i)=>v-b[i]) as V;
++export function bounds(id:string,pose:Pose,size:V,base=false):Box{
++ const points:V[]=[];
++ for(const x of [-size[0]/2,size[0]/2])for(const y of base?[0,size[1]]:[-size[1]/2,size[1]/2])for(const z of [-size[2]/2,size[2]/2])points.push(plus(pose.position,rotate([x,y,z],pose.rotation)));
++ return {id,min:[0,1,2].map(i=>Math.min(...points.map(p=>p[i]))) as V,max:[0,1,2].map(i=>Math.max(...points.map(p=>p[i]))) as V};
++}
++export function overlap(a:Box,b:Box,gap=0){return [0,1,2].every(i=>a.min[i]<b.max[i]+gap-1e-6&&a.max[i]>b.min[i]-gap+1e-6);}
++export function contains(outer:Box,inner:Box,gap=0){return [0,1,2].every(i=>inner.min[i]>=outer.min[i]+gap-1e-6&&inner.max[i]<=outer.max[i]-gap+1e-6);}
++export function segmentHits(a:V,b:V,box:Box,gap=0){
++ let enter=0,leave=1;
++ for(let i=0;i<3;i++){
++  const lo=box.min[i]-gap,hi=box.max[i]+gap,d=b[i]-a[i];
++  if(Math.abs(d)<1e-9){if(a[i]<=lo+1e-6||a[i]>=hi-1e-6)return false;continue;}
++  const p=(lo-a[i])/d,q=(hi-a[i])/d;enter=Math.max(enter,Math.min(p,q));leave=Math.min(leave,Math.max(p,q));if(enter>=leave-1e-9)return false;
++ }
++ return leave>0&&enter<1;
++}
++export const distance=(a:V,b:V)=>Math.hypot(...minus(a,b));
++export const pathLength=(points:V[])=>points.slice(1).reduce((n,p,i)=>n+distance(points[i],p),0);
++export function simplify(points:V[]):V[]{
++ const out:V[]=[];
++ for(const p of points){if(out.length&&distance(out[out.length-1],p)<1e-6)continue;out.push(p);while(out.length>2){const n=out.length,a=minus(out[n-2],out[n-3]),b=minus(out[n-1],out[n-2]);if(Math.hypot(a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0])>1e-6||a.reduce((s,x,i)=>s+x*b[i],0)<0)break;out.splice(n-2,1);}}
++ return out;
++}
++export const unoModel:PhysicalModel={id:'arduino-uno',name:'Arduino Uno',kind:'pi',width:72.58,depth:53.34,height:18,source:'',basis:'기존 편집기 Uno 모델의 표시 치수',ports:Object.fromEntries(Object.entries({A4:246,A5:255.5,'5V':160,'GND.2':169.5}).map(([key,x])=>[key,[(x-137)*MM_PER_PX,7.5,(191.5-101)*MM_PER_PX] as V]))};
++export function hardwareModel(part:any){return part.boardKind==='arduino-uno'?unoModel:physicalModelFor(part);}
++export type Structure={part:any;role:string;pose:Pose;size:V;box:Box};
++export function structures(parts:any[]):Structure[]{
++ return parts.filter(p=>p.metadataId==='ev-structure').map(part=>{
++  const p=part.properties||{},size:V=[Number(p.width),Number(p.height),Number(p.depth)];
++  const pose:Pose={position:[(part.x+6)*MM_PER_PX+size[0]/2,Number(p.elevation||0)+size[1]/2,(part.y+6)*MM_PER_PX+size[2]/2],rotation:[Number(p.rotationX||0),-Number(p.rotation||0),Number(p.rotationZ||0)].map(n=>n*Math.PI/180) as V};
++  return {part,role:p.evPhotoStructure?.role||'other',pose,size,box:bounds(part.id,pose,size)};
++ }).filter(o=>[...o.pose.position,...o.pose.rotation,...o.size].every(Number.isFinite)&&o.size.every(n=>n>=2&&n<=500));
++}
++export type Mount={pose:Pose;baseline:V;host?:{id:string;center:V};note:string};
++/** Physical poses survive native XY moves and follow their mounting object. */
++export function mountedPose(part:any,parts:any[],seen=new Set<string>()):Pose|undefined{
++ const mount=part.properties?.evAssembly as Mount|undefined;
++ if(!mount||seen.has(part.id)||![...mount.pose?.position||[],...mount.pose?.rotation||[],...mount.baseline||[]].every(Number.isFinite)||mount.pose?.position?.length!==3||mount.pose?.rotation?.length!==3||mount.baseline?.length!==3)return;
++ seen.add(part.id);
++ const position=plus(mount.pose.position,[(part.x-mount.baseline[0])*MM_PER_PX,0,(part.y-mount.baseline[1])*MM_PER_PX]);
++ if(mount.host){
++  const host=parts.find(p=>p.id===mount.host!.id),hp=host&&(mountedPose(host,parts,seen)?.position||structures([host])[0]?.pose.position);
++  if(hp)for(let i=0;i<3;i++)position[i]+=hp[i]-mount.host.center[i];
++ }
++ return {position,rotation:mount.pose.rotation};
++}
++export function modelBox(part:any,pose:Pose):Box|undefined{const m=hardwareModel(part);return m&&bounds(part.id,pose,[m.width,m.height,m.depth],true);}
++export function modelPin(model:PhysicalModel,pose:Pose,name:string):V|undefined{return model.ports[name]&&plus(pose.position,rotate(model.ports[name],pose.rotation));}
++export function portDirection(model:PhysicalModel,name:string,rotation:V):V{
++ const p=model.ports[name];let normal:V=[0,1,0];
++ if(name!=='GPIO40'){
++  if(model.kind==='motor')normal=[-1,0,0];
++  else if(model.kind==='usb-power'||model.kind==='dc-power')normal=[1,0,0];
++  else if(model.id==='rpi4b')normal=[0,0,1];
++  else if(model.id==='arduino-uno')normal=[0,1,0];
++  else normal=Math.abs(p[0])/(model.width/2)>Math.abs(p[2])/(model.depth/2)?[Math.sign(p[0]),0,0]:[0,0,Math.sign(p[2])];
++ }
++ return rotate(normal,rotation);
++}
++export function structureObstacles(items:Structure[]):Box[]{
++ return items.flatMap(o=>{
++  if(o.role!=='housing')return [o.box];
++  const {min,max}=o.box,t=2; // proposed open-top service envelope, wall thickness UNKNOWN
++  return [{id:o.part.id+'-floor',min,max:[max[0],min[1]+t,max[2]] as V},
++   ...[0,2].flatMap(axis=>[false,true].map(high=>{const a=[...min] as V,b=[...max] as V;if(high)a[axis]=max[axis]-t;else b[axis]=min[axis]+t;return {id:o.part.id+'-wall-'+axis+high,min:a,max:b};}))];
++ });
++}
+diff --git a/frontend/src/components/circuitiny/assemblyRouting.ts b/frontend/src/components/circuitiny/assemblyRouting.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assemblyRouting.ts
+@@ -0,0 +1,48 @@
++import {type V,type Box,plus,minus,segmentHits,distance,pathLength,simplify} from './assemblyGeometry';
++export type CableRoute={points:V[];lengthMm:number;clear:boolean;reason?:string;binding?:boolean};
++const orders=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
++const clearPath=(p:V[],obstacles:Box[])=>p.slice(1).every((b,i)=>!obstacles.some(o=>segmentHits(p[i],b,o,1.2)));
++function escape(point:V,normal:V,box:Box):V{
++ let travel=3;
++ for(let i=0;i<3;i++)if(Math.abs(normal[i])>.01)travel=Math.max(travel,((normal[i]>0?box.max[i]:box.min[i])-point[i])/normal[i]+3);
++ return plus(point,normal.map(n=>n*travel) as V);
++}
++/** Orthogonal visibility graph at obstacle faces; no route through solids. */
++export function routeCable(a:V,b:V,aBox:Box,bBox:Box,aNormal:V,bNormal:V,obstacles:Box[],previous:V[][]=[]):CableRoute{
++ const aa=escape(a,aNormal,aBox),bb=escape(b,bNormal,bBox);
++ const relevant=obstacles.filter(o=>o.id!==aBox.id&&o.id!==bBox.id&&!o.id.startsWith(aBox.id+'-body-')&&!o.id.startsWith(bBox.id+'-body-'));
++ if(!clearPath([a,aa],relevant)||!clearPath([bb,b],relevant))return {points:[],lengthMm:0,clear:false,reason:'단자 인출 공간이 다른 부품과 겹칩니다.'};
++ const candidates:V[][]=[];
++ for(const order of orders){const p:V[]=[aa];let q=[...aa] as V;for(const axis of order){q=[...q] as V;q[axis]=bb[axis];p.push(q);}candidates.push(p);}
++ const top=Math.max(a[1],b[1],...obstacles.map(o=>o.max[1]))+5;
++ for(const y of [Math.max(aa[1],bb[1])+4,top,top+5])for(const xFirst of [true,false]){
++  const c:V=[aa[0],y,aa[2]],d:V=[bb[0],y,bb[2]];
++  candidates.push([aa,c,xFirst?[d[0],y,c[2]]:[c[0],y,d[2]],d,bb]);
++ }
++ const cost=(points:V[])=>pathLength(points)+(points.length-2)*2+previous.reduce((score,path)=>score+path.slice(1).filter((end,i)=>{
++  const center=plus(path[i],minus(end,path[i]).map(x=>x*.5) as V);
++  return points.slice(1).some((p,j)=>distance(center,points[j])<3||distance(center,p)<3);
++ }).length*3,0);
++ let best=candidates.filter(p=>clearPath(p,obstacles)).map(p=>simplify([a,...p,b])).sort((p,q)=>cost(p)-cost(q))[0];
++ if(!best){
++  // Sparse 3D grid contains the endpoint axes and inflated obstacle faces.
++  const coords=[0,1,2].map(axis=>[...new Set([aa[axis],bb[axis],...obstacles.flatMap(o=>[o.min[axis]-3,o.max[axis]+3])].map(x=>Math.round(x*100)/100))].sort((a,b)=>a-b));
++  const ix=(p:V)=>p.map((n,i)=>coords[i].indexOf(Math.round(n*100)/100));
++  const start=ix(aa),end=ix(bb),key=(n:number[])=>n.join(','),point=(n:number[])=>n.map((v,i)=>coords[i][v]) as V;
++  const open=[{n:start,g:0,f:distance(aa,bb),dir:-1}],scores=new Map([[key(start),0]]),parents=new Map<string,string>(),nodes=new Map([[key(start),start]]);
++  let visited=0,goal='';
++  while(open.length&&visited++<14000){
++   open.sort((x,y)=>y.f-x.f);const current=open.pop()!,ck=key(current.n);
++   if(current.g>(scores.get(ck)??Infinity))continue;
++   if(ck===key(end)){goal=ck;break;}
++   for(let axis=0;axis<3;axis++)for(const sign of [-1,1]){
++    const n=[...current.n];n[axis]+=sign;if(n[axis]<0||n[axis]>=coords[axis].length)continue;
++    const p=point(current.n),q=point(n);if(!clearPath([p,q],obstacles))continue;
++    const nk=key(n),g=current.g+distance(p,q)+(current.dir!==-1&&current.dir!==axis?2:0);
++    if(g>=(scores.get(nk)??Infinity))continue;scores.set(nk,g);parents.set(nk,ck);nodes.set(nk,n);open.push({n,g,f:g+Math.abs(q[0]-bb[0])+Math.abs(q[1]-bb[1])+Math.abs(q[2]-bb[2]),dir:axis});
++   }
++  }
++  if(goal){const path:V[]=[];for(let k:string|undefined=goal;k;k=parents.get(k))path.push(point(nodes.get(k)!));best=simplify([a,...path.reverse(),b]);}
++ }
++ return best?{points:best,lengthMm:pathLength(best),clear:true}:{points:[],lengthMm:0,clear:false,reason:'충돌 없이 연결되는 경로를 찾지 못했습니다.'};
++}
+diff --git a/frontend/src/components/circuitiny/assemblyPlanner.ts b/frontend/src/components/circuitiny/assemblyPlanner.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assemblyPlanner.ts
+@@ -0,0 +1,172 @@
++/** Deterministic candidate search on the photographed chassis. This is a new
++ * assembly proposal, not recovered mounting dimensions or electrical approval. */
++import {hardwareModel,structures,bounds,contains,overlap,modelBox,modelPin,portDirection,mountedPose,structureObstacles,plus,rotate,MM_PER_PX,type V,type Pose,type Structure,type Box,type Mount} from './assemblyGeometry';
++import {routeCable,type CableRoute} from './assemblyRouting';
++export const ASSEMBLY_VERSION='photo-assembly-v1';
++type Placed={part:any;pose:Pose;box:Box;host:Structure|Placed;note:string};
++const digits=(p:V)=>p.map(n=>Math.round(n*1000)/1000) as V;
++const idOf=(host:Structure|Placed)=>host.part.id;
++const poseOf=(host:Structure|Placed)=>host.pose.position;
++function horizontal(o:Structure){return Math.abs(Math.sin(o.pose.rotation[0]))<.001&&Math.abs(Math.sin(o.pose.rotation[2]))<.001&&Math.abs(Math.sin(o.pose.rotation[1]))<.001;}
++function placement(part:any,position:V,rotation:V,host:Structure|Placed,note:string):Placed{
++ const pose={position,rotation};return {part,pose,box:modelBox(part,pose)!,host,note};
++}
++function fitsSurface(box:Box,surface:Structure){return [0,2].every(i=>box.min[i]>=surface.box.min[i]+4&&box.max[i]<=surface.box.max[i]-4);}
++function free(box:Box,photo:Structure[],allowed:string[]=[]){return !photo.some(o=>!allowed.includes(o.part.id)&&overlap(box,o.box,1.5));}
++function serviceBoxes(p:Placed):Box[]{
++ const m=hardwareModel(p.part)!;
++ return Object.keys(m.ports).filter(name=>name!=='GPIO40').map(name=>{
++  const start=modelPin(m,p.pose,name)!,normal=portDirection(m,name,p.pose.rotation);let d=4;
++  for(let i=0;i<3;i++)if(Math.abs(normal[i])>.01)d=Math.max(d,((normal[i]>0?p.box.max[i]:p.box.min[i])-start[i])/normal[i]+4);
++  const end=plus(start,normal.map(n=>n*d) as V);
++  return {id:p.part.id+'-access-'+name,min:start.map((v,i)=>Math.min(v,end[i])-1.5) as V,max:start.map((v,i)=>Math.max(v,end[i])+1.5) as V};
++ });
++}
++function interfere(a:Placed,b:Placed){return overlap(a.box,b.box,1.5)||serviceBoxes(a).some(x=>overlap(x,b.box,1))||serviceBoxes(b).some(x=>overlap(x,a.box,1));}
++function powerCandidates(part:any,photo:Structure[],surfaces:Structure[]):Placed[]{
++ const list:Placed[]=[];
++ for(const house of photo.filter(o=>o.role==='housing'&&horizontal(o))){
++  for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const dx of [-.2,0,.2])for(const dz of [-.2,0,.2]){
++   const pose:Pose={position:[house.pose.position[0]+dx*house.size[0],house.box.min[1]+2,house.pose.position[2]+dz*house.size[2]],rotation:[0,a,0]};
++   const box=modelBox(part,pose)!;
++   const candidate={part,pose,box,host:house,note:'추정 외장 내부 배치 · 벽 두께 2 mm와 상부 인출 공간은 새 설계 가정'};
++   if(!contains(house.box,box,2)||!free(box,photo,[house.part.id])||serviceBoxes(candidate).some(b=>!contains(house.box,b,2)))continue;
++   list.push(candidate);
++  }
++ }
++ if(!list.length)for(const plate of surfaces)for(const a of [0,Math.PI/2])for(const dx of [-.32,0,.32])for(const dz of [-.3,0,.3]){
++  const candidate=placement(part,[plate.pose.position[0]+plate.size[0]*dx,plate.box.max[1]+2,plate.pose.position[2]+plate.size[2]*dz],[0,a,0],plate,'판 위 장착 · 절연 간격 2 mm와 고정 방법은 검토 필요');
++  if(fitsSurface(candidate.box,plate)&&free(candidate.box,photo,[plate.part.id]))list.push(candidate);
++ }
++ return list;
++}
++function pin(p:Placed,name:string){return modelPin(hardwareModel(p.part)!,p.pose,name);}
++function connectionScore(placed:Record<string,Placed>,wires:any[]){
++ let total=0;
++ for(const w of wires){const a=placed[w.start.componentId],b=placed[w.end.componentId];if(!a||!b)continue;const x=pin(a,w.start.pinName),y=pin(b,w.end.pinName);if(x&&y)total+=x.reduce((s,n,i)=>s+Math.abs(n-y[i]),0);}
++ return total;
++}
++export function proposeAssembly(project:any){
++ const before=project;
++ const previousParts=[...(project.components||[]),...(project.boards||[])].map((p:any)=>({id:p.id,x:p.x,y:p.y,
++  assembly:p.properties?.evAssembly||null,...(p.metadataId==='ev-structure'?{structure:true,elevation:p.properties?.elevation,rotation:p.properties?.rotation,rotationX:p.properties?.rotationX,rotationZ:p.properties?.rotationZ}:{} )}));
++ const raw=project.embeddedVision?.photo_structure?.objects||[],baseRaw=raw.find((o:any)=>o.role==='chassis'&&o.geometry),currentBase=structures(project.components||[]).find(o=>o.role==='chassis');
++ if(baseRaw&&currentBase&&!project.embeddedVision?.assembly?.previousParts){
++  const shift=currentBase.pose.position.map((v,i)=>v-baseRaw.geometry.position[i]*220) as V;
++  project={...project,components:project.components.map((p:any)=>{
++   if(p.metadataId!=='ev-structure')return p;
++   const original=raw.find((o:any)=>p.id==='photo-'+o.role+'-'+o.id&&o.geometry);if(!original)return p;
++   const g=original.geometry,props=p.properties,pos=g.position.map((n:number,i:number)=>n*220+shift[i]);
++   return {...p,x:(pos[0]-props.width/2)/MM_PER_PX-6,y:(pos[2]-props.depth/2)/MM_PER_PX-6,properties:{...props,elevation:pos[1]-props.height/2,rotationX:g.rotation[0]*180/Math.PI,rotation:-g.rotation[1]*180/Math.PI,rotationZ:g.rotation[2]*180/Math.PI}};
++  })};
++ }
++ const source=project.embeddedVision||{},parts=[...(project.components||[]),...(project.boards||[])],photo=structures(project.components||[]);
++ const expected=source.recipe==='translated_uno_motor_shield_rover'?['U1','SHIELD1','MOTOR_L','MOTOR_R','BAT1']:['U1','HAT1','MOTOR_L','MOTOR_R','BAT1','PS1'];
++ if(!['raspberry_pi_2wd_robot','translated_pi_rover_c','translated_uno_motor_shield_rover'].includes(source.recipe)||!photo.length)return {project,changed:false};
++ const missing=expected.filter(id=>!hardwareModel(parts.find(p=>p.id===id)||{}));
++ if(missing.length)return {project:before,changed:false,error:'배치할 부품 모델을 확인하세요: '+missing.join(', ')};
++ const surfaces=photo.filter(o=>['chassis','platform'].includes(o.role)&&horizontal(o)).sort((a,b)=>a.box.min[1]-b.box.min[1]);
++ if(!surfaces.length)return {project:before,changed:false,error:'수평 장착 판을 찾지 못했습니다. 구조물의 방향과 크기를 확인하세요.'};
++ const get=(id:string)=>parts.find(p=>p.id===id),base=surfaces[0],driverId=expected.includes('HAT1')?'HAT1':'SHIELD1';
++ const wheels=photo.filter(o=>o.role==='wheel'),wheel=wheels[0];
++ const motors:Record<string,Placed>={};
++ for(const [id,side] of [['MOTOR_L',-1],['MOTOR_R',1]] as const){
++  const visible=wheels.find(w=>Math.sign(w.pose.position[2]-base.pose.position[2])===side);
++  const wp=visible?.pose.position||[wheel?.pose.position[0]??base.pose.position[0]-.25*base.size[0],wheel?.pose.position[1]??base.box.min[1]-18,base.pose.position[2]+side*(wheel?Math.abs(wheel.pose.position[2]-base.pose.position[2]):base.size[2]/2+8)] as V;
++  const depth=visible?.box.max[2]! - visible?.box.min[2]! || (wheel?wheel.box.max[2]-wheel.box.min[2]:16);
++  const m=hardwareModel(get(id))!;
++  const p=placement(get(id),[wp[0]-4,wp[1],wp[2]-side*(depth/2+m.height)],[side*Math.PI/2,0,0],visible||base,
++   visible?'모터 축을 사진의 바퀴 축에 맞춘 새 장착 제안':'반대쪽 모터의 축 위치는 대칭 설계 가정 · 반대쪽 바퀴 형상은 미확인');
++  if(!free(p.box,photo,[visible?.part.id||'']))return {project:before,changed:false,error:id+' 장착 공간이 프레임과 겹칩니다. 구조물 치수를 확인하세요.'};
++  motors[id]=p;
++ }
++ const powerIds=expected.filter(id=>['BAT1','PS1'].includes(id));
++ const powers=Object.fromEntries(powerIds.map(id=>[id,powerCandidates(get(id),photo,surfaces)]));
++ if(powerIds.some(id=>!powers[id].length))return {project:before,changed:false,error:'전원을 넣을 케이스나 판의 공간이 부족합니다. 크기를 확인하세요.'};
++ let best:Record<string,Placed>|undefined,bestScore=Infinity,candidates=0;
++ const finalists:Array<{placed:Record<string,Placed>;score:number}>=[];
++ for(const surface of surfaces)for(const angle of [0,Math.PI]){
++  const [minX,maxX]=[surface.box.min[0]+40,surface.box.max[0]-40],[minZ,maxZ]=[surface.box.min[2]+28,surface.box.max[2]-28];
++  for(let x=minX;x<=maxX+.01;x+=8)for(let z=minZ;z<=maxZ+.01;z+=8){
++   const board=placement(get('U1'),[x,surface.box.max[1]+2,z],[0,angle,0],surface,'장착 판과 2 mm 절연 간격 · 실제 고정 홀과 절연물 검토 필요');
++   if(!fitsSurface(board.box,surface)||!free(board.box,photo,[surface.part.id]))continue;
++   const driverDelta:V=driverId==='HAT1'?[-10,12,-.25]:[2.28,16,-.185];
++   const driver=placement(get(driverId),plus(board.pose.position,rotate(driverDelta,board.pose.rotation)),board.pose.rotation,board,'헤더 방향을 맞춘 적층 장착 · 높이 간격 '+driverDelta[1]+' mm는 표시 가정');
++   if(!fitsSurface(driver.box,surface)||!free(driver.box,photo,[surface.part.id]))continue;
++   const fixed={...motors,U1:board,[driverId]:driver};
++   if(Object.values(motors).some(m=>overlap(m.box,board.box,1.5)||overlap(m.box,driver.box,1.5)))continue;
++   const ranked=powerIds.map(id=>powers[id].filter((p:Placed)=>!Object.values(fixed).some(q=>interfere(p,q))).map((p:Placed)=>({p,score:connectionScore({...fixed,[id]:p},project.wires||[])})).sort((a:any,b:any)=>a.score-b.score).slice(0,8));
++   for(const one of ranked[0])for(const two of powerIds.length===2?ranked[1]:[{p:undefined,score:0}]){
++    if(two.p&&interfere(one.p,two.p))continue;
++    const trial={...fixed,[one.p.part.id]:one.p,...(two.p?{[two.p.part.id]:two.p}:{})};
++    const score=connectionScore(trial,project.wires||[]);candidates++;
++    if(score<bestScore){best=trial;bestScore=score;}
++    finalists.push({placed:trial,score});
++   }
++  }
++ }
++ if(!best)return {project:before,changed:false,error:'부품이 겹치지 않는 배치를 찾지 못했습니다. 차체·케이스 치수를 조정하세요.'};
++ const makeMounted=(layout:Record<string,Placed>)=>parts.map(part=>{
++  const p=layout[part.id];if(!p)return part;
++  const mount:Mount={pose:{position:digits(p.pose.position),rotation:p.pose.rotation},baseline:[part.x,part.y,0],host:{id:idOf(p.host),center:digits(poseOf(p.host))},note:p.note};
++  return {...part,properties:{...part.properties,evAssembly:mount}};
++ });
++ // Compare actual obstacle-avoiding cable paths for a diverse short list.
++ let routedCost=Infinity,routedLength=0,checked=0;const perBoard=new Map<string,number>();
++ for(const finalist of finalists.sort((a,b)=>a.score-b.score)){
++  const key=JSON.stringify(finalist.placed.U1.pose),count=perBoard.get(key)||0;if(count>=2)continue;
++  perBoard.set(key,count+1);
++  const route=routeAssembly(makeMounted(finalist.placed),project.wires||[]);
++  const cost=route.wireLengthMm+route.unresolved.length*100000+Object.values(route.routes).reduce((n,r)=>n+Math.max(0,r.points.length-2)*2,0);
++  if(cost<routedCost){best=finalist.placed;bestScore=finalist.score;routedCost=cost;routedLength=route.wireLengthMm;}
++  if(++checked>=12)break;
++ }
++ const mounted=makeMounted(best);
++ const replace=(items:any[])=>items.map(p=>mounted.find(q=>q.id===p.id)||p);
++ const report={version:ASSEMBLY_VERSION,recipe:source.recipe,status:'INFERRED',candidateCount:candidates,routedCandidates:checked,wireLengthMm:routedLength,objectiveMm:Math.round(bestScore),previousParts,
++  assumptions:['사진 형상의 기준 길이 220 mm는 표시 가정이며 실제 장착 치수는 UNKNOWN입니다.','케이스 내부를 비어 있는 장착 공간으로 가정합니다. 벽 두께 2 mm·상부 인출 공간·절연 2 mm·적층 12/16 mm는 실측값이 아닙니다.','기존 단자 연결과 코드는 유지하며 배치와 케이블 경로만 계산합니다.','후보 격자에서 배선 길이를 줄인 제안입니다. 전역 최적해·실제 기구 간섭·전기 안전을 검증한 결과가 아닙니다.']};
++ return {project:{...project,components:replace(project.components||[]),boards:replace(project.boards||[]),embeddedVision:{...source,assembly:report}},changed:true};
++}
++export function restoreAssembly(project:any){
++ const previous=project.embeddedVision?.assembly?.previousParts;
++ if(!Array.isArray(previous))return project;
++ const restore=(parts:any[])=>parts.map(p=>{const old=previous.find(o=>o.id===p.id);if(!old)return p;const properties={...p.properties};if(old.assembly)properties.evAssembly=old.assembly;else delete properties.evAssembly;
++  if(old.structure)for(const key of ['elevation','rotation','rotationX','rotationZ'])properties[key]=old[key];
++  return {...p,x:old.x,y:old.y,properties};});
++ return {...project,components:restore(project.components||[]),boards:restore(project.boards||[]),embeddedVision:{...project.embeddedVision,assembly:{version:ASSEMBLY_VERSION,status:'USER_RESTORED'}}};
++}
++export function withAssembly(project:any){
++ if(project.embeddedVision?.assembly?.status==='USER_RESTORED')return project;
++ // An undo, deletion or deliberate rearrangement must survive reopening.
++ if(project.embeddedVision?.assembly?.version===ASSEMBLY_VERSION&&project.embeddedVision.assembly.recipe===project.embeddedVision.recipe&&project.embeddedVision.assembly.status==='INFERRED')return project;
++ const result=proposeAssembly(project);
++ if(!result.changed&&!result.error)return project;
++ return result.changed?result.project:{...project,embeddedVision:{...project.embeddedVision,assembly:{version:ASSEMBLY_VERSION,status:'UNKNOWN',error:result.error||'사진 구조에 장착할 수 있는 지원 모델이 없습니다.'}}};
++}
++export function hardwareObstacles(part:any,pose:Pose):Box[]{
++ const m=hardwareModel(part)!;
++ if(m.id==='arduino-uno')return [{c:[0,3,0],s:[m.width,1.6,m.depth]},
++  {c:[-m.width/2+6,9,-m.depth*.24],s:[13,10,12]},
++  {c:[-m.width/2+7,7,m.depth*.3],s:[11,9,9]},
++  {c:[7,5.2,9],s:[26,3.6,8]}].map((o,i)=>bounds(part.id+'-body-'+i,{position:plus(pose.position,rotate(o.c as V,pose.rotation)),rotation:pose.rotation},o.s as V));
++ if(m.id!=='rpi4b')return [modelBox(part,pose)!];
++ // Pi's tall USB/Ethernet blocks do not fill the HAT's entire mounting area.
++ return [{c:[0,1.6,0],s:[85,1.6,56]},{c:[-13.5,4,-4.5],s:[15,2,15]},
++  {c:[37.5,10,19],s:[18,16,13.2]},{c:[37.5,10,1],s:[18,16,13.2]},{c:[35.5,8.75,-17.75],s:[22,13.5,16]}].map((o,i)=>bounds(part.id+'-body-'+i,{position:plus(pose.position,rotate(o.c as V,pose.rotation)),rotation:pose.rotation},o.s as V));
++}
++export function routeAssembly(parts:any[],wires:any[]){
++ const placed=parts.map(part=>({part,pose:mountedPose(part,parts)})).filter(p=>p.pose&&hardwareModel(p.part));
++ const obstacles=[...structureObstacles(structures(parts)),...placed.flatMap(p=>hardwareObstacles(p.part,p.pose!))];
++ const routes:Record<string,CableRoute>={},previous:V[][]=[];
++ for(const wire of wires){
++  const a=placed.find(p=>p.part.id===wire.start.componentId),b=placed.find(p=>p.part.id===wire.end.componentId);
++  if(!a||!b){routes[wire.id]={points:[],lengthMm:0,clear:false,reason:'장착되지 않은 부품의 배선입니다.'};continue;}
++  const am=hardwareModel(a.part)!,bm=hardwareModel(b.part)!,x=modelPin(am,a.pose!,wire.start.pinName),y=modelPin(bm,b.pose!,wire.end.pinName);
++  if(!x||!y){routes[wire.id]={points:[],lengthMm:0,clear:false,reason:'부품의 실제 단자 위치를 확인하지 못했습니다.'};continue;}
++  const shieldBinding=a.part.boardKind==='arduino-uno'&&b.part.id==='SHIELD1'&&['A4','A5','5V','GND.2'].includes(wire.start.pinName);
++  if((wire.start.pinName==='GPIO40'&&wire.end.pinName==='GPIO40')||shieldBinding){routes[wire.id]={points:[x,y],lengthMm:0,clear:true,binding:true};continue;}
++  const route=routeCable(x,y,modelBox(a.part,a.pose!)!,modelBox(b.part,b.pose!)!,portDirection(am,wire.start.pinName,a.pose!.rotation),portDirection(bm,wire.end.pinName,b.pose!.rotation),obstacles,previous);
++  routes[wire.id]=route;if(route.clear)previous.push(route.points);
++ }
++ return {routes,wireLengthMm:Math.round(Object.values(routes).reduce((n,r)=>n+r.lengthMm,0)),unresolved:Object.entries(routes).filter(([,r])=>!r.clear).map(([id,r])=>({id,reason:r.reason}))};
++}
+diff --git a/frontend/src/components/circuitiny/assemblyScene.ts b/frontend/src/components/circuitiny/assemblyScene.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assemblyScene.ts
+@@ -0,0 +1,33 @@
++import * as T from 'three';
++let sceneRoot:(()=>T.Object3D|undefined)|undefined;
++export function registerAssemblyScene(getRoot:()=>T.Object3D|undefined){sceneRoot=getRoot;return ()=>{if(sceneRoot===getRoot)sceneRoot=undefined;};}
++/** Transfer the actual rendered product models and routed cables, not substitute boxes. */
++export function captureAssemblyVisual(parts:any[]){
++ const mounted=new Set(parts.filter(p=>p.properties?.evAssembly).map(p=>p.id));
++ if(!mounted.size)return undefined;
++ const root=sceneRoot?.();if(!root)throw Error('3D 조립 화면을 준비한 뒤 다시 실행하세요.');
++ const photo=parts.find(p=>Array.isArray(p.properties?.photoSceneOrigin)),origin=photo?.properties.photoSceneOrigin||[0,0];
++ const out=new T.Group();out.name='assembled-system';
++ root.updateMatrixWorld(true);
++ for(const id of mounted){
++  const outer=root.getObjectByName('ev-part:'+id),body=outer?.getObjectByName('ev-body:'+id);
++  if(!outer||!body)throw Error(id+'의 실물 모델이 아직 준비되지 않았습니다.');
++  const group=new T.Group();group.name='assembly-part:'+id;group.position.copy(outer.position);group.add(body.clone(true));out.add(group);
++ }
++ root.traverse(child=>{if(child.name==='ev-cable')out.add(child.clone(true));});
++ out.position.set(-origin[0]/1000,0,-origin[1]/1000);
++ // Bake deformed/parametric meshes. In particular CurvePath-backed tubes
++ // cannot be reconstructed through ObjectLoader's parametric constructors.
++ const baked=new Map<string,T.BufferGeometry>();
++ out.traverse(child=>{
++  const mesh=child as T.Mesh;if(!mesh.geometry)return;
++  let geometry=baked.get(mesh.geometry.uuid);
++  if(!geometry){geometry=new T.BufferGeometry().copy(mesh.geometry);baked.set(mesh.geometry.uuid,geometry);}
++  mesh.geometry=geometry;
++ });
++ out.updateMatrixWorld(true);
++ const result=out.toJSON();
++ baked.forEach(geometry=>geometry.dispose());
++ if(JSON.stringify(result).length>12_000_000)throw Error('조립 그래픽이 너무 큽니다. 표시할 부품을 줄인 뒤 다시 실행하세요.');
++ return result;
++}
+diff --git a/frontend/src/__tests__/assembly-planner.test.ts b/frontend/src/__tests__/assembly-planner.test.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/__tests__/assembly-planner.test.ts
+@@ -0,0 +1,113 @@
++import {beforeAll,describe,it,expect} from 'vitest';
++import * as T from 'three';
++import {proposeAssembly,withAssembly,restoreAssembly,routeAssembly,hardwareObstacles} from '../components/circuitiny/assemblyPlanner';
++import {structures,mountedPose,modelBox,hardwareModel,modelPin,contains,overlap,segmentHits,structureObstacles,MM_PER_PX,type V} from '../components/circuitiny/assemblyGeometry';
++import {routeCable} from '../components/circuitiny/assemblyRouting';
++import {registerAssemblyScene,captureAssemblyVisual} from '../components/circuitiny/assemblyScene';
++
++function fixture(){
++ const models:Record<string,string>={U1:'rpi4b',HAT1:'adafruit-motor-hat-2348',MOTOR_L:'adafruit-micro-dc-2941',MOTOR_R:'adafruit-micro-dc-2941',BAT1:'dc-supply-generic',PS1:'usb-c-supply-generic'};
++ const components=Object.entries(models).map(([id,evPhysicalModel],i)=>({id,metadataId:'custom-chip',x:120+i*100,y:150,properties:{evPhysicalModel}}));
++ const photo:any[]=[['plate','chassis',[0,66,0],[220,5.5,143]],['platform','platform',[-44,113.3,-3.3],[121,5.5,129.8]],
++  ['upper','housing',[-44,133.1,-3.3],[107.8,34.1,116.6]],['front','housing',[75.9,85.8,0],[35.2,34.1,136.4]],
++  ['near','support',[9.9,90.2,56.1],[5.94,41.8,5.94]],['far','support',[9.9,90.2,-56.1],[5.94,41.8,5.94]],
++  ['wheel','wheel',[-62.7,46.2,84.7],[92.4,16.5,92.4]],['flange','frame',[48.4,53.9,69.3],[105.6,24.2,5.5]]];
++ components.push(...photo.map(([id,role,pos,size])=>({id:'photo-'+role+'-'+id,metadataId:'ev-structure',x:(pos[0]-size[0]/2)/MM_PER_PX-6,y:(pos[2]-size[2]/2)/MM_PER_PX-6,
++  properties:{shape:role==='wheel'||role==='support'?'cylinder':'box',label:id,width:size[0],height:size[1],depth:size[2],elevation:pos[1]-size[1]/2,rotationX:role==='wheel'?90:0,rotation:0,rotationZ:0,color:'#444444',evPhotoStructure:{role},photoSceneOrigin:[0,0]}})) as any[]);
++ const pairs=[['U1.GPIO40','HAT1.GPIO40'],['U1.USB_C','PS1.USB_C'],['MOTOR_L.black','HAT1.M1.left'],['MOTOR_L.red','HAT1.M1.right'],['MOTOR_R.black','HAT1.M2.left'],['MOTOR_R.red','HAT1.M2.right'],['BAT1.red','HAT1.PWR.positive'],['BAT1.black','HAT1.PWR.negative']];
++ const endpoint=(p:string)=>{const [componentId,...name]=p.split('.');return {componentId,pinName:name.join('.'),x:0,y:0};};
++ return {format:'velxio-project',boards:[],components,wires:pairs.map(([a,b],i)=>({id:'C'+i,start:endpoint(a),end:endpoint(b),waypoints:[],color:'#222222'})),fileGroups:{python:[{content:'preserve user code'}]},embeddedVision:{recipe:'raspberry_pi_2wd_robot'}};
++}
++let original:any,assembled:any;
++beforeAll(()=>{original=fixture();const result=proposeAssembly(original);expect(result.changed,result.error).toBe(true);assembled=result.project;},15000);
++
++describe('photo assembly placement',()=>{
++ it('preserves every terminal, native position and user code while mounting all six devices',()=>{
++  expect(assembled.wires).toBe(original.wires);expect(assembled.fileGroups).toBe(original.fileGroups);
++  const mounted=assembled.components.filter((p:any)=>p.properties.evAssembly);
++  expect(mounted).toHaveLength(6);expect(mounted.map((p:any)=>[p.id,p.x,p.y])).toEqual(original.components.slice(0,6).map((p:any)=>[p.id,p.x,p.y]));
++  expect(assembled.components.filter((p:any)=>p.metadataId==='ev-structure')).toHaveLength(8);
++  expect(assembled.embeddedVision.assembly.candidateCount).toBeGreaterThan(100);
++ });
++ it('keeps power modules in the selected enclosures and aligns both GPIO headers',()=>{
++  const parts=assembled.components,photo=structures(parts);
++  for(const id of ['BAT1','PS1']){const part=parts.find((p:any)=>p.id===id),host=photo.find(o=>o.part.id===part.properties.evAssembly.host.id)!;
++   expect(host.role).toBe('housing');expect(contains(host.box,modelBox(part,mountedPose(part,parts)!)!,2)).toBe(true);}
++  const pi=parts.find((p:any)=>p.id==='U1'),hat=parts.find((p:any)=>p.id==='HAT1');
++  const a=modelPin(hardwareModel(pi)!,mountedPose(pi,parts)!,'GPIO40')!,b=modelPin(hardwareModel(hat)!,mountedPose(hat,parts)!,'GPIO40')!;
++  expect(a[0]).toBeCloseTo(b[0],5);expect(a[2]).toBeCloseTo(b[2],5);expect(b[1]).toBeGreaterThan(a[1]);
++ });
++ it('avoids solid structures and other devices except the intended Pi/HAT stack',()=>{
++  const parts=assembled.components,photo=structures(parts),mounted=parts.filter((p:any)=>p.properties.evAssembly);
++  for(const part of mounted){const pose=mountedPose(part,parts)!,box=modelBox(part,pose)!,host=part.properties.evAssembly.host.id;
++   for(const shape of photo)if(shape.part.id!==host)expect(overlap(box,shape.box,1)).toBe(false);
++   for(const other of mounted){if(other.id===part.id||['U1:HAT1','HAT1:U1'].includes(part.id+':'+other.id))continue;expect(overlap(box,modelBox(other,mountedPose(other,parts)!)!,1)).toBe(false);}
++  }
++ });
++ it('preserves a saved layout and follows the parent board and enclosure after native dragging',()=>{
++  expect(withAssembly(assembled)).toBe(assembled);
++  const undone=structuredClone(assembled);for(const p of undone.components)delete p.properties.evAssembly;
++  expect(withAssembly(undone)).toBe(undone);
++  const parts=structuredClone(assembled.components),hat=parts.find((p:any)=>p.id==='HAT1'),before=mountedPose(hat,parts)!;
++  parts.find((p:any)=>p.id==='U1').x+=10;
++  expect(mountedPose(hat,parts)!.position[0]-before.position[0]).toBeCloseTo(10*MM_PER_PX,6);
++ });
++ it('reports insufficient space rather than shrinking real devices or adding a chassis',()=>{
++  const small=fixture();for(const p of small.components.filter((p:any)=>p.metadataId==='ev-structure')){(p.properties as any).width=10;(p.properties as any).depth=10;}
++  const result=proposeAssembly(small);expect(result.changed).toBe(false);expect(result.project).toBe(small);expect(result.error).toBeTruthy();
++ });
++ it('reassembles exploded photo objects and preserves their previous positions for restore',()=>{
++  const input:any=fixture();
++  input.embeddedVision.photo_structure={objects:structures(input.components).map(o=>({id:o.part.id.replace('photo-'+o.role+'-',''),role:o.role,geometry:{position:o.pose.position.map(n=>n/220),rotation:o.pose.rotation}}))};
++  const wheel=input.components.find((p:any)=>p.id==='photo-wheel-wheel');wheel.x+=400;
++  const result=proposeAssembly(input);expect(result.changed,result.error).toBe(true);
++  expect(result.project.components.find((p:any)=>p.id===wheel.id).x).not.toBe(wheel.x);
++  const restored=restoreAssembly(result.project);
++  expect(restored.components.find((p:any)=>p.id===wheel.id).x).toBe(wheel.x);
++  expect(withAssembly(restored)).toBe(restored);
++  expect(restored.wires).toBe(input.wires);expect(restored.fileGroups).toBe(input.fileGroups);
++ });
++});
++
++describe('physical cable routing',()=>{
++ it('also mounts an Uno/Motor Shield and preserves its four stacking-net identities',()=>{
++  const input:any=fixture();input.embeddedVision.recipe='translated_uno_motor_shield_rover';
++  input.components=input.components.filter((p:any)=>!['U1','PS1'].includes(p.id)).map((p:any)=>p.id==='HAT1'?{...p,id:'SHIELD1',properties:{evPhysicalModel:'adafruit-motor-shield-v2'}}:p);
++  input.boards=[{id:'U1',boardKind:'arduino-uno',x:120,y:150}];
++  input.wires=input.wires.slice(2).map((w:any)=>({...w,start:{...w.start,componentId:w.start.componentId==='HAT1'?'SHIELD1':w.start.componentId},end:{...w.end,componentId:w.end.componentId==='HAT1'?'SHIELD1':w.end.componentId}}));
++  for(const [from,to] of [['A4','SDA'],['A5','SCL'],['5V','5V'],['GND.2','GND']])input.wires.push({id:'stack-'+from,start:{componentId:'U1',pinName:from},end:{componentId:'SHIELD1',pinName:to},waypoints:[]});
++  const result=proposeAssembly(input);expect(result.changed,result.error).toBe(true);
++  const routes=routeAssembly([...result.project.components,...result.project.boards],result.project.wires);
++  expect(routes.unresolved).toEqual([]);expect(Object.values(routes.routes).filter(r=>r.binding)).toHaveLength(4);
++  expect(result.project.boards[0].properties.evAssembly).toBeTruthy();expect(result.project.wires).toBe(input.wires);
++ });
++ it('routes all eight logical connections without changing connectivity or penetrating solids',()=>{
++  const parts=assembled.components,result=routeAssembly(parts,assembled.wires);
++  expect(result.unresolved).toEqual([]);expect(Object.keys(result.routes)).toHaveLength(8);
++  expect(result.wireLengthMm).toBeGreaterThan(100);
++  const solids=[...structureObstacles(structures(parts)),...parts.filter((p:any)=>p.properties.evAssembly).flatMap((p:any)=>hardwareObstacles(p,mountedPose(p,parts)!))];
++  for(const wire of assembled.wires){if(wire.start.pinName==='GPIO40')continue;const route=result.routes[wire.id];
++   // The first and final connector entry are allowed within their own envelope.
++   for(let i=2;i<route.points.length-2;i++)for(const solid of solids)expect(segmentHits(route.points[i-1],route.points[i],solid,1.19),wire.id+' '+solid.id).toBe(false);
++  }
++ });
++ it('refuses a sealed connector rather than showing a fake clear path',()=>{
++  const box={id:'a',min:[-1,-1,-1] as V,max:[1,1,1] as V},b={id:'b',min:[9,-1,-1] as V,max:[11,1,1] as V};
++  const cage={id:'blocking-wall',min:[1.5,-5,-5] as V,max:[3,5,5] as V};
++  expect(routeCable([1,0,0],[9,0,0],box,b,[1,0,0],[-1,0,0],[box,b,cage]).clear).toBe(false);
++ });
++});
++
++describe('exact visual transfer',()=>{
++ it('copies mounted product bodies and cables without copying the photo geometry twice',()=>{
++  const root=new T.Group(),outer=new T.Group(),body=new T.Group();outer.name='ev-part:U1';body.name='ev-body:U1';outer.position.set(.1,.2,.3);body.add(new T.Mesh(new T.BoxGeometry(.1,.01,.1),new T.MeshStandardMaterial()));outer.add(body);root.add(outer);
++  const cable=new T.Group();cable.name='ev-cable';const path=new T.CurvePath<T.Vector3>();path.add(new T.LineCurve3(new T.Vector3(0,0,0),new T.Vector3(.1,.1,0)));cable.add(new T.Mesh(new T.TubeGeometry(path,12,.001,6),new T.MeshStandardMaterial()));root.add(cable);
++  const cleanup=registerAssemblyScene(()=>root);
++  const data=captureAssemblyVisual([{id:'U1',properties:{evAssembly:{}}},{id:'photo',properties:{photoSceneOrigin:[100,300]}}]);
++  expect(data?.object.name).toBe('assembled-system');expect(data?.object.children).toHaveLength(2);
++  expect((data?.object.children as unknown as Array<{name:string}>)?.[0].name).toBe('assembly-part:U1');cleanup();
++  expect(()=>new T.ObjectLoader().parse(data!)).not.toThrow();
++  const loaded=new T.ObjectLoader().parse(data!),position=loaded.getObjectByName('assembly-part:U1')!.getWorldPosition(new T.Vector3());
++  expect(position.toArray()).toEqual([0,.2,0]);
++ });
++});

@@ -1,0 +1,3232 @@
+--- a/frontend/src/store/useSimulatorStore.ts
++++ b/frontend/src/store/useSimulatorStore.ts
+@@ -2793,6 +2793,8 @@
+         if (b.languageMode && b.languageMode !== 'arduino') patch.languageMode = b.languageMode;
+         if (b.name && b.name.trim()) patch.name = b.name;
+         if (b.rotation) patch.rotation = normalizeRotation(b.rotation);
++        if (b.properties) patch.properties = b.properties;
++        if (b.serialBaudRate) patch.serialBaudRate = b.serialBaudRate;
+         // P2.4 — restore per-board persisted fields that ride in boards_json.
+         if (b.boardOptions) patch.boardOptions = b.boardOptions;
+         if (b.spiffsFiles) patch.spiffsFiles = b.spiffsFiles;
+--- a/frontend/src/utils/projectPayload.ts
++++ b/frontend/src/utils/projectPayload.ts
+@@ -40,6 +40,7 @@
+     activeFileGroupId: b.activeFileGroupId,
+     languageMode: b.languageMode,
+     serialBaudRate: b.serialBaudRate,
++    ...(b.properties ? {properties:b.properties} : {}),
+     // compiledProgram is deliberately NOT persisted. The firmware blob was
+     // 99.99% of a typical ESP32 save payload (~1.04 MB base64 for a bare
+     // board), pushing every real project against the request-size ceiling,
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -85,10 +85,15 @@
+     drag = useStore((s) => s.endpointDrag),
+     wireMode = useStore((s) => s.wireMode);
+   const selectedObject = useStore(s => s.selected);
++  const enclosureView=useStore(s=>s.enclosureView);
++  const concealed=(ref:string)=>{
++    const id=ref.split('.')[0],part=[...project.components,...(project.boards||[])].find(p=>p.instance===id||(id==='board'&&p.config?.isBoard));
++    return part?.config?.evDesignMount==='internal'&&project.components.some(c=>c.instance===part.config?.evDesignEnclosure);
++  };
+   return (
+     <>
+       {project.nets
+-        .filter((n) => !n.hidden)
++        .filter((n) => !n.hidden&&(enclosureView!=='assembled'||!n.endpoints.some(concealed)))
+         .map((net) => {
+           const a = resolvePin(project, net.endpoints[0]),
+             b = resolvePin(project, net.endpoints[1]);
+--- a/frontend/src/components/circuitiny/EnclosureView.tsx
++++ b/frontend/src/components/circuitiny/EnclosureView.tsx
+@@ -3,26 +3,29 @@
+ import {disposeEnvironmentMesh} from './environmentMeshes';
+ import {useStore} from './store';
+ import {useSimulatorStore as native} from '../../store/useSimulatorStore';
+-type Part=ReturnType<typeof native.getState>['components'][number];
++type Part={id?:string;metadataId?:string;x?:number;y?:number;properties?:Record<string,unknown>};
+ export function EnclosureShell({view,color}:{view:View;color:string}){
+  const mesh=useMemo(()=>enclosureMesh(view,color),[view,color]);
+  useEffect(()=>()=>disposeEnvironmentMesh(mesh),[mesh]);
+  return <primitive object={mesh}/>;
+ }
+ export function EnclosureControls(){
+- const parts=native(s=>s.components),mode=useStore(s=>s.enclosureView),selected=useStore(s=>s.selected);
+- const shells=parts.filter(p=>!!p.properties?.evEnclosure),modules=parts.filter(p=>!!p.properties?.evInternalHypothesis);
++ const components=native(s=>s.components),boards=native(s=>s.boards),mode=useStore(s=>s.enclosureView),selected=useStore(s=>s.selected);
++ const parts=[...components,...boards],shells=parts.filter(p=>!!p.properties?.evEnclosure),modules=parts.filter(p=>!!p.properties?.evInternalHypothesis||!!p.properties?.evSelectedDesign),chosen=modules.some(p=>!!p.properties?.evSelectedDesign);
+  if(!shells.length)return null;
+  const change=(view:View)=>useStore.setState(s=>({enclosureView:view,selected:null,selectedNet:null,moveTarget:null,fitRevision:s.fitRevision+1}));
+  return <details className="ev-c3d-more"><summary>외장·내부 분해</summary><div>
+-  {([['assembled','외장 보기'],['inside','내부 추정 보기'],['exploded','분해도']] as const).map(([view,label])=><button key={view} aria-pressed={mode===view} onClick={()=>change(view)}>{label}</button>)}
+-  <small>외부 단서로 추론한 내부 후보 {modules.length}개 · 실물 내부 미확인</small>
+-  <label>추정 부품 선택<select value={modules.some(m=>m.id===selected)?selected!:''} onChange={e=>{if(e.target.value)useStore.setState({enclosureView:'inside',selected:e.target.value,selectedNet:null,moveTarget:null});}}><option value="">모듈·부품 선택</option>{modules.map(p=><option value={p.id} key={p.id}>{String(p.properties.label||p.id)}</option>)}</select></label>
++  {([['assembled','외장 보기'],['inside',chosen?'선정 부품·배선':'내부 추정 보기'],['exploded','분해도']] as const).map(([view,label])=><button key={view} aria-pressed={mode===view} onClick={()=>change(view)}>{label}</button>)}
++  <small>{chosen?`기능 실행용 선정 부품 ${modules.length}개`:`외부 단서로 추론한 내부 후보 ${modules.length}개 · 실물 내부 미확인`}</small>
++  <label>{chosen?'선정 부품 선택':'추정 부품 선택'}<select value={modules.some(m=>m.id===selected)?selected!:''} onChange={e=>{if(e.target.value)useStore.setState({enclosureView:'inside',selected:e.target.value,selectedNet:null,moveTarget:null});}}><option value="">모듈·부품 선택</option>{modules.map(p=><option value={p.id} key={p.id}>{String(p.properties?.label||p.id)}</option>)}</select></label>
+  </div></details>;
+ }
+ export function EnclosureDetails({part}:{part:Part}){
++ const chosen=part.properties?.evSelectedDesign as {name?:string;purpose?:string;selection_reason?:string;parameters?:Record<string,unknown>}|undefined;
+  const internal=part.properties?.evInternalHypothesis as {purpose?:string;rationale?:string;candidate_parts?:string[];alternatives?:string[];confidence?:'low'|'medium'|'high';photo_presence?:string}|undefined;
+- const shell=part.properties?.evEnclosure as {rationale?:string;assumptions?:string[];unknowns?:string[]}|undefined;
++ const shell=part.properties?.evEnclosure as {design_selected?:boolean;rationale?:string;assumptions?:string[];unknowns?:string[]}|undefined;
++ if(chosen)return <div><strong>기능 구현용 선정 완료 · {chosen.name}</strong><p>{chosen.purpose}</p><p>{chosen.selection_reason}</p>{Object.entries(chosen.parameters||{}).map(([key,value])=><p key={key}>{key}: {String(value)}</p>)}</div>;
++ if(shell?.design_selected)return <div><strong>새 설계 외장 · 치수 선정 완료</strong><p>{shell.rationale}</p><p>{shell.assumptions?.join(' / ')}</p></div>;
+  if(!internal&&!shell)return null;
+  return <div><p><strong>{internal?'내부 구성 추정 · 실제 존재 미확인':'외장 표시 모형 · 실제 내부 미확인'}</strong></p>
+   {internal?<><p>{internal.purpose}</p><p>후보: {internal.candidate_parts?.join(' / ')||'정확한 모델 미확인'}</p><p>{internal.rationale}</p><p>다른 가능성: {internal.alternatives?.join(' / ')||'추가 확인 필요'}</p><p>확신도: {internal.confidence?({low:'낮음',medium:'보통',high:'높음'})[internal.confidence]:'미확인'}</p></>:<><p>{shell?.rationale}</p><p>가정: {shell?.assumptions?.join(' / ')}</p><p>미확인: {shell?.unknowns?.join(' / ')}</p></>}
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -631,6 +631,8 @@
+   const simulating = useStore((s) => s.simulating);
+   const simLog = useStore((s) => s.simLog);
+   const pixels = useStore((s) => s.simStrips[c.instance]);
++  const enclosureView=useStore(s=>s.enclosureView);
++  const enclosed=useStore(s=>s.project.components.some(p=>p.instance===c.config?.evDesignEnclosure&&!!p.config?.structure));
+   const wireMode = useStore((s) => s.wireMode);
+   const { camera, gl, controls } = useThree();
+ 
+@@ -786,7 +788,7 @@
+     </group>
+   );
+ 
+-  return content;
++  return enclosed&&enclosureView==='assembled'&&c.config?.evSelectedDesign&&c.config?.evDesignMount==='internal'?null:content;
+ }
+ 
+ /** Draw the hovered hole's own internal strip, not the whole connected net. */
+@@ -799,6 +801,12 @@
+ 
+ export function Nets({ violations }: { violations: Violation[] }) {
+   const project = useStore((s) => s.project);
++  const enclosureView=useStore(s=>s.enclosureView);
++  const closed=(ref:string)=>{
++    const id=ref.split('.')[0];
++    const part=[...project.components,...(project.boards||[])].find(p=>p.instance===id||(id==='board'&&p.config?.isBoard));
++    return !!part?.config?.evSelectedDesign&&part.config.evDesignMount==='internal';
++  };
+   const removeNet = useStore((s) => s.removeNet);
+   const errorRefs = new Set(
+     violations.filter((v) => v.severity === 'error').flatMap((v) => v.involves),
+@@ -810,7 +818,7 @@
+   return (
+     <>
+       {project.nets
+-        .filter((net) => !net.hidden)
++        .filter((net) => !net.hidden&&(enclosureView!=='assembled'||!net.endpoints.some(closed)))
+         .flatMap((net) => {
+           const resolved = net.endpoints
+             .map((e) => resolvePin(project, e))
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -442,10 +442,11 @@
+           reference={selected!}
+           info={structure?`${structure.width} × ${structure.depth} × ${structure.height} mm`:component?.properties?.value?String(component.properties.value):board?'개발보드':`${definitions.get([...project.components,...(project.boards||[])].find(c=>c.instance===selected)?.componentId||'')?.pins.length||0}핀`}
+           moving={moveTarget===selected&&!running&&!wireMode} disabled={running||wireMode}
+-          status={component?.properties?.evInternalHypothesis?'내부 추정':component?.properties?.evEnclosure?'외장 모형':running?'실행 중':wireMode?'배선 편집 중':undefined}
++          status={component?.properties?.evSelectedDesign||board?.properties?.evSelectedDesign?'설계 선정 완료':component?.properties?.evInternalHypothesis?'내부 추정':component?.properties?.evEnclosure?'외장 설계':running?'실행 중':wireMode?'배선 편집 중':undefined}
+           actions={component&&environmentKind(component.properties)?<EnvironmentActions part={component}/>:undefined}
+           onMove={()=>useStore.setState(s=>({moveTarget:s.moveTarget===selected?null:selected}))}
+           onClose={()=>useStore.getState().select(null)}>
++          {!structure&&<EnclosureDetails part={component||board||{}}/>}
+           {physicalModel&&<details><summary>실물 형상 · {physicalModel.name}</summary><p>{physicalModel.source?'제안된 설계 부품의 제품 형상 모델입니다.':'제품 모델이 미확인인 일반형입니다.'} 전기 동작 모델과는 별개입니다.</p><p>{physicalModel.basis}</p>{physicalModel.source&&<><p>외곽 기준: {physicalModel.width} × {physicalModel.depth} mm</p><a href={physicalModel.source} target="_blank" rel="noreferrer">제조사 원문·도면</a></>}{['hat','shield'].includes(physicalModel.kind)&&<p><a href="/physical-models/hat-license.txt" target="_blank" rel="noreferrer">Adafruit PCB 자료 · CC BY-SA 3.0</a></p>}</details>}
+           {Boolean(component?.properties?.evAssembly)&&<details><summary>장착 위치 · 새 설계 추정</summary><p>{String((component!.properties.evAssembly as {note:string}).note)}</p><p>사진의 원래 장착을 복원한 결과가 아닙니다. 치수와 고정 방법은 실제 부품으로 검토하세요.</p></details>}
+           <p>
+--- /dev/null
++++ b/frontend/src/__tests__/functional-build.test.ts
+@@ -0,0 +1,82 @@
++// @vitest-environment jsdom
++import {describe,it,expect,vi} from 'vitest';
++import {AVRSimulator} from '../simulation/AVRSimulator';
++import {PinManager} from '../simulation/PinManager';
++import {buildNetlist} from '../simulation/spice/NetlistBuilder';
++import {runNetlist} from './helpers/testSolver';
++import {importVlxFile,buildVlxPayload} from '../utils/vlxFile';
++import {useSimulatorStore} from '../store/useSimulatorStore';
++import {registerProject} from '../components/circuitiny/bridge';
++import {mountedPose,structures,contains,unoModel,bounds} from '../components/circuitiny/assemblyGeometry';
++import dimmer from './fixtures/functional-dimmer.json';
++import servo from './fixtures/functional-servo.json';
++import liveWatering from './fixtures/functional-watering-live.json';
++import {waterBinding} from '../components/circuitiny/environmentObjects';
++import {readPumpCircuit} from '../components/circuitiny/pumpCircuit';
++import {advanceWater,initialWaterState,soilAdc} from '../components/circuitiny/wateringModel';
++vi.stubGlobal('requestAnimationFrame',()=>1);vi.stubGlobal('cancelAnimationFrame',()=>{});
++
++async function voltage(fixture:typeof dimmer,value:number){
++ const components=fixture.project.components.map(c=>c.id==='S1'?{...c,properties:{...c.properties,value}}:c);
++ const input={components,wires:fixture.project.wires,boards:[{id:'U1',boardKind:'arduino-uno',vcc:5,pins:{},groundPinNames:['GND'],vccPinNames:['5V']}],analysis:{kind:'op'}} as Parameters<typeof buildNetlist>[0];
++ const {netlist,pinNetMap}=buildNetlist(input),result=await runNetlist(netlist);
++ return result.dcValue(`v(${pinNetMap.get('U1:A0')})`);
++}
++function steps(sim:AVRSimulator,count=400000){for(let i=0;i<count;i++)sim.step();}
++describe('completed implementation circuits execute their chosen function',()=>{
++ it('uses the actual potentiometer circuit voltage to control MCU PWM duty',async()=>{
++  const pm=new PinManager(),sim=new AVRSimulator(pm,'uno');sim.loadHex(dimmer.hex);
++  const ratios:number[]=[];
++  for(const value of [0,512,1023]){
++   const v=await voltage(dimmer,value);sim.getADC()!.channelValues[0]=v;steps(sim);
++   let high=0,total=0;
++   for(let i=0;i<300000;i++){const start=sim.getCurrentCycles();sim.step();const dt=sim.getCurrentCycles()-start;total+=dt;if(pm.getPinState(5))high+=dt;}
++   ratios.push(high/total);
++  }
++  expect(ratios[0]).toBeLessThan(.01);expect(ratios[1]).toBeGreaterThan(.45);expect(ratios[1]).toBeLessThan(.55);expect(ratios[2]).toBeGreaterThan(.99);
++ });
++ it('executes the selected servo code and changes its real output pulse width',()=>{
++  const pm=new PinManager(),sim=new AVRSimulator(pm,'uno');sim.loadHex(servo.hex);
++  const pulseLengths:number[]=[];let start=0;
++  pm.onPinChange(9,(_pin,on)=>{if(on)start=sim.getCurrentCycles();else if(start)pulseLengths.push((sim.getCurrentCycles()-start)/16);});
++  sim.getADC()!.channelValues[0]=0;steps(sim,1000000);const low=pulseLengths.slice(-3);
++  pulseLengths.length=0;sim.getADC()!.channelValues[0]=5;steps(sim,1000000);const high=pulseLengths.slice(-3);
++  expect(low.length).toBeGreaterThan(1);expect(high.length).toBeGreaterThan(1);
++  expect(low,JSON.stringify(low)).toSatisfy(v=>v.every((us:number)=>us>980&&us<1030));expect(high,JSON.stringify(high)).toSatisfy(v=>v.every((us:number)=>us>1980&&us<2030));
++ });
++ it('preserves pins, wiring, chosen parts and internal mounting through the editor',async()=>{
++  await importVlxFile({text:async()=>JSON.stringify(dimmer.project)} as File);
++  const state=useSimulatorStore.getState(),payload=buildVlxPayload(),p=registerProject(state);
++  expect(payload.wires).toEqual(dimmer.project.wires);expect(payload.boards[0].properties?.evSelectedDesign).toMatchObject({status:'DESIGN_SELECTED'});
++  expect(p.nets).toHaveLength(6);
++  const all=[...state.components,...state.boards],shell=structures(all).find(s=>s.part.properties.evEnclosure)!;
++  const pose=mountedPose(state.boards[0],all)!;
++  expect(contains(shell.box,bounds('U1',pose,[unoModel.width,unoModel.height,unoModel.depth],true),1)).toBe(true);
++  expect(payload.components.some(c=>c.properties.evInternalHypothesis)).toBe(false);
++ });
++ it('runs the actual API-generated watering code through sensor voltage, driver current and water feedback',async()=>{
++  const project=liveWatering.project,components=structuredClone(project.components),wires=project.wires;
++  const sensor=components.find(c=>c.id==='S1')!,button=components.find(c=>c.id==='B1')!,pump=components.find(c=>c.id==='M1')!;
++  const binding=waterBinding(pump.properties)!;expect(binding.controlPin).toBe(9);expect(binding.gateResistorId).toBe('R1');
++  const pm=new PinManager(),sim=new AVRSimulator(pm,'uno');sim.loadHex(liveWatering.hex);
++  const readings:Array<{on:boolean;current:number}>=[];let lastPower=0;
++  async function solve(){
++   const {netlist,pinNetMap}=buildNetlist({components,wires,boards:[{id:'U1',boardKind:'arduino-uno',vcc:5,
++    pins:{'2':{type:'input',pull:1},'8':{type:'digital',v:pm.getPinState(8)?5:0},'9':{type:'digital',v:pm.getPinState(9)?5:0}},groundPinNames:['GND'],vccPinNames:['5V']}],analysis:{kind:'op'}} as Parameters<typeof buildNetlist>[0]);
++   const result=await runNetlist(netlist);const nodeVoltages:Record<string,number>={},branchCurrents:Record<string,number>={};
++   for(const name of result.variableNames){const v=/^v\((.+)\)$/i.exec(name),i=/^i\((.+)\)$/i.exec(name);if(v)nodeVoltages[v[1].toLowerCase()]=result.dcValue(name);if(i)branchCurrents[i[1].toLowerCase()]=result.dcValue(name);}
++   const level=(pin:string)=>{const net=pinNetMap.get(pin);return net==='0'?0:nodeVoltages[net!]||0;};
++   return {adc:level('U1:A0'),stop:level('U1:2'),reading:readPumpCircuit(binding,components,wires,{nodeVoltages,branchCurrents,pinNetMap,converged:true,error:null},pm.getPinState(9))};
++  }
++  for(const [adc,pressed,on] of [[560,false,true],[280,false,false],[560,true,false],[560,false,true]] as const){
++   sensor.properties.value=adc;(button.properties as Record<string,unknown>).pressed=pressed;
++   const input=await solve();sim.getADC()!.channelValues[0]=input.adc;sim.setPinState(2,input.stop>2.5);steps(sim,2000000);
++   const {reading}=await solve();expect(pm.getPinState(9),JSON.stringify({adc,pressed,voltage:input.adc,stop:input.stop,cycles:sim.getCurrentCycles()})).toBe(on);
++   if(on){expect(reading.current).toBeGreaterThan(.24);expect(reading.power).toBeGreaterThan(.98);}else expect(Math.abs(reading.current)).toBeLessThan(.001);
++   readings.push({on,current:reading.current});lastPower=reading.power;
++  }
++  const world=advanceWater(initialWaterState(binding,560),2,lastPower,binding,true);
++  expect(world.deliveredMl).toBeGreaterThan(0);expect(soilAdc(world,binding)).toBeLessThan(560);
++  console.info('API_GENERATED_WATERING',JSON.stringify(readings));
++ });
++});
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/functional-dimmer.json
+@@ -0,0 +1,669 @@
++{
++  "project": {
++    "format": "velxio-project",
++    "version": 1,
++    "exportedAt": "2026-11-05T07:41:41.641715+00:00",
++    "name": "다이얼 제어 · dimmer",
++    "boards": [
++      {
++        "id": "U1",
++        "name": "Arduino UNO · 기능 구현 설계",
++        "boardKind": "arduino-uno",
++        "x": -345.82677165354335,
++        "y": -272.12598425196853,
++        "properties": {
++          "label": "Arduino UNO R3",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "입력 처리와 출력 제어",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [
++              "housing.control"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -345.82677165354335,
++              -272.12598425196853,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        },
++        "activeFileGroupId": "group-U1",
++        "languageMode": "arduino",
++        "serialBaudRate": 115200
++      }
++    ],
++    "components": [
++      {
++        "id": "build-case-housing",
++        "metadataId": "ev-structure",
++        "x": -478.44094488188983,
++        "y": -421.74803149606305,
++        "properties": {
++          "label": "예시 제어기 외장",
++          "shape": "box",
++          "width": 250,
++          "height": 90,
++          "depth": 220,
++          "elevation": 0,
++          "color": "#8c9ca7",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "designBasis": "functional_implementation",
++          "evEnclosure": {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "design_selected": true,
++            "rationale": "선정 부품을 장착하고 배선 공간을 확보하도록 외장 치수를 정했습니다.",
++            "assumptions": [
++              "원본 내부 대신 기능 실행용 부품을 선정",
++              "USB 5V 제어 전원 사용"
++            ],
++            "unknowns": []
++          }
++        }
++      },
++      {
++        "id": "S1",
++        "metadataId": "potentiometer",
++        "x": 160.2992125984252,
++        "y": -217.65354330708664,
++        "properties": {
++          "value": 512,
++          "label": "10kΩ 가변저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "potentiometer",
++            "name": "10kΩ 가변저항",
++            "quantity": 1,
++            "purpose": "다이얼 입력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {
++              "value": 512
++            },
++            "pin_basis": "Wokwi PotentiometerElement.pinInfo"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              160.2992125984252,
++              -217.65354330708664,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "R1",
++        "metadataId": "resistor",
++        "x": -247.88976377952758,
++        "y": 167.85826771653547,
++        "properties": {
++          "value": "220",
++          "label": "축형 저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "LED 전류 제한",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {
++              "value": "220"
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -247.88976377952758,
++              167.85826771653547,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "D1",
++        "metadataId": "led",
++        "x": 179.1968503937008,
++        "y": 160.2992125984252,
++        "properties": {
++          "color": "green",
++          "label": "표시용 LED",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "밝기 출력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {
++              "color": "green"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              179.1968503937008,
++              160.2992125984252,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "MOUNT1",
++        "metadataId": "ev-structure",
++        "x": -119.38582677165356,
++        "y": -752.456692913386,
++        "properties": {
++          "label": "제어기 고정판",
++          "shape": "box",
++          "width": 60.0,
++          "height": 4.0,
++          "depth": 35.0,
++          "elevation": 1.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "제어 장치를 지지하는 장착판"
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "제어기 고정판",
++            "purpose": "제어 장치를 지지하는 장착판",
++            "selection_reason": "제어 장치를 지지하는 장착판",
++            "quantity": 1
++          }
++        }
++      }
++    ],
++    "wires": [
++      {
++        "id": "BUILD_W1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5V",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "VCC",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W2",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W3",
++        "start": {
++          "componentId": "S1",
++          "pinName": "SIG",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "A0",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W4",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "R1",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W5",
++        "start": {
++          "componentId": "R1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "D1",
++          "pinName": "A",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W6",
++        "start": {
++          "componentId": "D1",
++          "pinName": "C",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      }
++    ],
++    "activeBoardId": "U1",
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "sketch.ino",
++          "content": "#include <Arduino.h>\nvoid setup(){pinMode(5,OUTPUT);}\nvoid loop(){analogWrite(5,analogRead(A0)/4);delay(10);}\n"
++        }
++      ]
++    },
++    "embeddedVision": {
++      "source_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++      "inventory_plan": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++      "source_graph_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
++      "function_version": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
++      "recipe": "ai_functional_build",
++      "basis": "selected_functional_implementation",
++      "functional_build_version": "693f84aecee040a338cc3e9e05896867a5f524cbd8257429f20a9c9cea8e375f",
++      "implementation_design": {
++        "status": "DESIGN_SELECTED",
++        "hypothesis_id": "top",
++        "title": "다이얼 제어 · dimmer",
++        "behavior": "다이얼을 돌린 만큼 LED 밝기를 조절합니다.",
++        "parts": [
++          {
++            "id": "U1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "입력 처리와 출력 제어",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [
++              "housing.control"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          {
++            "id": "S1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "potentiometer",
++            "name": "10kΩ 가변저항",
++            "quantity": 1,
++            "purpose": "다이얼 입력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {
++              "value": 512
++            },
++            "pin_basis": "Wokwi PotentiometerElement.pinInfo"
++          },
++          {
++            "id": "R1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "LED 전류 제한",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {
++              "value": "220"
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          {
++            "id": "D1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "밝기 출력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {
++              "color": "green"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          }
++        ],
++        "structures": [
++          {
++            "id": "MOUNT1",
++            "label": "제어기 고정판",
++            "role": "bracket",
++            "shape": "box",
++            "size_mm": [
++              60.0,
++              4.0,
++              35.0
++            ],
++            "position_mm": [
++              0.0,
++              3.0,
++              -180.0
++            ],
++            "purpose": "제어 장치를 지지하는 장착판"
++          }
++        ],
++        "connections": [
++          {
++            "source": "U1.5V",
++            "target": "S1.VCC",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "U1.GND",
++            "target": "S1.GND",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "S1.SIG",
++            "target": "U1.A0",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "U1.5",
++            "target": "R1.1",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "R1.2",
++            "target": "D1.A",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "D1.C",
++            "target": "U1.GND",
++            "purpose": "기능 실행을 위한 연결"
++          }
++        ],
++        "design_choices": [
++          "원본 내부 대신 기능 실행용 부품을 선정",
++          "USB 5V 제어 전원 사용"
++        ],
++        "acceptance_tests": [
++          "다이얼을 양끝으로 돌려 출력 변화를 확인"
++        ],
++        "not_implemented": [],
++        "firmware": {
++          "language": "arduino_cpp",
++          "source": "#include <Arduino.h>\nvoid setup(){pinMode(5,OUTPUT);}\nvoid loop(){analogWrite(5,analogRead(A0)/4);delay(10);}\n"
++        }
++      },
++      "enclosure_analysis": {
++        "summary": "예시 외장 내부의 기능 기반 가설",
++        "enclosures": [
++          {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "observed_part_ids": [
++              "case",
++              "lcd"
++            ],
++            "structure_object_id": null,
++            "hypothesis_ids": [
++              "top"
++            ],
++            "rationale": "외장과 외부 LCD를 근거로 내부 제어 및 전원부를 가정합니다.",
++            "modules": [
++              {
++                "id": "control",
++                "parent_id": null,
++                "name": "제어부",
++                "role": "controller",
++                "candidate_parts": [
++                  "MCU 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "제어부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "mcu",
++                "parent_id": "control",
++                "name": "마이크로컨트롤러",
++                "role": "controller",
++                "candidate_parts": [
++                  "ATmega 계열 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "마이크로컨트롤러 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "supply",
++                "parent_id": null,
++                "name": "전원부",
++                "role": "power",
++                "candidate_parts": [
++                  "DC 전압 변환 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "전원부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "cap",
++                "parent_id": "supply",
++                "name": "평활 커패시터",
++                "role": "passive",
++                "candidate_parts": [
++                  "커패시터 · 값 미확인"
++                ],
++                "required_part_ids": [],
++                "purpose": "평활 커패시터 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              }
++            ],
++            "assumptions": [
++              "외장 내부에 제어 회로가 있다고 가정"
++            ],
++            "unknowns": [
++              "실제 IC 모델·배선·치수"
++            ]
++          }
++        ],
++        "limitations": [
++          "불투명 외장 안의 실물 구성은 관측되지 않았습니다."
++        ]
++      },
++      "physical_verified": false,
++      "original_wiring_reused": false,
++      "simulation_behavior": "다이얼을 돌린 만큼 LED 밝기를 조절합니다.",
++      "simulation_notice": "기능을 실행하도록 부품·값·배선·코드를 선정한 새 설계입니다. 최종 실물 검증은 사용자가 진행합니다."
++    }
++  },
++  "hex": ":100000000C945C000C9479000C9479000C947900A9\n:100010000C9479000C9479000C9479000C9479007C\n:100020000C9479000C9479000C9479000C9479006C\n:100030000C9479000C9479000C9479000C9479005C\n:100040000C94A2000C9479000C9479000C94790023\n:100050000C9479000C9479000C9479000C9479003C\n:100060000C9479000C947900000000080002010053\n:100070000003040700000000000000000102040863\n:100080001020408001020408102001020408102002\n:10009000040404040404040402020202020203032E\n:1000A0000303030300000000250028002B000000CC\n:1000B0000000240027002A0011241FBECFEFD8E043\n:1000C000DEBFCDBF11E0A0E0B1E0E2E3F5E002C0A9\n:1000D00005900D92A230B107D9F721E0A2E0B1E07E\n:1000E00001C01D92AB30B207E1F70E9493000C945F\n:1000F00097020C94000061E085E00C942B028EE0E6\n:100100000E94880197FD0396BC01759567957595CA\n:10011000679585E00E94A3016AE070E080E090E0CE\n:100120000C94110108950E944D010E9492000E94BA\n:100130007B00C0E0D0E00E947F002097E1F30E94A6\n:100140000000F9CF1F920F920FB60F9211242F9338\n:100150003F938F939F93AF93BF93809103019091AF\n:100160000401A0910501B09106013091020123E044\n:10017000230F2D3720F40196A11DB11D05C026E8DF\n:10018000230F0296A11DB11D20930201809303014C\n:1001900090930401A0930501B0930601809107019B\n:1001A00090910801A0910901B0910A010196A11D49\n:1001B000B11D8093070190930801A0930901B093AA\n:1001C0000A01BF91AF919F918F913F912F910F9015\n:1001D0000FBE0F901F9018953FB7F89480910701BC\n:1001E00090910801A0910901B0910A0126B5A89B40\n:1001F00005C02F3F19F00196A11DB11D3FBFBA2FB9\n:10020000A92F982F8827820F911DA11DB11DBC0118\n:10021000CD0142E0660F771F881F991F4A95D1F7DD\n:1002200008958F929F92AF92BF92CF92DF92EF92FA\n:10023000FF926B017C010E94EC004B015C01C11438\n:10024000D104E104F10401F10E9496020E94EC0045\n:10025000DC01CB0188199909AA09BB09883E9340A2\n:10026000A105B10560F321E0C21AD108E108F10847\n:1002700088EE880E83E0981EA11CB11CC114D10425\n:10028000E104F10419F7DBCFFF90EF90DF90CF90FE\n:10029000BF90AF909F908F900895789484B58260BE\n:1002A00084BD84B5816084BD85B5826085BD85B51A\n:1002B000816085BDEEE6F0E0808181608083E1E8C9\n:1002C000F0E0108280818260808380818160808301\n:1002D000E0E8F0E0808181608083E1EBF0E0808104\n:1002E00084608083E0EBF0E0808181608083EAE7D6\n:1002F000F0E080818460808380818260808380815F\n:10030000816080838081806880831092C10008951D\n:100310008E3008F08E502091000190E4299F9001CA\n:1003200011248770822B80937C0080917A008064F6\n:1003300080937A0080917A0086FDFCCF80917800CE\n:100340009091790008951F93CF93DF93182FEB01BD\n:1003500061E00E942B02209711F460E004C0CF3FBF\n:10036000D10539F461E0812FDF91CF911F910C9479\n:100370006702E12FF0E0E859FF4FE491E330F9F034\n:1003800048F4E130B9F0E230A1F584B5806284BD73\n:10039000C8BD34C0E730E9F0E83019F1E43049F580\n:1003A00080918000806280938000D0938B00C09306\n:1003B0008A0024C084B5806884BDC7BD1FC08091F9\n:1003C0008000806880938000D0938900C09388006B\n:1003D00015C08091B00080688093B000C093B300D6\n:1003E0000DC08091B00080628093B000C093B400D3\n:1003F00005C0C038D1050CF0B5CFAFCFDF91CF919C\n:100400001F910895833081F028F4813099F0823073\n:10041000A1F008958730A9F08830B9F08430D1F484\n:10042000809180008F7D03C0809180008F778093C2\n:100430008000089584B58F7702C084B58F7D84BD18\n:1004400008958091B0008F7703C08091B0008F7DB8\n:100450008093B0000895CF93DF9390E0FC01E458BF\n:10046000FF4F2491FC01E057FF4F8491882361F1F5\n:1004700090E0880F991FFC01E255FF4FC591D49180\n:10048000FC01EC55FF4FA591B491611109C09FB7D4\n:10049000F8948881209582238883EC912E230BC0C9\n:1004A000623061F49FB7F8948881322F30958323AE\n:1004B0008883EC912E2B2C939FBF06C08FB7F894A6\n:1004C000E8812E2B28838FBFDF91CF9108951F9352\n:1004D000CF93DF93282F30E0F901E859FF4F849143\n:1004E000F901E458FF4FD491F901E057FF4FC4914F\n:1004F000CC23C1F0162F81110E940202EC2FF0E0F4\n:10050000EE0FFF1FEC55FF4FA591B4919FB7F894E4\n:10051000111104C08C91D095D82302C0EC91DE2B30\n:10052000DC939FBFDF91CF911F9108950895F894B8\n:02053000FFCFFB\n:020532000100C6\n:00000001FF\n"
++}
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/functional-servo.json
+@@ -0,0 +1,689 @@
++{
++  "project": {
++    "format": "velxio-project",
++    "version": 1,
++    "exportedAt": "2026-11-05T07:41:41.643128+00:00",
++    "name": "다이얼 제어 · servo",
++    "boards": [
++      {
++        "id": "U1",
++        "name": "Arduino UNO · 기능 구현 설계",
++        "boardKind": "arduino-uno",
++        "x": -345.82677165354335,
++        "y": -272.12598425196853,
++        "properties": {
++          "label": "Arduino UNO R3",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "입력 처리와 출력 제어",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [
++              "housing.control"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -345.82677165354335,
++              -272.12598425196853,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        },
++        "activeFileGroupId": "group-U1",
++        "languageMode": "arduino",
++        "serialBaudRate": 115200
++      }
++    ],
++    "components": [
++      {
++        "id": "build-case-housing",
++        "metadataId": "ev-structure",
++        "x": -478.44094488188983,
++        "y": -421.74803149606305,
++        "properties": {
++          "label": "예시 제어기 외장",
++          "shape": "box",
++          "width": 250,
++          "height": 90,
++          "depth": 220,
++          "elevation": 0,
++          "color": "#8c9ca7",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "designBasis": "functional_implementation",
++          "evEnclosure": {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "design_selected": true,
++            "rationale": "선정 부품을 장착하고 배선 공간을 확보하도록 외장 치수를 정했습니다.",
++            "assumptions": [
++              "원본 내부 대신 기능 실행용 부품을 선정",
++              "USB 5V 제어 전원 사용"
++            ],
++            "unknowns": []
++          }
++        }
++      },
++      {
++        "id": "S1",
++        "metadataId": "potentiometer",
++        "x": 160.2992125984252,
++        "y": -217.65354330708664,
++        "properties": {
++          "value": 512,
++          "label": "10kΩ 가변저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "potentiometer",
++            "name": "10kΩ 가변저항",
++            "quantity": 1,
++            "purpose": "다이얼 입력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {
++              "value": 512
++            },
++            "pin_basis": "Wokwi PotentiometerElement.pinInfo"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              160.2992125984252,
++              -217.65354330708664,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "PS1",
++        "metadataId": "dc-power-supply",
++        "x": -280.0157480314961,
++        "y": 135.73228346456693,
++        "properties": {
++          "voltage": 5.0,
++          "enabled": true,
++          "label": "정전압 DC 전원",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "dc-power-supply",
++            "name": "정전압 DC 전원",
++            "quantity": 1,
++            "purpose": "별도 5V 모터 전원",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {
++              "voltage": 5.0
++            },
++            "pin_basis": "기존 DC 전원 SPICE 모델"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -280.0157480314961,
++              135.73228346456693,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "M1",
++        "metadataId": "servo",
++        "x": 721.5590551181103,
++        "y": -223.3228346456693,
++        "properties": {
++          "angle": 0,
++          "label": "180도 RC 서보모터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "servo",
++            "name": "180도 RC 서보모터",
++            "quantity": 1,
++            "purpose": "입력에 따른 회전",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "external",
++            "parameters": {},
++            "pin_basis": "Wokwi ServoElement.pinInfo"
++          },
++          "evDesignMount": "external",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                215.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              721.5590551181103,
++              -223.3228346456693,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "MOUNT1",
++        "metadataId": "ev-structure",
++        "x": -119.38582677165356,
++        "y": -752.456692913386,
++        "properties": {
++          "label": "제어기 고정판",
++          "shape": "box",
++          "width": 60.0,
++          "height": 4.0,
++          "depth": 35.0,
++          "elevation": 1.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "제어 장치를 지지하는 장착판"
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "제어기 고정판",
++            "purpose": "제어 장치를 지지하는 장착판",
++            "selection_reason": "제어 장치를 지지하는 장착판",
++            "quantity": 1
++          }
++        }
++      }
++    ],
++    "wires": [
++      {
++        "id": "BUILD_W1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5V",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "VCC",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W2",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W3",
++        "start": {
++          "componentId": "S1",
++          "pinName": "SIG",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "A0",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W4",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M1",
++          "pinName": "V+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W5",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W6",
++        "start": {
++          "componentId": "M1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W7",
++        "start": {
++          "componentId": "U1",
++          "pinName": "9",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M1",
++          "pinName": "PWM",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      }
++    ],
++    "activeBoardId": "U1",
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "sketch.ino",
++          "content": "#include <Arduino.h>\nvoid setup(){pinMode(9,OUTPUT);TCCR1A=_BV(COM1A1)|_BV(WGM11);TCCR1B=_BV(WGM13)|_BV(WGM12)|_BV(CS11);ICR1=40000;OCR1A=2000;}\nvoid loop(){OCR1A=2000+analogRead(A0)*2000L/1023;delay(20);}\n"
++        }
++      ]
++    },
++    "embeddedVision": {
++      "source_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++      "inventory_plan": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++      "source_graph_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
++      "function_version": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
++      "recipe": "ai_functional_build",
++      "basis": "selected_functional_implementation",
++      "functional_build_version": "77802529db756151bf373d76778f489082f0a852839f89b0ef2a1467b9bfb12c",
++      "implementation_design": {
++        "status": "DESIGN_SELECTED",
++        "hypothesis_id": "top",
++        "title": "다이얼 제어 · servo",
++        "behavior": "다이얼에 따라 서보 구동 펄스를 1~2ms로 조절합니다.",
++        "parts": [
++          {
++            "id": "U1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "입력 처리와 출력 제어",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [
++              "housing.control"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          {
++            "id": "S1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "potentiometer",
++            "name": "10kΩ 가변저항",
++            "quantity": 1,
++            "purpose": "다이얼 입력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {
++              "value": 512
++            },
++            "pin_basis": "Wokwi PotentiometerElement.pinInfo"
++          },
++          {
++            "id": "PS1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "dc-power-supply",
++            "name": "정전압 DC 전원",
++            "quantity": 1,
++            "purpose": "별도 5V 모터 전원",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {
++              "voltage": 5.0
++            },
++            "pin_basis": "기존 DC 전원 SPICE 모델"
++          },
++          {
++            "id": "M1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "servo",
++            "name": "180도 RC 서보모터",
++            "quantity": 1,
++            "purpose": "입력에 따른 회전",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "external",
++            "parameters": {},
++            "pin_basis": "Wokwi ServoElement.pinInfo"
++          }
++        ],
++        "structures": [
++          {
++            "id": "MOUNT1",
++            "label": "제어기 고정판",
++            "role": "bracket",
++            "shape": "box",
++            "size_mm": [
++              60.0,
++              4.0,
++              35.0
++            ],
++            "position_mm": [
++              0.0,
++              3.0,
++              -180.0
++            ],
++            "purpose": "제어 장치를 지지하는 장착판"
++          }
++        ],
++        "connections": [
++          {
++            "source": "U1.5V",
++            "target": "S1.VCC",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "U1.GND",
++            "target": "S1.GND",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "S1.SIG",
++            "target": "U1.A0",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "PS1.+",
++            "target": "M1.V+",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "PS1.-",
++            "target": "U1.GND",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "M1.GND",
++            "target": "U1.GND",
++            "purpose": "기능 실행을 위한 연결"
++          },
++          {
++            "source": "U1.9",
++            "target": "M1.PWM",
++            "purpose": "기능 실행을 위한 연결"
++          }
++        ],
++        "design_choices": [
++          "원본 내부 대신 기능 실행용 부품을 선정",
++          "USB 5V 제어 전원 사용"
++        ],
++        "acceptance_tests": [
++          "다이얼을 양끝으로 돌려 출력 변화를 확인"
++        ],
++        "not_implemented": [],
++        "firmware": {
++          "language": "arduino_cpp",
++          "source": "#include <Arduino.h>\nvoid setup(){pinMode(9,OUTPUT);TCCR1A=_BV(COM1A1)|_BV(WGM11);TCCR1B=_BV(WGM13)|_BV(WGM12)|_BV(CS11);ICR1=40000;OCR1A=2000;}\nvoid loop(){OCR1A=2000+analogRead(A0)*2000L/1023;delay(20);}\n"
++        }
++      },
++      "enclosure_analysis": {
++        "summary": "예시 외장 내부의 기능 기반 가설",
++        "enclosures": [
++          {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "observed_part_ids": [
++              "case",
++              "lcd"
++            ],
++            "structure_object_id": null,
++            "hypothesis_ids": [
++              "top"
++            ],
++            "rationale": "외장과 외부 LCD를 근거로 내부 제어 및 전원부를 가정합니다.",
++            "modules": [
++              {
++                "id": "control",
++                "parent_id": null,
++                "name": "제어부",
++                "role": "controller",
++                "candidate_parts": [
++                  "MCU 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "제어부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "mcu",
++                "parent_id": "control",
++                "name": "마이크로컨트롤러",
++                "role": "controller",
++                "candidate_parts": [
++                  "ATmega 계열 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "마이크로컨트롤러 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "supply",
++                "parent_id": null,
++                "name": "전원부",
++                "role": "power",
++                "candidate_parts": [
++                  "DC 전압 변환 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "전원부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "cap",
++                "parent_id": "supply",
++                "name": "평활 커패시터",
++                "role": "passive",
++                "candidate_parts": [
++                  "커패시터 · 값 미확인"
++                ],
++                "required_part_ids": [],
++                "purpose": "평활 커패시터 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              }
++            ],
++            "assumptions": [
++              "외장 내부에 제어 회로가 있다고 가정"
++            ],
++            "unknowns": [
++              "실제 IC 모델·배선·치수"
++            ]
++          }
++        ],
++        "limitations": [
++          "불투명 외장 안의 실물 구성은 관측되지 않았습니다."
++        ]
++      },
++      "physical_verified": false,
++      "original_wiring_reused": false,
++      "simulation_behavior": "다이얼에 따라 서보 구동 펄스를 1~2ms로 조절합니다.",
++      "simulation_notice": "기능을 실행하도록 부품·값·배선·코드를 선정한 새 설계입니다. 최종 실물 검증은 사용자가 진행합니다."
++    }
++  },
++  "hex": ":100000000C9452000C946F000C946F000C946F00D1\n:100010000C946F000C946F000C946F000C946F00A4\n:100020000C946F000C946F000C946F000C946F0094\n:100030000C946F000C946F000C946F000C946F0084\n:100040000C94B2000C946F000C946F000C946F0031\n:100050000C946F000C946F000C946F000C946F0064\n:100060000C946F000C946F00010204081020408073\n:1000700001020408102001020408102004040404F2\n:100080000404040402020202020203030303030342\n:1000900000000000250028002B00000000002400C4\n:1000A00027002A0011241FBECFEFD8E0DEBFCDBF4E\n:1000B00011E0A0E0B1E0E2E9F4E002C005900D92A9\n:1000C000A230B107D9F721E0A2E0B1E001C01D9252\n:1000D000AB30B207E1F70E94A3000C9447020C94E6\n:1000E000000061E089E00E94B30182E88093800013\n:1000F0008AE18093810080E49CE99093870080935B\n:10010000860080ED97E090938900809388000895A1\n:100110008EE00E94980120ED37E0DC010E940F0282\n:100120002FEF33E040E050E00E94F0012053384FC1\n:10013000309389002093880064E170E080E090E0D3\n:100140000C94210108950E945D010E94A2000E946A\n:100150007100C0E0D0E00E9488002097E1F30E9487\n:100160000000F9CF1F920F920FB60F9211242F9318\n:100170003F938F939F93AF93BF938091030190918F\n:100180000401A0910501B09106013091020123E024\n:10019000230F2D3720F40196A11DB11D05C026E8BF\n:1001A000230F0296A11DB11D20930201809303012C\n:1001B00090930401A0930501B0930601809107017B\n:1001C00090910801A0910901B0910A010196A11D29\n:1001D000B11D8093070190930801A0930901B0938A\n:1001E0000A01BF91AF919F918F913F912F910F90F5\n:1001F0000FBE0F901F9018953FB7F894809107019C\n:1002000090910801A0910901B0910A0126B5A89B1F\n:1002100005C02F3F19F00196A11DB11D3FBFBA2F98\n:10022000A92F982F8827820F911DA11DB11DBC01F8\n:10023000CD0142E0660F771F881F991F4A95D1F7BD\n:1002400008958F929F92AF92BF92CF92DF92EF92DA\n:10025000FF926B017C010E94FC004B015C01C11408\n:10026000D104E104F10401F10E94EF010E94FC00BD\n:10027000DC01CB0188199909AA09BB09883E934082\n:10028000A105B10560F321E0C21AD108E108F10827\n:1002900088EE880E83E0981EA11CB11CC114D10405\n:1002A000E104F10419F7DBCFFF90EF90DF90CF90DE\n:1002B000BF90AF909F908F900895789484B582609E\n:1002C00084BD84B5816084BD85B5826085BD85B5FA\n:1002D000816085BDEEE6F0E0808181608083E1E8A9\n:1002E000F0E01082808182608083808181608083E1\n:1002F000E0E8F0E0808181608083E1EBF0E08081E4\n:1003000084608083E0EBF0E0808181608083EAE7B5\n:10031000F0E080818460808380818260808380813E\n:10032000816080838081806880831092C1000895FD\n:100330008E3008F08E502091000190E4299F9001AA\n:1003400011248770822B80937C0080917A008064D6\n:1003500080937A0080917A0086FDFCCF80917800AE\n:10036000909179000895CF93DF9390E0FC01E859D4\n:10037000FF4F2491FC01E458FF4F8491882361F1E1\n:1003800090E0880F991FFC01E656FF4FC591D4916C\n:10039000FC01E057FF4FA591B491611109C09FB7CF\n:1003A000F8948881209582238883EC912E230BC0BA\n:1003B000623061F49FB7F8948881322F309583239F\n:1003C0008883EC912E2B2C939FBF06C08FB7F89497\n:1003D000E8812E2B28838FBFDF91CF910895089558\n:1003E000052E97FB1EF400940E94070257FD07D0CC\n:1003F0000E94160207FC03D04EF40C94070250959D\n:100400004095309521953F4F4F4F5F4F0895909500\n:100410008095709561957F4F8F4F9F4F08950E94F3\n:100420003802B7FF0895821B930B0895A1E21A2E9C\n:10043000AA1BBB1BFD010DC0AA1FBB1FEE1FFF1F88\n:10044000A217B307E407F50720F0A21BB30BE40BD8\n:10045000F50B661F771F881F991F1A9469F760951F\n:100460007095809590959B01AC01BD01CF010895D9\n:10047000A29FB001B39FC001A39F700D811D1124E5\n:10048000911DB29F700D811D1124911D0895F89446\n:02049000FFCF9C\n:02049200010067\n:00000001FF\n"
++}
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/functional-watering-live.json
+@@ -0,0 +1,1644 @@
++{
++  "project": {
++    "format": "velxio-project",
++    "version": 1,
++    "exportedAt": "2026-11-05T07:41:41.646125+00:00",
++    "name": "토양 수분 기반 소형 급수 시제품",
++    "boards": [
++      {
++        "id": "U1",
++        "name": "Arduino UNO · 기능 구현 설계",
++        "boardKind": "arduino-uno",
++        "x": 2923.464566929134,
++        "y": -92.5984251968504,
++        "properties": {
++          "label": "Arduino UNO R3",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "센서 판독과 급수 판단",
++            "selection_reason": "단순 센서·펌프 제어용으로 새로 선정합니다.",
++            "module_refs": [],
++            "observed_part_ids": [
++              "P02"
++            ],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "supply": "USB 5V",
++              "dryOnADC": 450.0,
++              "wetOffADC": 350.0,
++              "initialPump": false
++            },
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          "evDesignMount": "external"
++        },
++        "activeFileGroupId": "group-U1",
++        "languageMode": "arduino",
++        "serialBaudRate": 9600
++      }
++    ],
++    "components": [
++      {
++        "id": "build-case-CASE1",
++        "metadataId": "ev-structure",
++        "x": -270.5669291338583,
++        "y": -242.22047244094492,
++        "properties": {
++          "label": "수원 용기 기능 분해",
++          "shape": "box",
++          "width": 140,
++          "height": 90,
++          "depth": 125,
++          "elevation": 0,
++          "color": "#8c9ca7",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "designBasis": "functional_implementation",
++          "evEnclosure": {
++            "id": "CASE1",
++            "name": "수원 용기 기능 분해",
++            "design_selected": true,
++            "rationale": "선정 부품을 장착하고 배선 공간을 확보하도록 외장 치수를 정했습니다.",
++            "assumptions": [
++              "원본 부품 식별과 별개로 카탈로그 대체 부품을 선정했으며, 기존 부품과 동시에 추가 장착하는 수량표가 아닙니다.",
++              "UNO는 P17에 해당하는 호환 USB 케이블로 5V 전원을 공급합니다. PS1의 12V를 UNO 5V에 연결하지 않습니다.",
++              "센서값이 클수록 건조하다는 새 설계 가정과 ADC 450/350 히스테리시스를 사용합니다. 토양 수분 백분율이나 실측 임계값이 아닙니다.",
++              "P18·P19·P20·P21은 재사용 대상으로 두고, 펌프 출구→튜브→화분으로 구성합니다. 침수 설치는 선정 실물 펌프가 이를 허용하는 경우에만 적용합니다.",
++              "배선은 P16을 우선 사용하고 REQ07 접속 어댑터로 연결합니다. 어댑터·케이블은 구현 카탈로그에 없어 별도 핀 모델로 만들지 않았습니다.",
++              "전류 제한 0.5A는 새 시험 설정이며 펌프의 검증 정격이 아닙니다. 설정 지원 전원을 사용하고 실제 기동 전류를 확인해야 합니다.",
++              "새 장착 치수는 사진 계측값이 아닙니다."
++            ],
++            "unknowns": []
++          }
++        }
++      },
++      {
++        "id": "M1",
++        "metadataId": "dc-water-pump",
++        "x": -66.4724409448819,
++        "y": -43.795275590551185,
++        "properties": {
++          "nominalVoltage": 12.0,
++          "resistance": 48,
++          "inductance": 0.005,
++          "label": "12V DC 급수 펌프",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "dc-water-pump",
++            "name": "12V DC 급수 펌프",
++            "quantity": 1,
++            "purpose": "용기에서 화분으로 물 이송",
++            "selection_reason": "REQ01에 해당하는 새 12V 펌프 모델입니다.",
++            "module_refs": [
++              "CASE1.pump"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "CASE1",
++            "location": "internal",
++            "parameters": {
++              "nominalVoltage": 12.0,
++              "resistance": 48,
++              "inductance": 0.005
++            },
++            "pin_basis": "기존 12V 급수 펌프 전기 모델"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                0.0,
++                12,
++                2.5
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -66.4724409448819,
++              -43.795275590551185,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          },
++          "environmentKind": "pump",
++          "waterSystem": {
++            "boardId": "U1",
++            "sensorId": "S1",
++            "outputId": "L1",
++            "controlPin": 9,
++            "actuation": "pump-current",
++            "pumpId": "M1",
++            "driverId": "Q1",
++            "supplyId": "PS1",
++            "gateResistorId": "R1",
++            "dryAdc": 560,
++            "wetAdc": 280,
++            "planterId": "BUILD_ENV_PLANTER",
++            "reservoirId": "BUILD_ENV_TANK",
++            "hoseId": "BUILD_ENV_HOSE",
++            "flowMlPerSecond": 1.5,
++            "soilCapacityMl": 4,
++            "reservoirCapacityMl": 300,
++            "initialReservoirMl": 240,
++            "potCapacityMl": 20,
++            "absorptionMlPerSecond": 1
++          },
++          "width": 32,
++          "height": 25,
++          "depth": 25,
++          "visualOnly": false
++        }
++      },
++      {
++        "id": "S1",
++        "metadataId": "soil-moisture-sen0193",
++        "x": 3425.8110236220477,
++        "y": -138.28346456692915,
++        "properties": {
++          "value": 560.0,
++          "label": "DFRobot SEN0193 토양 수분 센서",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "soil-moisture-sen0193",
++            "name": "DFRobot SEN0193 토양 수분 센서",
++            "quantity": 1,
++            "purpose": "토양 상태 입력",
++            "selection_reason": "원본 탐침 모델과 무관하게 실행 가능한 대체 센서로 선정합니다.",
++            "module_refs": [],
++            "observed_part_ids": [
++              "P12"
++            ],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": 560.0,
++              "supplyVoltage": 5.0
++            },
++            "pin_basis": "data/watering-parts.json 및 기존 급수 통합 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "B1",
++        "metadataId": "pushbutton-6mm",
++        "x": 3871.7952755905517,
++        "y": -11.669291338582678,
++        "properties": {
++          "label": "6mm 순간 누름 버튼",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "pushbutton-6mm",
++            "name": "6mm 순간 누름 버튼",
++            "quantity": 1,
++            "purpose": "누르는 동안 급수 억제",
++            "selection_reason": "원본 버튼 역할과 구분한 새 시제품 정지 입력입니다.",
++            "module_refs": [],
++            "observed_part_ids": [
++              "P06"
++            ],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "inputMode": "INPUT_PULLUP",
++              "initialPressed": false
++            },
++            "pin_basis": "Wokwi Pushbutton6mmElement.pinInfo"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "Q1",
++        "metadataId": "mosfet-irlz44n",
++        "x": 3032.7401574803152,
++        "y": 347.38582677165357,
++        "properties": {
++          "label": "IRLZ44N N채널 MOSFET",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "mosfet-irlz44n",
++            "name": "IRLZ44N N채널 MOSFET",
++            "quantity": 1,
++            "purpose": "펌프 로우사이드 스위칭",
++            "selection_reason": "REQ02 구현용으로 선정합니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "gateDriveVoltage": 5.0
++            },
++            "pin_basis": "기존 IRLZ44N 참조 회로와 SPICE 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "R1",
++        "metadataId": "resistor",
++        "x": 3437.149606299213,
++        "y": 347.38582677165357,
++        "properties": {
++          "value": "330",
++          "label": "축형 저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "MOSFET 게이트 직렬 저항",
++            "selection_reason": "REQ03의 게이트 충전 전류 제한용입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "330",
++              "powerRatingW": 0.25
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "R2",
++        "metadataId": "resistor",
++        "x": 3852.897637795276,
++        "y": 347.38582677165357,
++        "properties": {
++          "value": "100000",
++          "label": "축형 저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "MOSFET 게이트 풀다운",
++            "selection_reason": "REQ03의 초기 꺼짐 지원용입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "100000",
++              "powerRatingW": 0.25
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "PS1",
++        "metadataId": "dc-power-supply",
++        "x": 2989.2755905511813,
++        "y": 674.3149606299213,
++        "properties": {
++          "voltage": 12.0,
++          "enabled": true,
++          "label": "정전압 DC 전원",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "dc-power-supply",
++            "name": "정전압 DC 전원",
++            "quantity": 1,
++            "purpose": "펌프 독립 전원",
++            "selection_reason": "기존 배터리 사양을 가정하지 않고 REQ05를 구현합니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "voltage": 12.0,
++              "enabled": true,
++              "benchCurrentLimitA": 0.5
++            },
++            "pin_basis": "기존 DC 전원 SPICE 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "D1",
++        "metadataId": "diode-1n5822",
++        "x": 3429.590551181103,
++        "y": 706.4409448818899,
++        "properties": {
++          "label": "1N5822 역기전력 보호 다이오드",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "diode-1n5822",
++            "name": "1N5822 역기전력 보호 다이오드",
++            "quantity": 1,
++            "purpose": "펌프 역기전력 억제",
++            "selection_reason": "REQ04 구현용입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {},
++            "pin_basis": "기존 1N5822 참조 회로와 SPICE 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "C1",
++        "metadataId": "capacitor",
++        "x": 3871.7952755905517,
++        "y": 706.4409448818899,
++        "properties": {
++          "value": "100nF",
++          "label": "무극성 커패시터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "capacitor",
++            "name": "무극성 커패시터",
++            "quantity": 1,
++            "purpose": "센서 전원 디커플링",
++            "selection_reason": "REQ06의 센서 근접 커패시터입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "100nF",
++              "voltageRating": 50.0
++            },
++            "pin_basis": "기존 SPICE 커패시터 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "C2",
++        "metadataId": "capacitor-electrolytic",
++        "x": 3032.7401574803152,
++        "y": 1057.9370078740158,
++        "properties": {
++          "value": "470uF",
++          "voltageRating": 25.0,
++          "label": "전해 커패시터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "capacitor-electrolytic",
++            "name": "전해 커패시터",
++            "quantity": 1,
++            "purpose": "펌프 전원 평활",
++            "selection_reason": "REQ06의 펌프 구동부 근접 커패시터입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "470uF",
++              "voltageRating": 25.0
++            },
++            "pin_basis": "기존 급수 참조 회로의 전해 커패시터 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "L1",
++        "metadataId": "led",
++        "x": 3448.4881889763783,
++        "y": 1057.9370078740158,
++        "properties": {
++          "color": "red",
++          "label": "표시용 LED",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "펌프 명령 표시",
++            "selection_reason": "P03 모듈 대신 개별 LED를 새로 선정합니다.",
++            "module_refs": [],
++            "observed_part_ids": [
++              "P03"
++            ],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "color": "red"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "R3",
++        "metadataId": "resistor",
++        "x": 3852.897637795276,
++        "y": 1065.496062992126,
++        "properties": {
++          "value": "330",
++          "label": "축형 저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "LED 전류 제한",
++            "selection_reason": "REQ09 구현용입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "330",
++              "powerRatingW": 0.25
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          "evDesignMount": "external"
++        }
++      },
++      {
++        "id": "ST1",
++        "metadataId": "ev-structure",
++        "x": -308.3622047244095,
++        "y": -213.87401574803152,
++        "properties": {
++          "label": "절연 전자부 장착판",
++          "shape": "box",
++          "width": 160.0,
++          "height": 5.0,
++          "depth": 110.0,
++          "elevation": 0.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "platform",
++            "reason": "새 설계 치수입니다. UNO와 드라이버를 물 용기 밖에 고정하며 배선 접점은 절연합니다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "절연 전자부 장착판",
++            "purpose": "새 설계 치수입니다. UNO와 드라이버를 물 용기 밖에 고정하며 배선 접점은 절연합니다.",
++            "selection_reason": "새 설계 치수입니다. UNO와 드라이버를 물 용기 밖에 고정하며 배선 접점은 절연합니다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST2",
++        "metadataId": "ev-structure",
++        "x": -393.40157480314963,
++        "y": -34.34645669291339,
++        "properties": {
++          "label": "튜브 고정 브래킷",
++          "shape": "box",
++          "width": 35.0,
++          "height": 20.0,
++          "depth": 15.0,
++          "elevation": 10.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "새 설계 치수입니다. 용기·화분 림에 맞춰 고정하고 튜브 끝 위치를 유지합니다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "튜브 고정 브래킷",
++            "purpose": "새 설계 치수입니다. 용기·화분 림에 맞춰 고정하고 튜브 끝 위치를 유지합니다.",
++            "selection_reason": "새 설계 치수입니다. 용기·화분 림에 맞춰 고정하고 튜브 끝 위치를 유지합니다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "BUILD_ENV_PLANTER",
++        "metadataId": "ev-structure",
++        "x": 126.28343070866134,
++        "y": -355.606305511811,
++        "properties": {
++          "width": 80,
++          "height": 75,
++          "depth": 80,
++          "color": "#c47a54",
++          "label": "급수 대상 화분",
++          "shape": "cylinder",
++          "elevation": 0,
++          "rotation": 0,
++          "rotationX": 0,
++          "rotationZ": 0,
++          "environmentKind": "planter",
++          "environmentPreset": "watering-v2",
++          "visualOnly": true,
++          "designBasis": "authored_functional_environment",
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "급수 대상 화분",
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물",
++            "selection_reason": "선정한 펌프 회로와 토양 센서를 연결한 동작 환경",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "BUILD_ENV_TANK",
++        "metadataId": "ev-structure",
++        "x": -317.81106929133864,
++        "y": -327.259805511811,
++        "properties": {
++          "width": 65,
++          "height": 90,
++          "depth": 65,
++          "color": "#9bcad5",
++          "label": "급수용 물통",
++          "shape": "cylinder",
++          "elevation": 0,
++          "rotation": 0,
++          "rotationX": 0,
++          "rotationZ": 0,
++          "environmentKind": "reservoir",
++          "environmentPreset": "watering-v2",
++          "visualOnly": true,
++          "designBasis": "authored_functional_environment",
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "급수용 물통",
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물",
++            "selection_reason": "선정한 펌프 회로와 토양 센서를 연결한 동작 환경",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "BUILD_ENV_HOSE",
++        "metadataId": "ev-structure",
++        "x": -24.897669291338616,
++        "y": -109.93700551181101,
++        "properties": {
++          "width": 80,
++          "height": 8,
++          "depth": 30,
++          "color": "#6f9caf",
++          "label": "급수 호스",
++          "shape": "box",
++          "elevation": 0,
++          "rotation": 0,
++          "rotationX": 0,
++          "rotationZ": 0,
++          "environmentKind": "hose",
++          "environmentPreset": "watering-v2",
++          "visualOnly": true,
++          "designBasis": "authored_functional_environment",
++          "connected": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "급수 호스",
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물",
++            "selection_reason": "선정한 펌프 회로와 토양 센서를 연결한 동작 환경",
++            "quantity": 1
++          }
++        }
++      }
++    ],
++    "wires": [
++      {
++        "id": "BUILD_W1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5V",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "VCC",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W2",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W3",
++        "start": {
++          "componentId": "S1",
++          "pinName": "SIG",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "A0",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W4",
++        "start": {
++          "componentId": "S1",
++          "pinName": "VCC",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "C1",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W5",
++        "start": {
++          "componentId": "S1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "C1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W6",
++        "start": {
++          "componentId": "U1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "B1",
++          "pinName": "1.l",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W7",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "B1",
++          "pinName": "2.l",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W8",
++        "start": {
++          "componentId": "U1",
++          "pinName": "9",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "R1",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W9",
++        "start": {
++          "componentId": "R1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "Q1",
++          "pinName": "G",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W10",
++        "start": {
++          "componentId": "Q1",
++          "pinName": "G",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "R2",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W11",
++        "start": {
++          "componentId": "R2",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "Q1",
++          "pinName": "S",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W12",
++        "start": {
++          "componentId": "Q1",
++          "pinName": "S",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W13",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "Q1",
++          "pinName": "S",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W14",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W15",
++        "start": {
++          "componentId": "M1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "Q1",
++          "pinName": "D",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W16",
++        "start": {
++          "componentId": "D1",
++          "pinName": "C",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W17",
++        "start": {
++          "componentId": "D1",
++          "pinName": "A",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W18",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "C2",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W19",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "C2",
++          "pinName": "−",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W20",
++        "start": {
++          "componentId": "U1",
++          "pinName": "8",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "R3",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W21",
++        "start": {
++          "componentId": "R3",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "L1",
++          "pinName": "A",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W22",
++        "start": {
++          "componentId": "L1",
++          "pinName": "C",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      }
++    ],
++    "activeBoardId": "U1",
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "sketch.ino",
++          "content": "const byte SENSOR_PIN = A0;\nconst byte STOP_PIN = 2;\nconst byte PUMP_PIN = 9;\nconst byte LED_PIN = 8;\n// 새 시제품 가정값이며 원본 임계값이 아님.\nconst int DRY_ON = 450;\nconst int WET_OFF = 350;\nbool watering = false;\nunsigned long lastSample = 0;\nunsigned long lastReport = 0;\nint moistureRaw = 0;\n\nvoid applyOutput(bool on) {\n  digitalWrite(PUMP_PIN, on ? HIGH : LOW);\n  digitalWrite(LED_PIN, on ? HIGH : LOW);\n}\n\nvoid setup() {\n  digitalWrite(PUMP_PIN, LOW);\n  pinMode(PUMP_PIN, OUTPUT);\n  digitalWrite(LED_PIN, LOW);\n  pinMode(LED_PIN, OUTPUT);\n  pinMode(STOP_PIN, INPUT_PULLUP);\n  pinMode(SENSOR_PIN, INPUT);\n  Serial.begin(9600);\n  moistureRaw = analogRead(SENSOR_PIN);\n  applyOutput(false);\n}\n\nvoid loop() {\n  const unsigned long now = millis();\n  const bool inhibited = digitalRead(STOP_PIN) == LOW;\n  if (inhibited) {\n    watering = false;\n    applyOutput(false);\n  }\n  // 100ms는 새 시제품의 샘플링 간격임.\n  if (now - lastSample >= 100UL) {\n    lastSample = now;\n    moistureRaw = analogRead(SENSOR_PIN);\n    if (!inhibited) {\n      if (moistureRaw >= DRY_ON) watering = true;\n      else if (moistureRaw <= WET_OFF) watering = false;\n    }\n    applyOutput(watering && !inhibited);\n  }\n  if (now - lastReport >= 500UL) {\n    lastReport = now;\n    Serial.print(\"soil_raw=\");\n    Serial.print(moistureRaw);\n    Serial.print(\" pump=\");\n    Serial.print(watering && !inhibited ? 1 : 0);\n    Serial.print(\" inhibited=\");\n    Serial.println(inhibited ? 1 : 0);\n  }\n}\n"
++        }
++      ]
++    },
++    "embeddedVision": {
++      "source_project": "83e5e2620bba4807b5354c54d55ad874",
++      "inventory_plan": "98314fc35ff74a16ab7e3aab38dbae73",
++      "source_graph_sha256": "2c575866d9eb41de295004299eb4495c8dde97bd8d6754868f81f0458acdfa16",
++      "recipe": "ai_functional_build",
++      "basis": "selected_functional_implementation",
++      "functional_build_version": "47d76874f1c1e9a1768940303057a9567293a2dffa32b15f5cb7686c231eeda9",
++      "implementation_design": {
++        "status": "DESIGN_SELECTED",
++        "hypothesis_id": "washed_h1",
++        "title": "토양 수분 기반 소형 급수 시제품",
++        "behavior": "새 SEN0193 입력이 건조 기준에 도달하면 12V 펌프를 켜고 젖음 기준에 도달하면 끕니다. 버튼을 누르는 동안 급수를 억제하며 적색 LED는 펌프 명령을 표시합니다. UNO·센서·선정값은 모두 새 설계이며 원본 사양이 아닙니다.",
++        "parts": [
++          {
++            "id": "M1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "dc-water-pump",
++            "name": "12V DC 급수 펌프",
++            "quantity": 1,
++            "purpose": "용기에서 화분으로 물 이송",
++            "selection_reason": "REQ01에 해당하는 새 12V 펌프 모델입니다.",
++            "module_refs": [
++              "CASE1.pump"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "CASE1",
++            "location": "internal",
++            "parameters": {
++              "nominalVoltage": 12.0,
++              "resistance": 48,
++              "inductance": 0.005
++            },
++            "pin_basis": "기존 12V 급수 펌프 전기 모델"
++          },
++          {
++            "id": "U1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "센서 판독과 급수 판단",
++            "selection_reason": "단순 센서·펌프 제어용으로 새로 선정합니다.",
++            "module_refs": [],
++            "observed_part_ids": [
++              "P02"
++            ],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "supply": "USB 5V",
++              "dryOnADC": 450.0,
++              "wetOffADC": 350.0,
++              "initialPump": false
++            },
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          {
++            "id": "S1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "soil-moisture-sen0193",
++            "name": "DFRobot SEN0193 토양 수분 센서",
++            "quantity": 1,
++            "purpose": "토양 상태 입력",
++            "selection_reason": "원본 탐침 모델과 무관하게 실행 가능한 대체 센서로 선정합니다.",
++            "module_refs": [],
++            "observed_part_ids": [
++              "P12"
++            ],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": 560.0,
++              "supplyVoltage": 5.0
++            },
++            "pin_basis": "data/watering-parts.json 및 기존 급수 통합 모델"
++          },
++          {
++            "id": "B1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "pushbutton-6mm",
++            "name": "6mm 순간 누름 버튼",
++            "quantity": 1,
++            "purpose": "누르는 동안 급수 억제",
++            "selection_reason": "원본 버튼 역할과 구분한 새 시제품 정지 입력입니다.",
++            "module_refs": [],
++            "observed_part_ids": [
++              "P06"
++            ],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "inputMode": "INPUT_PULLUP",
++              "initialPressed": false
++            },
++            "pin_basis": "Wokwi Pushbutton6mmElement.pinInfo"
++          },
++          {
++            "id": "Q1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "mosfet-irlz44n",
++            "name": "IRLZ44N N채널 MOSFET",
++            "quantity": 1,
++            "purpose": "펌프 로우사이드 스위칭",
++            "selection_reason": "REQ02 구현용으로 선정합니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "gateDriveVoltage": 5.0
++            },
++            "pin_basis": "기존 IRLZ44N 참조 회로와 SPICE 모델"
++          },
++          {
++            "id": "R1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "MOSFET 게이트 직렬 저항",
++            "selection_reason": "REQ03의 게이트 충전 전류 제한용입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "330",
++              "powerRatingW": 0.25
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          {
++            "id": "R2",
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "MOSFET 게이트 풀다운",
++            "selection_reason": "REQ03의 초기 꺼짐 지원용입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "100000",
++              "powerRatingW": 0.25
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          {
++            "id": "PS1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "dc-power-supply",
++            "name": "정전압 DC 전원",
++            "quantity": 1,
++            "purpose": "펌프 독립 전원",
++            "selection_reason": "기존 배터리 사양을 가정하지 않고 REQ05를 구현합니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "voltage": 12.0,
++              "enabled": true,
++              "benchCurrentLimitA": 0.5
++            },
++            "pin_basis": "기존 DC 전원 SPICE 모델"
++          },
++          {
++            "id": "D1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "diode-1n5822",
++            "name": "1N5822 역기전력 보호 다이오드",
++            "quantity": 1,
++            "purpose": "펌프 역기전력 억제",
++            "selection_reason": "REQ04 구현용입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {},
++            "pin_basis": "기존 1N5822 참조 회로와 SPICE 모델"
++          },
++          {
++            "id": "C1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "capacitor",
++            "name": "무극성 커패시터",
++            "quantity": 1,
++            "purpose": "센서 전원 디커플링",
++            "selection_reason": "REQ06의 센서 근접 커패시터입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "100nF",
++              "voltageRating": 50.0
++            },
++            "pin_basis": "기존 SPICE 커패시터 모델"
++          },
++          {
++            "id": "C2",
++            "status": "DESIGN_SELECTED",
++            "model_id": "capacitor-electrolytic",
++            "name": "전해 커패시터",
++            "quantity": 1,
++            "purpose": "펌프 전원 평활",
++            "selection_reason": "REQ06의 펌프 구동부 근접 커패시터입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "470uF",
++              "voltageRating": 25.0
++            },
++            "pin_basis": "기존 급수 참조 회로의 전해 커패시터 모델"
++          },
++          {
++            "id": "L1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "펌프 명령 표시",
++            "selection_reason": "P03 모듈 대신 개별 LED를 새로 선정합니다.",
++            "module_refs": [],
++            "observed_part_ids": [
++              "P03"
++            ],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "color": "red"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          },
++          {
++            "id": "R3",
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "LED 전류 제한",
++            "selection_reason": "REQ09 구현용입니다.",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "external",
++            "parameters": {
++              "value": "330",
++              "powerRatingW": 0.25
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          {
++            "id": "BUILD_ENV_PLANTER",
++            "model_id": "ev-structure",
++            "status": "DESIGN_SELECTED",
++            "name": "급수 대상 화분",
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물",
++            "selection_reason": "선정한 펌프 회로와 토양 센서를 연결한 동작 환경",
++            "quantity": 1
++          },
++          {
++            "id": "BUILD_ENV_TANK",
++            "model_id": "ev-structure",
++            "status": "DESIGN_SELECTED",
++            "name": "급수용 물통",
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물",
++            "selection_reason": "선정한 펌프 회로와 토양 센서를 연결한 동작 환경",
++            "quantity": 1
++          },
++          {
++            "id": "BUILD_ENV_HOSE",
++            "model_id": "ev-structure",
++            "status": "DESIGN_SELECTED",
++            "name": "급수 호스",
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물",
++            "selection_reason": "선정한 펌프 회로와 토양 센서를 연결한 동작 환경",
++            "quantity": 1
++          }
++        ],
++        "structures": [
++          {
++            "id": "ST1",
++            "label": "절연 전자부 장착판",
++            "role": "platform",
++            "shape": "box",
++            "size_mm": [
++              160.0,
++              5.0,
++              110.0
++            ],
++            "position_mm": [
++              0.0,
++              2.5,
++              0.0
++            ],
++            "purpose": "새 설계 치수입니다. UNO와 드라이버를 물 용기 밖에 고정하며 배선 접점은 절연합니다."
++          },
++          {
++            "id": "ST2",
++            "label": "튜브 고정 브래킷",
++            "role": "bracket",
++            "shape": "box",
++            "size_mm": [
++              35.0,
++              20.0,
++              15.0
++            ],
++            "position_mm": [
++              -85.0,
++              20.0,
++              0.0
++            ],
++            "purpose": "새 설계 치수입니다. 용기·화분 림에 맞춰 고정하고 튜브 끝 위치를 유지합니다."
++          },
++          {
++            "id": "BUILD_ENV_PLANTER",
++            "label": "급수 대상 화분",
++            "size_mm": [
++              80,
++              75,
++              80
++            ],
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물"
++          },
++          {
++            "id": "BUILD_ENV_TANK",
++            "label": "급수용 물통",
++            "size_mm": [
++              65,
++              90,
++              65
++            ],
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물"
++          },
++          {
++            "id": "BUILD_ENV_HOSE",
++            "label": "급수 호스",
++            "size_mm": [
++              80,
++              8,
++              30
++            ],
++            "purpose": "관측한 급수 기능을 실행하고 물 이동을 표시하는 구성물"
++          }
++        ],
++        "connections": [
++          {
++            "source": "U1.5V",
++            "target": "S1.VCC",
++            "purpose": "센서 전원"
++          },
++          {
++            "source": "U1.GND",
++            "target": "S1.GND",
++            "purpose": "센서 접지"
++          },
++          {
++            "source": "S1.SIG",
++            "target": "U1.A0",
++            "purpose": "수분 아날로그 입력"
++          },
++          {
++            "source": "S1.VCC",
++            "target": "C1.1",
++            "purpose": "센서 전원 디커플링"
++          },
++          {
++            "source": "S1.GND",
++            "target": "C1.2",
++            "purpose": "디커플링 접지"
++          },
++          {
++            "source": "U1.2",
++            "target": "B1.1.l",
++            "purpose": "내부 풀업 버튼 입력"
++          },
++          {
++            "source": "U1.GND",
++            "target": "B1.2.l",
++            "purpose": "누르면 LOW"
++          },
++          {
++            "source": "U1.9",
++            "target": "R1.1",
++            "purpose": "펌프 제어 출력"
++          },
++          {
++            "source": "R1.2",
++            "target": "Q1.G",
++            "purpose": "게이트 전류 제한"
++          },
++          {
++            "source": "Q1.G",
++            "target": "R2.1",
++            "purpose": "게이트 풀다운"
++          },
++          {
++            "source": "R2.2",
++            "target": "Q1.S",
++            "purpose": "풀다운 기준"
++          },
++          {
++            "source": "Q1.S",
++            "target": "U1.GND",
++            "purpose": "제어부 공통 접지"
++          },
++          {
++            "source": "PS1.-",
++            "target": "Q1.S",
++            "purpose": "펌프 전원 공통 접지"
++          },
++          {
++            "source": "PS1.+",
++            "target": "M1.+",
++            "purpose": "펌프 12V 공급"
++          },
++          {
++            "source": "M1.-",
++            "target": "Q1.D",
++            "purpose": "펌프 전류 스위칭"
++          },
++          {
++            "source": "D1.C",
++            "target": "M1.+",
++            "purpose": "보호 다이오드 캐소드"
++          },
++          {
++            "source": "D1.A",
++            "target": "M1.-",
++            "purpose": "보호 다이오드 애노드"
++          },
++          {
++            "source": "PS1.+",
++            "target": "C2.+",
++            "purpose": "펌프 전원 평활 양극"
++          },
++          {
++            "source": "PS1.-",
++            "target": "C2.−",
++            "purpose": "펌프 전원 평활 음극"
++          },
++          {
++            "source": "U1.8",
++            "target": "R3.1",
++            "purpose": "상태 LED 출력"
++          },
++          {
++            "source": "R3.2",
++            "target": "L1.A",
++            "purpose": "LED 직렬 전류 제한"
++          },
++          {
++            "source": "L1.C",
++            "target": "U1.GND",
++            "purpose": "LED 접지"
++          }
++        ],
++        "design_choices": [
++          "원본 부품 식별과 별개로 카탈로그 대체 부품을 선정했으며, 기존 부품과 동시에 추가 장착하는 수량표가 아닙니다.",
++          "UNO는 P17에 해당하는 호환 USB 케이블로 5V 전원을 공급합니다. PS1의 12V를 UNO 5V에 연결하지 않습니다.",
++          "센서값이 클수록 건조하다는 새 설계 가정과 ADC 450/350 히스테리시스를 사용합니다. 토양 수분 백분율이나 실측 임계값이 아닙니다.",
++          "P18·P19·P20·P21은 재사용 대상으로 두고, 펌프 출구→튜브→화분으로 구성합니다. 침수 설치는 선정 실물 펌프가 이를 허용하는 경우에만 적용합니다.",
++          "배선은 P16을 우선 사용하고 REQ07 접속 어댑터로 연결합니다. 어댑터·케이블은 구현 카탈로그에 없어 별도 핀 모델로 만들지 않았습니다.",
++          "전류 제한 0.5A는 새 시험 설정이며 펌프의 검증 정격이 아닙니다. 설정 지원 전원을 사용하고 실제 기동 전류를 확인해야 합니다.",
++          "새 장착 치수는 사진 계측값이 아닙니다."
++        ],
++        "acceptance_tests": [
++          "초기 출력은 LOW이며 펌프 전원 인가 전 게이트 풀다운과 다이오드 극성을 확인합니다.",
++          "센서 입력을 560으로 두면 다음 샘플에서 펌프 명령과 LED가 켜집니다.",
++          "센서 입력을 280으로 바꾸면 펌프 명령과 LED가 꺼집니다.",
++          "입력 400에서는 직전 급수 상태를 유지하는지 확인합니다.",
++          "버튼을 누르면 센서값과 무관하게 펌프가 꺼지고, 놓으면 센서 조건에 따라 다시 판단합니다.",
++          "실물에서는 센서 출력 방향·기동 전류·스위칭 손실·튜브 연결·누수와 정지 후 사이펀을 별도로 점검합니다."
++        ],
++        "not_implemented": [
++          "원본 OLED의 문구·그래픽과 제어: 제공 구현 카탈로그에 해당 OLED 모델이 없습니다.",
++          "키트의 나머지 환경 센서와 부저 기능 및 원본 프로그램 복제",
++          "수분 백분율 보정, 정량 급수, 유량·수위·누수 감지, 공회전 방지와 최대 운전시간 제한",
++          "방수·침수 적합성·발열·전원 보호의 제조 및 실물 검증",
++          "튜브·커넥터·USB 케이블의 개별 실행 모델과 유체 동역학"
++        ],
++        "firmware": {
++          "language": "arduino_cpp",
++          "source": "const byte SENSOR_PIN = A0;\nconst byte STOP_PIN = 2;\nconst byte PUMP_PIN = 9;\nconst byte LED_PIN = 8;\n// 새 시제품 가정값이며 원본 임계값이 아님.\nconst int DRY_ON = 450;\nconst int WET_OFF = 350;\nbool watering = false;\nunsigned long lastSample = 0;\nunsigned long lastReport = 0;\nint moistureRaw = 0;\n\nvoid applyOutput(bool on) {\n  digitalWrite(PUMP_PIN, on ? HIGH : LOW);\n  digitalWrite(LED_PIN, on ? HIGH : LOW);\n}\n\nvoid setup() {\n  digitalWrite(PUMP_PIN, LOW);\n  pinMode(PUMP_PIN, OUTPUT);\n  digitalWrite(LED_PIN, LOW);\n  pinMode(LED_PIN, OUTPUT);\n  pinMode(STOP_PIN, INPUT_PULLUP);\n  pinMode(SENSOR_PIN, INPUT);\n  Serial.begin(9600);\n  moistureRaw = analogRead(SENSOR_PIN);\n  applyOutput(false);\n}\n\nvoid loop() {\n  const unsigned long now = millis();\n  const bool inhibited = digitalRead(STOP_PIN) == LOW;\n  if (inhibited) {\n    watering = false;\n    applyOutput(false);\n  }\n  // 100ms는 새 시제품의 샘플링 간격임.\n  if (now - lastSample >= 100UL) {\n    lastSample = now;\n    moistureRaw = analogRead(SENSOR_PIN);\n    if (!inhibited) {\n      if (moistureRaw >= DRY_ON) watering = true;\n      else if (moistureRaw <= WET_OFF) watering = false;\n    }\n    applyOutput(watering && !inhibited);\n  }\n  if (now - lastReport >= 500UL) {\n    lastReport = now;\n    Serial.print(\"soil_raw=\");\n    Serial.print(moistureRaw);\n    Serial.print(\" pump=\");\n    Serial.print(watering && !inhibited ? 1 : 0);\n    Serial.print(\" inhibited=\");\n    Serial.println(inhibited ? 1 : 0);\n  }\n}\n"
++        }
++      },
++      "enclosure_analysis": {
++        "summary": "불투명·반투명 용기 내부는 관측하지 않고, 급수 기능에 필요한 내부 구성만 가설로 분해합니다.",
++        "enclosures": [
++          {
++            "id": "CASE1",
++            "name": "수원 용기 기능 분해",
++            "observed_part_ids": [
++              "P18",
++              "P19",
++              "P16"
++            ],
++            "structure_object_id": "OBJ01",
++            "hypothesis_ids": [
++              "washed_h1",
++              "washed_h2"
++            ],
++            "rationale": "용기로 들어가는 튜브와 선은 내부 펌프 배치 가능성을 뒷받침하지만 펌프 자체는 보이지 않습니다.",
++            "modules": [
++              {
++                "id": "pump",
++                "parent_id": null,
++                "name": "유체 구동부",
++                "role": "driver",
++                "candidate_parts": [
++                  "예시: 소형 DC 급수 펌프"
++                ],
++                "required_part_ids": [
++                  "REQ01"
++                ],
++                "purpose": "물을 튜브 쪽으로 이송합니다.",
++                "rationale": "용기와 화분 사이 물 전달 기능에 구동원이 필요합니다.",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "용기 밖 인라인 펌프",
++                  "다른 형태의 유체 구동원"
++                ]
++              },
++              {
++                "id": "hydraulic",
++                "parent_id": null,
++                "name": "흡입·토출 접속부",
++                "role": "connector",
++                "candidate_parts": [
++                  "예시: 펌프 출구용 튜브 접속구"
++                ],
++                "required_part_ids": [],
++                "purpose": "보이는 튜브와 펌프 유로를 연결합니다.",
++                "rationale": "P18의 가려진 끝단 접속 형상은 알 수 없습니다.",
++                "confidence": "low",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "펌프 일체형 호스 니플"
++                ]
++              },
++              {
++                "id": "cable",
++                "parent_id": null,
++                "name": "전원선 인출·접속부",
++                "role": "connector",
++                "candidate_parts": [
++                  "예시: 절연 접속 어댑터와 인장 완화"
++                ],
++                "required_part_ids": [
++                  "REQ07"
++                ],
++                "purpose": "외부 드라이버의 전원을 펌프에 전달합니다.",
++                "rationale": "용기 안으로 향하는 선은 보이지만 끝단 구성은 확인되지 않습니다.",
++                "confidence": "low",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "펌프 일체형 케이블"
++                ]
++              },
++              {
++                "id": "mount",
++                "parent_id": null,
++                "name": "배관 고정부",
++                "role": "mechanical",
++                "candidate_parts": [
++                  "예시: 외부 림 장착 브래킷"
++                ],
++                "required_part_ids": [
++                  "REQ08"
++                ],
++                "purpose": "튜브가 움직이거나 빠지는 것을 줄입니다.",
++                "rationale": "새 시제품에서 유로 위치를 유지하기 위한 추가 구조입니다.",
++                "confidence": "low",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "외부 지지대에 튜브 고정"
++                ]
++              }
++            ],
++            "assumptions": [
++              "펌프의 용기 내부 배치는 새 설계 선택이며 원본 내부 복원이 아닙니다.",
++              "제어부·MOSFET·전원·다이오드는 물 용기 밖에 둡니다."
++            ],
++            "unknowns": [
++              "원본 펌프 존재와 설치 위치",
++              "용기 수위와 내부 접속 형상",
++              "선정 실물 펌프의 침수 사용 적합성"
++            ]
++          }
++        ],
++        "limitations": [
++          "재질 너머 내부를 관측한 결과가 아닙니다.",
++          "원본 전원 조정기·IC·보호 소자의 종류는 추정할 근거가 부족합니다."
++        ]
++      },
++      "physical_verified": false,
++      "original_wiring_reused": false,
++      "simulation_behavior": "새 SEN0193 입력이 건조 기준에 도달하면 12V 펌프를 켜고 젖음 기준에 도달하면 끕니다. 버튼을 누르는 동안 급수를 억제하며 적색 LED는 펌프 명령을 표시합니다. UNO·센서·선정값은 모두 새 설계이며 원본 사양이 아닙니다.",
++      "simulation_notice": "기능을 실행하도록 부품·값·배선·코드를 선정한 새 설계입니다. 최종 실물 검증은 사용자가 진행합니다."
++    }
++  },
++  "hex": ":100000000C9462000C948A000C948A000C948A0070\n:100010000C948A000C948A000C948A000C948A0038\n:100020000C948A000C948A000C948A000C948A0028\n:100030000C948A000C948A000C948A000C948A0018\n:100040000C944D040C948A000C94B8020C94EA02AF\n:100050000C948A000C948A000C948A000C948A00F8\n:100060000C948A000C948A00000000080002010031\n:100070000003040700000000000000000102040863\n:100080001020408001020408102001020408102002\n:10009000040404040404040402020202020203032E\n:1000A00003030303000000002300260029000000D2\n:1000B0000000250028002B0000000000240027007D\n:1000C0002A001A0311241FBECFEFD8E0DEBFCDBF38\n:1000D00011E0A0E0B1E0E0ECFBE002C005900D9281\n:1000E000A034B107D9F721E0A0E4B1E001C01D922E\n:1000F000A13FB207E1F710E0C2E6D0E004C02197CB\n:10010000FE010E94D805C136D107C9F70E943E04FE\n:100110000C94DE050C940000CF93C82F682F89E063\n:100120000E945E056C2F88E0CF910C945E0560E024\n:1001300089E00E945E0561E089E00E94220560E09E\n:1001400088E00E945E0561E088E00E94220562E08E\n:1001500082E00E94220560E08EE00E94220526E0F7\n:1001600040E855E260E070E08BE491E00E945302C9\n:100170008EE00E94DE04909341018093400180E074\n:100180000C948C00CF92DF92EF92FF92CF93DF938B\n:100190000E9497046B017C0182E00E948D05EC01B6\n:1001A000892B29F410924A0180E00E948C008091F2\n:1001B000460190914701A0914801B0914901A701E2\n:1001C0009601281B390B4A0B5B0B24363105410580\n:1001D000510540F1C0924601D0924701E09248019A\n:1001E000F09249018EE00E94DE04909341018093D9\n:1001F0004001209769F0823C31E0930724F081E0D0\n:1002000080934A0105C08F35914014F410924A0141\n:1002100080914A01882321F081E0209709F480E051\n:100220000E948C008091420190914301A091440171\n:10023000B0914501A7019601281B390B4A0B5B0BB6\n:10024000DA01C901843F9140A105B10508F448C015\n:10025000C0924201D0924301E0924401F0924501E4\n:1002600061E071E08BE491E00E94860360914001BF\n:10027000709141014AE050E08BE491E00E94240437\n:100280006BE071E08BE491E00E94860380914A016B\n:10029000882331F061E070E0209721F460E002C033\n:1002A00060E070E04AE050E08BE491E00E942404BA\n:1002B00062E171E08BE491E00E94860361E070E00E\n:1002C000CD2B11F060E070E04AE050E08BE491E06B\n:1002D000DF91CF91FF90EF90DF90CF900C942B04A3\n:1002E000DF91CF91FF90EF90DF90CF900895FC01C8\n:1002F000918D228D892F90E0805C9F4F821B910908\n:100300008F7399270895FC01918D828D981731F094\n:10031000828DE80FF11D858D90E008958FEF9FEF9E\n:100320000895FC01918D828D981761F0828DDF0117\n:10033000A80FB11D5D968C91928D9F5F9F73928FD8\n:1003400090E008958FEF9FEF0895FC01538D448D49\n:10035000252F30E0842F90E0821B930B541710F070\n:10036000CF9608950197089580E193E0892B49F095\n:1003700080E090E0892B29F00E94100381110C94F9\n:1003800000000895FC01848DDF01A80FB11DA35A60\n:10039000BF4F2C91848D90E001968F739927848FA5\n:1003A000A689B7892C93A089B1898C9183708064C8\n:1003B0008C93938D848D981306C00288F389E02D69\n:1003C00080818F7D80830895EF92FF920F931F931A\n:1003D000CF93DF93EC0181E0888F9B8D8C8D9813F8\n:1003E00005C0E889F989808185FD26C0F62E0B8D30\n:1003F00010E00F5F1F4F0F731127E02E8C8DE81256\n:100400000CC00FB607FCFACFE889F989808185FF17\n:10041000F5CFCE010E94C201F1CF8B8DFE01E80F16\n:10042000F11DE35AFF4FF0829FB7F8940B8FEA89D2\n:10043000FB89808180620AC09FB7F894EE89FF89AA\n:100440006083E889F98980818370806480839FBF9D\n:1004500081E090E0DF91CF911F910F91FF90EF909D\n:100460000895CF93DF93EC01888D8823C9F0EA8942\n:10047000FB89808185FD05C0A889B9898C9186FD9D\n:100480000FC00FB607FCF5CF808185FFF2CFA8899A\n:10049000B9898C9185FFEDCFCE010E94C201E7CFD3\n:1004A000DF91CF910895CF92DF92EF92FF921F9349\n:1004B000CF93DF93EC016A017B01122FE889F98960\n:1004C00082E080834115514E61057105B1F060E015\n:1004D00079E08DE390E0A70196010E94B605DA016C\n:1004E000C9010197A109B109B695A7959795879577\n:1004F0009C01211580E13807A8F0E889F98910826C\n:1005000060E874E88EE190E0A70196010E94B605CC\n:10051000DA01C9010197A109B109B695A795979587\n:1005200087959C01EC85FD853083EE85FF852083D2\n:10053000188EEC89FD891083EA89FB8980818061AE\n:100540008083EA89FB89808188608083EA89FB89CE\n:10055000808180688083EA89FB8980818F7D8083A8\n:10056000DF91CF911F91FF90EF90DF90CF90089592\n:100570001F920F920FB60F9211242F938F939F9378\n:10058000EF93FF93E0915B01F0915C018081E0913A\n:100590006101F091620182FD12C09081809164013D\n:1005A0008F5F8F7320916501821751F0E091640194\n:1005B000F0E0E55BFE4F958F8093640101C0808180\n:1005C000FF91EF919F918F912F910F900FBE0F9000\n:1005D0001F9018951F920F920FB60F9211242F9310\n:1005E0003F934F935F936F937F938F939F93AF93BB\n:1005F000BF93EF93FF938BE491E00E94C201FF91C0\n:10060000EF91BF91AF919F918F917F916F915F918A\n:100610004F913F912F910F900FBE0F901F90189503\n:100620008BE491E00E94770121E0892B09F420E01E\n:10063000822F0895EBE4F1E01382128288EE93E0BA\n:10064000A0E0B0E084839583A683B78382E291E043\n:100650009183808385EC90E09587848784EC90E09B\n:100660009787868780EC90E0918B808B81EC90E07F\n:10067000938B828B82EC90E0958B848B86EC90E060\n:10068000978B868B118E128E138E148E0895CF92B7\n:10069000DF92EF92FF920F931F93CF93DF936C0142\n:1006A0007A018B01C0E0D0E0CE15DF0581F0D801E2\n:1006B0006D918D01D601ED91FC910190F081E02DBD\n:1006C000C6010995892B11F02196EECF7E01C70155\n:1006D000DF91CF911F910F91FF90EF90DF90CF901E\n:1006E00008956115710579F0FB0101900020E9F78B\n:1006F0003197AF01461B570BDC01ED91FC91028055\n:10070000F381E02D099480E090E008950C9471034A\n:10071000DC01ED91FC910190F081E02D099460E302\n:1007200071E00C9471038F929F92AF92BF92EF92FF\n:10073000FF920F931F93CF93DF93CDB7DEB7A197AF\n:100740000FB6F894DEBF0FBECDBF7C01FA01CB011E\n:1007500019A2223008F42AE08E010F5D1F4F822E6D\n:10076000912CA12CB12CBF01A50194010E94B605CA\n:10077000F901CA01015011096A3014F4605D01C029\n:10078000695CD8016C93232B242B252B61F7B801CE\n:10079000C7010E947103A1960FB6F894DEBF0FBE89\n:1007A000CDBFDF91CF911F910F91FF90EF90BF9040\n:1007B000AF909F908F900895CF92DF92EF92FF922B\n:1007C0000F931F93CF93DF932115310581F4DC0143\n:1007D000ED91FC910190F081E02D642FDF91CF919C\n:1007E0001F910F91FF90EF90DF90CF9009942A30E6\n:1007F000310501F577FF1DC06A017B01EC016DE257\n:100800000E9488038C0144275527BA014C195D09C1\n:100810006E097F092AE0CE010E949303800F911F89\n:10082000DF91CF911F910F91FF90EF90DF90CF90CC\n:1008300008952AE0DF91CF911F910F91FF90EF90E3\n:10084000DF90CF900C9493039A01AB01770F660B66\n:10085000770B0C94DC030F931F93CF93DF93EC0182\n:100860000E9424048C01CE010E948F03800F911FEF\n:10087000DF91CF911F910F91089508950E94A304D5\n:100880000E943D040E949700C4EBD1E00E94C20088\n:100890002097E1F30E94B401F9CF1F920F920FB697\n:1008A0000F9211242F933F938F939F93AF93BF93F6\n:1008B0008091E9019091EA01A091EB01B091EC01E6\n:1008C0003091E80123E0230F2D3720F40196A11D7C\n:1008D000B11D05C026E8230F0296A11DB11D20936E\n:1008E000E8018093E9019093EA01A093EB01B093B2\n:1008F000EC018091ED019091EE01A091EF01B0919A\n:10090000F0010196A11DB11D8093ED019093EE01C0\n:10091000A093EF01B093F001BF91AF919F918F91A0\n:100920003F912F910F900FBE0F901F9018952FB7EA\n:10093000F8946091E9017091EA018091EB01909146\n:10094000EC012FBF0895789484B5826084BD84B58E\n:10095000816084BD85B5826085BD85B5816085BDBA\n:10096000EEE6F0E0808181608083E1E8F0E01082D3\n:10097000808182608083808181608083E0E8F0E014\n:10098000808181608083E1EBF0E0808184608083FE\n:10099000E0EBF0E0808181608083EAE7F0E0808135\n:1009A0008460808380818260808380818160808395\n:1009B0008081806880831092C10008958E3008F095\n:1009C0008E502091000190E4299F9001112487709E\n:1009D000822B80937C0080917A00806480937A00DF\n:1009E00080917A0086FDFCCF80917800909179000B\n:1009F0000895833081F028F4813099F08230A1F09D\n:100A000008958730A9F08830B9F08430D1F480910E\n:100A100080008F7D03C0809180008F77809380005D\n:100A2000089584B58F7702C084B58F7D84BD089505\n:100A30008091B0008F7703C08091B0008F7D80934C\n:100A4000B0000895CF93DF9390E0FC01E458FF4F8E\n:100A50002491FC01E057FF4F8491882361F190E0DD\n:100A6000880F991FFC01E854FF4FC591D491FC01F8\n:100A7000E255FF4FA591B491611109C09FB7F89459\n:100A80008881209582238883EC912E230BC06230CD\n:100A900061F49FB7F8948881322F3095832388833F\n:100AA000EC912E2B2C939FBF06C08FB7F894E88152\n:100AB0002E2B28838FBFDF91CF9108951F93CF9363\n:100AC000DF93282F30E0F901E859FF4F8491F901B5\n:100AD000E458FF4FD491F901E057FF4FC491CC2364\n:100AE000C1F0162F81110E94F904EC2FF0E0EE0FF7\n:100AF000FF1FE255FF4FA591B4919FB7F8941111D4\n:100B000004C08C91D095D82302C0EC91DE2BDC93ED\n:100B10009FBFDF91CF911F910895CF93DF93282F2F\n:100B200030E0F901E859FF4F8491F901E458FF4F93\n:100B3000D491F901E057FF4FC491CC2391F081117A\n:100B40000E94F904EC2FF0E0EE0FFF1FEC55FF4F71\n:100B5000A591B491EC91ED2381E090E021F480E047\n:100B600002C080E090E0DF91CF910895A1E21A2EBB\n:100B7000AA1BBB1BFD010DC0AA1FBB1FEE1FFF1F41\n:100B8000A217B307E407F50720F0A21BB30BE40B91\n:100B9000F50B661F771F881F991F1A9469F76095D8\n:100BA0007095809590959B01AC01BD01CF01089592\n:100BB000EE0FFF1F0590F491E02D0994F894FFCFFC\n:100BC00001736F696C5F7261773D002070756D70A5\n:100BD0003D0020696E686962697465643D000000CB\n:100BE0000000E4014703A50131027701910183016F\n:100BF0000D0A006E616E00696E66006F7666000019\n:00000001FF\n"
++}

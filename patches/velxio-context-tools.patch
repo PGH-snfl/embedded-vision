@@ -1,0 +1,274 @@
+--- a/frontend/src/__tests__/physical-models.test.ts
++++ b/frontend/src/__tests__/physical-models.test.ts
+@@ -59,6 +59,8 @@
+   expect(end.x).toBeCloseTo(120+6+160);expect(end.y).toBeCloseTo(150+6+20);
+   dispose=connectCircuitiny();
+   const old=useStore.getState().project.components[0].position!;
++  useStore.getState().select('U1');
++  useStore.setState({moveTarget:'U1'});
+   useStore.getState().moveComponent('U1',[old[0]+.01,old[1],old[2]]);
+   expect(native.getState().components[0].x).toBeCloseTo(120+.01/PX);
+   native.getState().undo();expect(JSON.stringify([native.getState().components,native.getState().wires])).toBe(before);
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -84,6 +84,9 @@
+     meta = component && registry.getById(component.metadataId);
+   const structure = component?.metadataId === STRUCTURE_ID ? structureParameters(component.properties) : null;
+   const physicalModel=component&&physicalModelFor(component);
++  const hasSelection = Boolean(component || board || wire);
++  const selectedBrightness = component ? brightness[component.id] : undefined;
++  const selectedTiming = component ? timing[component.id] : undefined;
+   const designedObjects=components.filter(c=>c.metadataId===STRUCTURE_ID&&c.properties?.evDesignedStructure);
+   const photoObjects=components.filter(c=>c.metadataId===STRUCTURE_ID&&c.properties?.evPhotoStructure);
+   const assemblyRouting=useStore(s=>s.assemblyRouting),interiorView=useStore(s=>s.interiorView);
+@@ -138,10 +141,15 @@
+   const guideWire = guideStep && findStepWire(guideStep, wires);
+   const guideProblem = guideStep ? guideWarning(guideStep, wires, project) : '';
+   const guidePart = guideStep && components.find(c => c.id === guideStep.from.split('.')[0]);
+-  const inspectPart = components.find((c) => c.id === inspector),
++  const inspectPart = components.find((c) => c.id === inspector && c.id === selected),
+     inspectMeta = inspectPart && registry.getById(inspectPart.metadataId);
+-  const sensorPart = components.find((c) => c.id === sensor),
++  const sensorPart = components.find((c) => c.id === sensor && c.id === selected),
+     sensorDef = component && getSensorControlForComponent(component);
++  useEffect(() => {
++    setInspector(null);
++    setSensor(null);
++    setDetails(false);
++  }, [selected, selectedNet]);
+   const previousIds = useRef(new Set([...components, ...boards].map((i) => i.id)));
+   useEffect(() => connectCircuitiny(), []);
+   useEffect(() => {
+@@ -188,6 +196,15 @@
+     const mod = e.ctrlKey || e.metaKey,
+       key = e.key.toLowerCase();
+     let handled = true;
++    if (key === 'escape') {
++      useStore.getState().select(null);
++      useStore.getState().cancelWire();
++      setGuideOpen(false);
++      setDetails(false);
++      e.preventDefault();
++      e.stopPropagation();
++      return;
++    }
+     if (running) return;
+     if (mod && key === 'z') {
+       e.shiftKey ? native.getState().redo() : native.getState().undo();
+@@ -198,7 +215,6 @@
+     else if ((key === 'delete' || key === 'backspace') && selected) deleteSelected(selected);
+     else if ((key === 'delete' || key === 'backspace') && selectedNet)
+       useStore.getState().removeNet(selectedNet);
+-    else if (key === 'escape') {useStore.setState({moveTarget:null});useStore.getState().cancelWire();}
+     else handled = false;
+     if (handled) {
+       e.preventDefault();
+@@ -240,7 +256,7 @@
+         >
+           {wireMode ? '배선 모드 끄기' : '핀 연결'}
+         </button>
+-        <label className="ev-c3d-color">
++        {wireMode && <label className="ev-c3d-color">
+           선 색
+           <input
+             aria-label="새 배선 색"
+@@ -249,7 +265,8 @@
+             value={wireColor}
+             onChange={(e) => useStore.setState({ wireColor: e.target.value })}
+           />
+-        </label>
++        </label>}
++        {(component || board) && <>
+         <button
+           disabled={running || !selected}
+           onClick={() => selected && rotateSelected(selected)}
+@@ -259,6 +276,7 @@
+         <button disabled={running || !selected} onClick={() => selected && copySelected(selected)}>
+           복사
+         </button>
++        </>}
+         <button disabled={running || !clipboard} onClick={pasteSelected}>
+           붙여넣기
+         </button>
+@@ -299,6 +317,7 @@
+               배선 목록
+             </button>
+             <button onClick={onEdit}>기존 2D 편집기 열기</button>
++            <a href="https://github.com/mfranzon/circuitiny" target="_blank" rel="noreferrer">Circuitiny 3D editor · MIT</a>
+           </div>
+         </details>
+       </div>
+@@ -376,20 +395,12 @@
+           <small>가운데 점을 추가하려면 연결 중 바닥을 누르세요.</small>
+         </div>
+       )}
+-      <p className="ev-c3d-help" role="status">
++      {(hasSelection || wireMode) && <p className="ev-c3d-help" role="status">
+         {running ? '실행 중 · 버튼·스위치와 센서 조작 가능 · 배선 수정은 정지 후' : hoverPreview
+           ? `빵판 내부 연결선 미리보기.${endpointDrag && !endpointDrag.valid ? ` · ${endpointDrag.label}` : ''}`
+           : message}
+-      </p>
+-      <a
+-        className="ev-c3d-credit"
+-        href="https://github.com/mfranzon/circuitiny"
+-        target="_blank"
+-        rel="noreferrer"
+-      >
+-        Circuitiny 3D editor · MIT
+-      </a>
+-      {running && Object.keys(brightness).length > 0 && (
++      </p>}
++      {running && component && selectedBrightness !== undefined && (
+         <div
+           className="ev-c3d-live"
+           role="status"
+@@ -397,14 +408,10 @@
+           title="2D 시뮬레이터가 전류와 PWM으로 계산한 밝기입니다. PWM 값 자체의 백분율과 다를 수 있습니다."
+         >
+           <span>LED 밝기 ·{' '}
+-          {Object.entries(brightness)
+-            .map(([id, value]) => `${id} ${Math.round(value * 100)}%`)
+-            .join(' · ')}
+-          {Object.values(timing).find((t) => t.source === 'mcu-pwm' && t.intervalMs !== null) &&
++          {component.id} {Math.round(selectedBrightness * 100)}%
++          {selectedTiming?.source === 'mcu-pwm' && selectedTiming.intervalMs !== null &&
+             (() => {
+-              const t = Object.values(timing).find(
+-                (t) => t.source === 'mcu-pwm' && t.intervalMs !== null,
+-              )!;
++              const t = selectedTiming;
+               return (
+                 <small
+                   data-mcu-step-ms={t.intervalMs}
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -50,6 +50,7 @@
+   lit?: boolean;
+   brightness?: number;
+ }) {
++  const selected = useStore(s => s.selected === String(config?.nativeId || componentId.split('@')[1]));
+   const def = definitions.get(componentId);
+   if (!def) return null;
+   const kind = String(config?.metadataId || componentId.split('@')[0]),
+@@ -61,7 +62,7 @@
+     id = String(config?.nativeId || componentId.split('@')[1]);
+   const assemblyRotation=(config?.evAssembly as {pose?:{rotation?:V}}|undefined)?.pose?.rotation;
+   if (kind === 'arduino-uno') return <group rotation={assemblyRotation}><UnoBody componentId={componentId} rotation={rotation} assemblyRotation={assemblyRotation}/></group>;
+-  if (typeof config?.physicalModelId==='string')return <group rotation={assemblyRotation}><PhysicalBody modelId={config.physicalModelId} id={id} assembled={!!assemblyRotation}/></group>;
++  if (typeof config?.physicalModelId==='string')return <group rotation={assemblyRotation}><PhysicalBody modelId={config.physicalModelId} id={id}/></group>;
+   if (kind === 'led')
+     return <LedModel pins={pins} color={String(config?.color || 'red')} brightness={brightness} />;
+   if (kind.startsWith('breadboard'))
+@@ -94,13 +95,13 @@
+           <meshStandardMaterial color={config?.isBoard ? '#1e6553' : '#a7bdb0'} roughness={0.5} />
+         </RoundedBox>
+         <NativeFace id={id} width={width} depth={depth} />
+-        <Html
++        {selected && <Html
+           position={[0, 0.009, -depth / 2 - 0.002]}
+           center
+           style={{ pointerEvents: 'none', fontSize: 10, color: '#42624d', whiteSpace: 'nowrap' }}
+         >
+           {String(config?.name || kind)} · {id}
+-        </Html>
++        </Html>}
+       </group>
+       {pins.map((p) => (
+         <Lead
+--- a/frontend/src/components/circuitiny/PhysicalBodies.tsx
++++ b/frontend/src/components/circuitiny/PhysicalBodies.tsx
+@@ -90,10 +90,10 @@
+   {usb?<><Lead points={[[.017,.006,0],[.021,.006,0],[.025,.006,0]]} radius={.0008}/><Box at={[24,6,0]} size={[5,2.7,7.8]} color="#b9c4c4" metal={.8}/></>:[-1,1].map(s=><group key={s}><Box at={[21,5,s*4]} size={[3,5,5]} color={s<0?'#bc3d36':'#191e22'}/></group>)}
+  </group>;
+ }
+-export function PhysicalBody({modelId,id,assembled=false}:{modelId:string;id:string;assembled?:boolean}){
++export function PhysicalBody({modelId,id}:{modelId:string;id:string}){
+  const selected=useStore(s=>s.selected===id);
+  const model=physicalModels[modelId];if(!model)return null;
+  return <group>{model.kind==='pi'?<PiBoard/>:model.kind==='hat'?<DriverBoard layout={boardLayouts.hat}/>:model.kind==='shield'?<DriverBoard layout={boardLayouts.shield} shield/>:model.kind==='motor'?<MicroMotor/>:<PowerBody usb={model.kind==='usb-power'}/>}
+-  {(!assembled||selected)&&<Html position={[0,m(model.height+3),m(model.depth/2+3)]} center style={{pointerEvents:'none',fontSize:10,color:'#294d39',whiteSpace:'nowrap',background:'#ffffffc9',padding:'2px 4px',borderRadius:3}}>{id} · {model.name}</Html>}
++  {selected&&<Html position={[0,m(model.height+3),m(model.depth/2+3)]} center style={{pointerEvents:'none',fontSize:10,color:'#294d39',whiteSpace:'nowrap',background:'#ffffffc9',padding:'2px 4px',borderRadius:3}}>{id} · {model.name}</Html>}
+  </group>;
+ }
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -84,6 +84,7 @@
+     running = useStore((s) => s.simulating),
+     drag = useStore((s) => s.endpointDrag),
+     wireMode = useStore((s) => s.wireMode);
++  const selectedObject = useStore(s => s.selected);
+   return (
+     <>
+       {project.nets
+@@ -123,7 +124,7 @@
+             <group key={net.id}>
+               {headerAssembly ? <>
+                 <Line points={points} color={selected === net.id ? '#df923c' : '#59718e'} lineWidth={3} dashed dashSize={0.003} gapSize={0.002} onClick={pick} />
+-                {(gpioHeader||net.endpoints[0]?.endsWith('.A4'))&&<Html center position={[(a.position[0]+b.position[0])/2,Math.max(a.position[1],b.position[1])+.008,(a.position[2]+b.position[2])/2]} style={{pointerEvents:'none',whiteSpace:'nowrap',fontSize:10,background:'#edf2f8e8',color:'#354d67',border:'1px solid #a9b9ca',borderRadius:4,padding:'3px 6px'}}>{gpioHeader?(net.physicalRoute?'40핀 적층 결합':'40핀 헤더 결합 · 분리 표시'):'실드 적층 헤더 결합'}</Html>}
++                {(selected === net.id || net.endpoints.some(pin => pin.split('.')[0] === selectedObject)) && (gpioHeader||net.endpoints[0]?.endsWith('.A4'))&&<Html center position={[(a.position[0]+b.position[0])/2,Math.max(a.position[1],b.position[1])+.008,(a.position[2]+b.position[2])/2]} style={{pointerEvents:'none',whiteSpace:'nowrap',fontSize:10,background:'#edf2f8e8',color:'#354d67',border:'1px solid #a9b9ca',borderRadius:4,padding:'3px 6px'}}>{gpioHeader?(net.physicalRoute?'40핀 적층 결합':'40핀 헤더 결합 · 분리 표시'):'실드 적층 헤더 결합'}</Html>}
+               </> : <JumperCable
+                 points={points}
+                 color={net.color || '#328260'}
+--- a/frontend/src/components/simulator/SimulatorCanvas.tsx
++++ b/frontend/src/components/simulator/SimulatorCanvas.tsx
+@@ -497,6 +497,15 @@
+   // "Flash to real board" from the board context menu. The FlashModal
+   // owns its own port-picker / progress UI; we just gate the mount.
+   const [flashModalFor, setFlashModalFor] = useState<string | null>(null);
++  // The 3D view delegates board inspectors to this mounted native canvas.
++  // Drop those windows when their owning object is no longer selected.
++  useEffect(() => useMovementStore.subscribe((next, previous) => {
++    if (requireMoveActivationRef.current ||
++        (next.selected === previous.selected && next.selectedNet === previous.selectedNet)) return;
++    setBoardContextMenu(menu => menu?.boardId === next.selected ? menu : null);
++    setBoardOptionsModalFor(id => id === next.selected ? id : null);
++    setPinPicker(picker => picker?.targetId === next.selected ? picker : null);
++  }), []);
+   // Cached Tauri-runtime probe — used to gate the "Flash to real
+   // board" menu item in web builds. Hooks-stable across re-renders.
+   const isTauriRuntime = useRef(isTauriRuntimeFn()).current;
+@@ -3567,13 +3576,13 @@
+                 belong to the selected (active) board only: tied to hover they
+                 vanished the moment the pointer left the board for them. */}
+             <div className="board-docks-layer">
+-              {boards.map((board) => (
++              {boards.filter(board => !requireMoveActivation || board.id === selectedObjectId).map((board) => (
+                 <BoardDock
+                   key={board.id}
+                   board={board}
+                   zoom={zoom}
+                   running={interactionRunning}
+-                  showEdit={!wireInProgress && board.id === activeBoardId}
++                  showEdit={!wireInProgress && board.id === (requireMoveActivation ? selectedObjectId : activeBoardId)}
+                   onOpenInspector={(x, y) => setBoardContextMenu({ boardId: board.id, x, y })}
+                   onRotate={() => rotateBoard(board.id)}
+                   onCopy={() => copyBoard(board.id)}
+@@ -3665,7 +3674,7 @@
+               corner (they lived in the canvas header, which gets too tight
+               when the AI chat panel is docked; the corner is always free).
+               stopPropagation so a click never starts a canvas pan/selection. */}
+-          <div
++          {(!requireMoveActivation || selectedObjectId || selectedWireId) && <div
+             className="zoom-controls zoom-controls--floating"
+             onMouseDown={(e) => e.stopPropagation()}
+             onClick={(e) => e.stopPropagation()}
+@@ -3726,7 +3735,7 @@
+                 <line x1="5" y1="12" x2="19" y2="12" />
+               </svg>
+             </button>
+-          </div>
++          </div>}
+         </div>
+       </div>
+ 
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -842,7 +842,7 @@
+          <div className={embedded?'ev-circuit-layout':undefined} style={{display:'flex',flexDirection:'column',flex:1,minHeight:0}}>
+           {embedded&&<section className="ev-circuit-pane-tools" aria-label="회로 도구 영역" data-action-scope="circuit"><div className="ev-pane-heading"><strong>회로</strong><div className="ev-canvas-actions"><button className="ev-add-part" disabled={circuitRunning} onClick={()=>sharedTool('add')}>＋ 부품 추가</button><div className="ev-dimension-switch" role="group" aria-label="회로 표시 방식"><button aria-pressed={assembly3D&&assemblyView==='top'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'top'});}}>2D 보기</button><button aria-pressed={assembly3D&&assemblyView==='iso'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'iso'});}}>3D 보기</button><button onClick={()=>useCircuitinyStore.setState(s=>({fitRevision:s.fitRevision+1}))}>화면 맞춤</button><button aria-pressed={assembly3D&&cameraLocked} disabled={!assembly3D} onClick={()=>useCircuitinyStore.setState(s=>({cameraLocked:!s.cameraLocked}))}>{cameraLocked?'시점 잠금 해제':'시점 잠금'}</button></div></div></div>
+            <div ref={setCircuitToolsHost} className="ev-circuit-edit-tools"/>
+-           <div className="ev-circuit-help"><p>배선을 선택한 뒤 양 끝 조작점을 드래그하세요. 왼쪽 드래그 이동 · 오른쪽 드래그 회전 · 휠 확대/축소</p><EditorMenuBar scope="circuit"/><details className="ev-native-circuit-tools" onToggle={event=>setToolsOpen(event.currentTarget.open)}><summary>추가 회로 도구</summary><div ref={setCanvasHeaderSlot}/></details></div>
++           <div className="ev-circuit-help"><EditorMenuBar scope="circuit"/><details className="ev-native-circuit-tools" onToggle={event=>setToolsOpen(event.currentTarget.open)}><summary>추가 회로 도구</summary><p>배선을 선택한 뒤 양 끝 조작점을 드래그하세요. 왼쪽 드래그 이동 · 오른쪽 드래그 회전 · 휠 확대/축소</p><div ref={setCanvasHeaderSlot}/></details></div>
+           </section>}
+           <div className={embedded?'ev-circuit-workspace':undefined} style={{ flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 }}>
+             <div className={embedded&&assembly3D?'ev-canvas-engine ev-hidden-2d':'ev-canvas-engine'} aria-hidden={embedded&&assembly3D?true:undefined}>

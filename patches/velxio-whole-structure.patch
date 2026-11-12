@@ -1,0 +1,380 @@
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -36,6 +36,7 @@
+ import { useSimulatorStore as native } from '../../store/useSimulatorStore';
+ import { isBreadboard } from '../../utils/breadboardNets';
+ import { STRUCTURE_ID, structureParameters } from './structureObjects';
++import {MechanicalShape} from './MechanicalShape';
+ type Violation = { severity: 'error' | 'warning'; involves: string[] };
+ const STRIP_LED_N = 8;
+ 
+@@ -385,13 +386,11 @@
+     const rad=Math.PI/180;
+     const orientation=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),p.rotation*rad).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rotationX*rad,-p.rotation*rad,p.rotationZ*rad)));
+     const props=config.structure as Record<string,unknown>|undefined;
+-    const role=(props?.evPhotoStructure as {role?:string}|undefined)?.role;
++    const role=(props?.evPhotoStructure as {role?:string}|undefined)?.role||(props?.evDesignedStructure as {role?:string}|undefined)?.role||'other';
+     const ghost=interior&&['housing','chassis','platform','frame'].includes(role||'');
+-    return <group><mesh position={[0, (p.elevation+p.height/2)/1000, 0]} quaternion={orientation} scale={[w,h,d]} castShadow={!ghost} receiveShadow raycast={ghost?()=>{}:undefined}>
+-      {p.shape === 'cylinder' ? <cylinderGeometry args={[.5,.5,1,40]} /> : <boxGeometry args={[1,1,1]} />}
+-      <meshStandardMaterial color={p.color} roughness={0.65} transparent={ghost} opacity={ghost ? 0.18 : 1} depthWrite={!ghost} emissive={selected ? '#9bd1ff' : '#000000'} emissiveIntensity={selected ? 0.3 : 0} />
+-      {String(config.nativeId||'').startsWith('photo-wheel-')&&<mesh position={[0,.51,0]}><cylinderGeometry args={[.17,.17,.025,24]}/><meshStandardMaterial color="#aeb6b9" metalness={.5} roughness={.4}/></mesh>}
+-    </mesh>{typeof props?.label==='string'&&(selected||String(config.nativeId||'').startsWith('photo-chassis-')||String(config.nativeId||'').startsWith('photo-wheel-'))&&<Html center position={[0,(p.elevation+p.height+8)/1000,0]} style={{pointerEvents:'none',whiteSpace:'nowrap',background:'#ffffffd9',borderRadius:3,padding:'2px 4px',fontSize:10,color:'#435b6e'}}>{props.label} · 사진 추정</Html>}</group>;
++    return <group><group position={[0, (p.elevation+p.height/2)/1000, 0]} quaternion={orientation} scale={[w,h,d]}>
++      <MechanicalShape id={String(config.nativeId||'')} role={role} shape={p.shape} color={p.color} ghost={ghost} selected={selected}/>
++    </group>{typeof props?.label==='string'&&selected&&<Html center position={[0,(p.elevation+p.height+8)/1000,0]} style={{pointerEvents:'none',whiteSpace:'nowrap',background:'#ffffffd9',borderRadius:3,padding:'2px 4px',fontSize:10,color:'#435b6e'}}>{props.label} · {props.evDesignedStructure?'설계 보완':'사진 추정'}</Html>}</group>;
+   }
+   if (config?.metadataId)
+     return (
+@@ -897,8 +896,19 @@
+ 
+ function ViewModeCamera() {
+   const viewMode = useStore(s => s.viewMode);
++  const reverse = useStore(s=>s.reverseViewRevision);
+   const { camera, controls } = useThree();
+   const previous = useRef(viewMode);
++  const previousReverse=useRef(reverse);
++  useLayoutEffect(()=>{
++    if(previousReverse.current!==reverse&&controls&&'target' in controls){
++      const orbit=controls as unknown as {target:THREE.Vector3;update:()=>void};
++      const offset=camera.position.clone().sub(orbit.target);
++      if(Math.hypot(offset.x,offset.z)<.01){offset.set(.6,.45,.6).setLength(Math.max(.2,offset.length()));}
++      camera.position.set(orbit.target.x-offset.x,orbit.target.y+offset.y,orbit.target.z-offset.z);orbit.update();
++    }
++    previousReverse.current=reverse;
++  },[reverse,camera,controls]);
+   useLayoutEffect(() => {
+     if (previous.current !== viewMode && viewMode === 'top' && controls && 'target' in controls) {
+       const orbit = controls as unknown as {target: THREE.Vector3; update: () => void};
+--- a/frontend/src/components/circuitiny/assemblyGeometry.ts
++++ b/frontend/src/components/circuitiny/assemblyGeometry.ts
+@@ -36,7 +36,7 @@
+  return parts.filter(p=>p.metadataId==='ev-structure').map(part=>{
+   const p=part.properties||{},size:V=[Number(p.width),Number(p.height),Number(p.depth)];
+   const pose:Pose={position:[(part.x+6)*MM_PER_PX+size[0]/2,Number(p.elevation||0)+size[1]/2,(part.y+6)*MM_PER_PX+size[2]/2],rotation:[Number(p.rotationX||0),-Number(p.rotation||0),Number(p.rotationZ||0)].map(n=>n*Math.PI/180) as V};
+-  return {part,role:p.evPhotoStructure?.role||'other',pose,size,box:bounds(part.id,pose,size)};
++  return {part,role:p.evPhotoStructure?.role||p.evDesignedStructure?.role||'other',pose,size,box:bounds(part.id,pose,size)};
+  }).filter(o=>[...o.pose.position,...o.pose.rotation,...o.size].every(Number.isFinite)&&o.size.every(n=>n>=2&&n<=500));
+ }
+ export type Mount={pose:Pose;baseline:V;host?:{id:string;center:V};note:string};
+--- a/frontend/src/components/circuitiny/assemblyPlanner.ts
++++ b/frontend/src/components/circuitiny/assemblyPlanner.ts
+@@ -2,7 +2,8 @@
+  * assembly proposal, not recovered mounting dimensions or electrical approval. */
+ import {hardwareModel,structures,bounds,contains,overlap,modelBox,modelPin,portDirection,mountedPose,structureObstacles,plus,rotate,MM_PER_PX,type V,type Pose,type Structure,type Box,type Mount} from './assemblyGeometry';
+ import {routeCable,type CableRoute} from './assemblyRouting';
+-export const ASSEMBLY_VERSION='photo-assembly-v1';
++import {withMechanicalCompletion} from './mechanicalCompletionProject';
++export const ASSEMBLY_VERSION='photo-assembly-v2';
+ type Placed={part:any;pose:Pose;box:Box;host:Structure|Placed;note:string};
+ const digits=(p:V)=>p.map(n=>Math.round(n*1000)/1000) as V;
+ const idOf=(host:Structure|Placed)=>host.part.id;
+@@ -60,6 +61,7 @@
+    return {...p,x:(pos[0]-props.width/2)/MM_PER_PX-6,y:(pos[2]-props.depth/2)/MM_PER_PX-6,properties:{...props,elevation:pos[1]-props.height/2,rotationX:g.rotation[0]*180/Math.PI,rotation:-g.rotation[1]*180/Math.PI,rotationZ:g.rotation[2]*180/Math.PI}};
+   })};
+  }
++ project=withMechanicalCompletion(project);
+  const source=project.embeddedVision||{},parts=[...(project.components||[]),...(project.boards||[])],photo=structures(project.components||[]);
+  const expected=source.recipe==='translated_uno_motor_shield_rover'?['U1','SHIELD1','MOTOR_L','MOTOR_R','BAT1']:['U1','HAT1','MOTOR_L','MOTOR_R','BAT1','PS1'];
+  if(!['raspberry_pi_2wd_robot','translated_pi_rover_c','translated_uno_motor_shield_rover'].includes(source.recipe)||!photo.length)return {project,changed:false};
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -81,6 +81,7 @@
+   const lockedPosition = !movableInfrastructure && (!!board || !!(component && isBreadboard(component.metadataId)));
+   const structure = component?.metadataId === STRUCTURE_ID ? structureParameters(component.properties) : null;
+   const physicalModel=component&&physicalModelFor(component);
++  const designedObjects=components.filter(c=>c.metadataId===STRUCTURE_ID&&c.properties?.evDesignedStructure);
+   const photoObjects=components.filter(c=>c.metadataId===STRUCTURE_ID&&c.properties?.evPhotoStructure);
+   const assemblyRouting=useStore(s=>s.assemblyRouting),interiorView=useStore(s=>s.interiorView);
+   const mounted=[...components,...boards].filter(p=>p.properties?.evAssembly);
+@@ -88,7 +89,7 @@
+    if(running)return;
+    const result=proposeAssembly({...buildVlxPayload({name:'차체 내부 배치'}),embeddedVision:getMotionSource()});
+    if(!result.changed){useStore.setState({message:result.error||'배치할 구조물과 부품을 확인하세요.'});return;}
+-   const source=getMotionSource();if(source)source.assembly=result.project.embeddedVision.assembly;
++   const source=getMotionSource();if(source){source.assembly=result.project.embeddedVision.assembly;if(result.project.embeddedVision.structure_completion)source.structure_completion=result.project.embeddedVision.structure_completion;}
+    atomic('구조 내부 배치·배선 계산',()=>native.setState({components:result.project.components,boards:result.project.boards}));
+    useStore.setState(s=>({fitRevision:s.fitRevision+1,message:'부품을 차체에 배치하고 배선 경로를 갱신했습니다. 실제 장착 치수는 확인이 필요합니다.'}));
+   };
+@@ -192,12 +193,14 @@
+   const toolbar=(
+       <div className="ev-c3d-tools">
+         <strong>회로 편집</strong>
++        {photoObjects.length>0&&<button onClick={()=>useStore.setState(s=>({viewMode:'iso',reverseViewRevision:s.reverseViewRevision+1}))}>반대쪽 보기</button>}
+         <details className="ev-c3d-more"><summary>＋ 3D 구조물</summary><div>
+           <button disabled={running} onClick={()=>addStructure('box')}>상자 추가</button>
+           <button disabled={running} onClick={()=>addStructure('cylinder')}>원통 추가</button>
+           <small>전기 연결이 없는 가상 구조물입니다.</small>
+         </div></details>
+         {photoObjects.length>0&&<><button disabled={running} onClick={optimizeAssembly}>배치·배선 최적화</button><button aria-pressed={interiorView} onClick={()=>useStore.setState({interiorView:!interiorView})}>{interiorView?'내부 보기 켜짐':'내부 보기'}</button>{mounted.length>0&&<button disabled={running} onClick={restoreLayout}>이전 배치 복원</button>}</>}
++        {designedObjects.length>0&&<details className="ev-c3d-more"><summary>설계 보완 {designedObjects.length}개</summary><div><small>반대편·하부까지 완성한 새 설계 · 원본 형상 미확인</small>{designedObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
+         {mounted.length>0&&<details className="ev-c3d-more"><summary>장착 부품 {mounted.length}개</summary><div>{mounted.map(p=><button key={p.id} onClick={()=>useStore.getState().select(p.id)}>{p.id} · {String(p.properties?.evRoverLabel||('name' in p?p.name:'시스템 부품'))}</button>)}</div></details>}
+         {assemblyRouting&&<details className="ev-c3d-more"><summary>배치·배선 결과</summary><p>케이블 경로 합계 {(assemblyRouting.wireLengthMm/1000).toFixed(2)} m · 경로 미해결 {assemblyRouting.unresolved.length}개</p>{assemblyRouting.unresolved.map(e=><p key={e.id}>{e.id}: {e.reason}</p>)}<p>표시 치수에서 계산한 경로입니다. 실제 절단 길이·고정 홀·케이스 인출구는 확인이 필요합니다.</p></details>}
+         {photoObjects.length>0&&<details className="ev-c3d-more"><summary>사진 구조물 {photoObjects.length}개</summary><div><small>사진에서 추정한 형상 · 실제 크기 미확인</small>{photoObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
+@@ -442,6 +445,7 @@
+             </label>
+           )}
+           {structure && component && <div className="ev-structure-fields">
++            {Boolean(component.properties?.evDesignedStructure)&&<details open><summary>설계 보완 · INFERRED</summary><p>{String((component.properties.evDesignedStructure as {reason:string}).reason)}</p><p>사진에서 확인하지 못한 부분을 완성한 새 설계입니다. 실제 형상과 제작 치수는 미확인입니다.</p></details>}
+             {Boolean(component.properties?.evPhotoStructure)&&<details><summary>사진 근거 · INFERRED</summary><p>{String((component.properties.evPhotoStructure as {observation?:string}).observation||'사진의 보이는 형상을 단순화한 모델입니다.')}</p><p>절대 치수 UNKNOWN · 표시 기준 길이 220 mm는 시각화 가정입니다. 실제 제작 치수가 아닙니다.</p><p>{String(((component.properties.evPhotoStructure as {assumptions?:string[]}).assumptions||[]).join(' '))}</p></details>}
+             {([['width','너비'],['height','높이'],['depth','깊이'],['elevation','바닥 높이']] as const).map(([key,label])=><label key={key}>{label} (mm)
+               <input type="number" min={key==='elevation'?-500:2} max="500" step="1" disabled={running} aria-label={`구조물 ${label} (mm)`}
+--- a/frontend/src/components/circuitiny/structureObjects.ts
++++ b/frontend/src/components/circuitiny/structureObjects.ts
+@@ -1,7 +1,7 @@
+ /** Pinless, visual-only geometry. Stored in the native component snapshot so
+  * .vlx, drafts, cloud saves, undo and project deletion share one lifecycle. */
+ export const STRUCTURE_ID = 'ev-structure';
+-export type StructureShape = 'box' | 'cylinder';
++export type StructureShape = 'box' | 'cylinder' | 'sphere';
+ export type StructureParameters = { shape: StructureShape; width: number; height: number; depth: number; elevation: number; color: string; rotation: number; rotationX:number;rotationZ:number };
+ function numeric(value: unknown, fallback: number, min: number, max: number) {
+   const n = typeof value === 'number' ? value : Number(value);
+@@ -10,7 +10,7 @@
+ export function structureParameters(input: Record<string, unknown> | undefined): StructureParameters {
+   const p = input || {};
+   return {
+-    shape: p.shape === 'cylinder' ? 'cylinder' : 'box',
++    shape: p.shape === 'cylinder' ? 'cylinder' : p.shape==='sphere'?'sphere':'box',
+     width: numeric(p.width, 40, 2, 500), height: numeric(p.height, 20, 2, 500),
+     depth: numeric(p.depth, 40, 2, 500), elevation: numeric(p.elevation, 0, -500, 500),
+     color: typeof p.color === 'string' && /^#[0-9a-f]{6}$/i.test(p.color) ? p.color : '#829aaf',
+--- a/frontend/src/components/circuitiny/store.ts
++++ b/frontend/src/components/circuitiny/store.ts
+@@ -33,6 +33,7 @@
+   viewMode: 'iso' | 'top' | 'front';
+   cameraLocked: boolean;
+   fitRevision: number;
++  reverseViewRevision: number;
+   externalLit: string[];
+   externalBrightness: Record<string, number>;
+   externalTiming: Record<string, LedOutputSample>;
+@@ -62,6 +63,7 @@
+   viewMode: 'iso',
+   cameraLocked: false,
+   fitRevision: 0,
++  reverseViewRevision: 0,
+   selected: null,
+   selectedNet: null,
+   moveTarget: null,
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -60,6 +60,7 @@
+    payload=withPhotoStructures(payload,original);
+    payload=withAssembly({...payload,embeddedVision:{...payload.embeddedVision,photo_structure:source.photo_structure}});
+    if(payload.embeddedVision?.assembly)source.assembly=payload.embeddedVision.assembly;
++   if(payload.embeddedVision?.structure_completion)source.structure_completion=payload.embeddedVision.structure_completion;
+    await importVlxFile(new File([JSON.stringify(payload)],'embedded.vlx',{type:'application/json'}));
+    if(cancelled)return;
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+--- a/frontend/src/components/simulator/SimulatorCanvas.tsx
++++ b/frontend/src/components/simulator/SimulatorCanvas.tsx
+@@ -2712,7 +2712,7 @@
+           transform:p.rotation ? `rotate(${p.rotation}deg)` : undefined,zIndex:selectedComponentId===component.id?2:0}}>
+         <div id={component.id} aria-label={p.shape==='box'?'구조물 상자':'구조물 원통'} style={{width:p.width*factor,height:p.depth*factor,
+           background:p.color,opacity:.6,border:selectedComponentId===component.id?'2px solid #2586ed':'2px solid #4c606b',
+-          borderRadius:p.shape==='cylinder'?'50%':2,boxSizing:'border-box'}} />
++          borderRadius:p.shape!=='box'?'50%':2,boxSizing:'border-box'}} />
+       </div>;
+     }
+     // SPICE probes are React components, not web components — render them
+--- a/frontend/src/__tests__/assembly-planner.test.ts
++++ b/frontend/src/__tests__/assembly-planner.test.ts
+@@ -3,6 +3,9 @@
+ import {proposeAssembly,withAssembly,restoreAssembly,routeAssembly,hardwareObstacles} from '../components/circuitiny/assemblyPlanner';
+ import {structures,mountedPose,modelBox,hardwareModel,modelPin,contains,overlap,segmentHits,structureObstacles,MM_PER_PX,type V} from '../components/circuitiny/assemblyGeometry';
+ import {routeCable} from '../components/circuitiny/assemblyRouting';
++import {withMechanicalCompletion} from '../components/circuitiny/mechanicalCompletionProject';
++import {mechanicalDetails} from '../components/circuitiny/mechanicalDetails';
++import {structureParameters} from '../components/circuitiny/structureObjects';
+ import {registerAssemblyScene,captureAssemblyVisual} from '../components/circuitiny/assemblyScene';
+ 
+ function fixture(){
+@@ -26,7 +29,7 @@
+   expect(assembled.wires).toBe(original.wires);expect(assembled.fileGroups).toBe(original.fileGroups);
+   const mounted=assembled.components.filter((p:any)=>p.properties.evAssembly);
+   expect(mounted).toHaveLength(6);expect(mounted.map((p:any)=>[p.id,p.x,p.y])).toEqual(original.components.slice(0,6).map((p:any)=>[p.id,p.x,p.y]));
+-  expect(assembled.components.filter((p:any)=>p.metadataId==='ev-structure')).toHaveLength(8);
++  expect(assembled.components.filter((p:any)=>p.properties.evPhotoStructure)).toHaveLength(8);
+   expect(assembled.embeddedVision.assembly.candidateCount).toBeGreaterThan(100);
+  });
+  it('keeps power modules in the selected enclosures and aligns both GPIO headers',()=>{
+@@ -111,3 +114,27 @@
+   expect(position.toArray()).toEqual([0,.2,0]);
+  });
+ });
++
++ describe('whole mechanical design',()=>{
++  it('adds the other side, four platform supports, front/rear members and a complete caster',()=>{
++   const parts=assembled.components,whole=structures(parts);
++   expect(whole.filter(n=>n.role==='wheel')).toHaveLength(2);
++   expect(whole.filter(n=>n.role==='support'&&n.part.id!=='design-caster-stem')).toHaveLength(4);
++   expect(parts.some((p:any)=>p.id==='design-frame-rear-crossmember')).toBe(true);
++   expect(parts.some((p:any)=>p.id==='design-frame-front-crossmember')).toBe(true);
++   expect(parts.find((p:any)=>p.id==='design-caster-ball').properties.shape).toBe('sphere');
++   const designed=parts.filter((p:any)=>p.properties.evDesignedStructure);expect(designed).toHaveLength(11);
++   for(const p of designed){expect(p.properties.evPhotoStructure).toBeUndefined();expect(p.properties.evDesignedStructure.source_kind).toBe('DESIGN_COMPLETION');expect(p.properties.evDesignedStructure.reason.length).toBeGreaterThan(10);}
++  });
++  it('keeps user edits and deletions without silently recreating them',()=>{
++   const copy=structuredClone(assembled);copy.components=copy.components.filter((p:any)=>p.id!=='design-wheel-opposite');
++   copy.components.find((p:any)=>p.id==='design-caster-ball').properties.width=30;
++   expect(withMechanicalCompletion(copy)).toBe(copy);expect(withAssembly(copy)).toBe(copy);
++  });
++  it('renders wheel details on both faces and keeps the spherical caster shape',()=>{
++   const detail=mechanicalDetails('design-wheel-opposite','wheel')!;
++   expect(detail.some(p=>p.position[1]>.45)).toBe(true);expect(detail.some(p=>p.position[1]<-.45)).toBe(true);
++   expect(detail.filter(p=>p.shape==='box').length).toBeGreaterThan(20);
++   expect(structureParameters({shape:'sphere'}).shape).toBe('sphere');
++  });
++ });
+--- /dev/null
++++ b/frontend/src/components/circuitiny/mechanicalCompletion.ts
+@@ -0,0 +1,87 @@
++/** Authored completion of a whole mechanical design. These objects are never
++ * observations of a hidden surface, and never carry fabricated image regions. */
++import {rotate,inverseRotate,type V} from './assemblyMath';
++export const COMPLETION_VERSION='whole-structure-v1';
++export type MechanicalNode={id:string;label:string;role:string;shape:'box'|'cylinder'|'sphere';position:V;size:V;rotation:V;color:string;designed?:boolean};
++export type CompletedNode=MechanicalNode&{reason:string;sourceIds:string[];method:'symmetry'|'functional_design'};
++const add=(a:V,b:V)=>a.map((n,i)=>n+b[i]) as V;
++const sub=(a:V,b:V)=>a.map((n,i)=>n-b[i]) as V;
++const distance=(a:V,b:V)=>Math.hypot(...sub(a,b));
++const safe=(n:number)=>Math.max(2,Math.min(500,n));
++export function completeMechanicalScene(nodes:MechanicalNode[],family:string):CompletedNode[]{
++ if(family!=='two_wheel_rover')return [];
++ const base=nodes.find(n=>n.role==='chassis');if(!base)return [];
++ const completed:CompletedNode[]=[],all=[...nodes],ids=new Set(nodes.map(n=>n.id));
++ const local=(p:V)=>inverseRotate(sub(p,base.position),base.rotation),world=(p:V)=>add(base.position,rotate(p,base.rotation));
++ const put=(item:CompletedNode)=>{
++  if(ids.has(item.id)||all.length>=50||[...item.position,...item.size,...item.rotation].some(n=>!Number.isFinite(n))||item.size.some(n=>n<2||n>500))return;
++  ids.add(item.id);all.push(item);completed.push(item);
++ };
++ let wheels=all.filter(n=>n.role==='wheel');
++ if(wheels.length===1){
++  const wheel=wheels[0],p=local(wheel.position);
++  if(Math.abs(p[2])>base.size[2]*.25)put({...wheel,id:'design-wheel-opposite',label:'반대쪽 구동 바퀴',position:world([p[0],p[1],-p[2]]),designed:true,
++   sourceIds:[base.id,wheel.id],method:'symmetry',reason:'선택한 2륜 구동 설계에 맞춰 보이는 바퀴를 반대편에 대칭 배치한 설계입니다.'});
++ }
++ if(!wheels.length){
++  const diameter=safe(base.size[0]*.42),thickness=safe(diameter*.18),y=diameter/2-base.position[1];
++  for(const side of [-1,1])put({id:'design-wheel-'+(side<0?'left':'right'),label:side<0?'왼쪽 구동 바퀴':'오른쪽 구동 바퀴',role:'wheel',shape:'cylinder',
++   position:world([-base.size[0]*.285,y,side*(base.size[2]/2+thickness/2+5)]),size:[diameter,thickness,diameter],rotation:[Math.PI/2,0,0],color:'#242424',designed:true,
++   sourceIds:[base.id],method:'functional_design',reason:'2륜 구동 기능에 필요한 바퀴를 새 설계 치수로 제안했습니다. 사진에서 확인한 부품이 아닙니다.'});
++ }
++ wheels=all.filter(n=>n.role==='wheel');
++ const platform=all.find(n=>n.role==='platform');
++ if(platform){
++  const observed=all.filter(n=>n.role==='support'&&!n.designed);
++  const relative=(p:V)=>inverseRotate(sub(p,platform.position),platform.rotation);
++  const supportWidth=observed[0]?.size[0]||6;
++  const axisPositions=(axis:number,half:number)=>{
++   const values=observed.map(n=>relative(n.position)[axis]);
++   const lo=values.find(n=>n<-half*.35),hi=values.find(n=>n>half*.35);
++   return [lo??-(hi??(half-supportWidth*1.2)),hi??-(lo??-(half-supportWidth*1.2))];
++  };
++  const xs=axisPositions(0,platform.size[0]/2),zs=axisPositions(2,platform.size[2]/2);
++  const bottom=base.position[1]+base.size[1]/2+1,top=platform.position[1]-platform.size[1]/2;
++  const height=observed[0]?.size[1]||safe(top-bottom),centerY=observed[0]?.position[1]??(top+bottom)/2;
++  for(let x=0;x<2;x++)for(let z=0;z<2;z++){
++   const position=add(platform.position,rotate([xs[x],0,zs[z]],platform.rotation));position[1]=centerY;
++   if(all.some(n=>n.role==='support'&&distance(n.position,position)<supportWidth*2))continue;
++   put({id:`design-support-corner-${x}-${z}`,label:`보완 지지대 ${x*2+z+1}`,role:'support',shape:'cylinder',position,size:[supportWidth,height,supportWidth],rotation:platform.rotation,color:observed[0]?.color||'#b69b55',designed:true,
++    sourceIds:[base.id,platform.id,...observed.map(n=>n.id)],method:'symmetry',reason:'상부 플랫폼을 네 모서리에서 지지하도록 가려진 지지대를 설계했습니다.'});
++  }
++ }
++ const flange=nodes.find(n=>n.role==='frame'&&Math.abs(local(n.position)[2])>base.size[2]*.35&&n.size[0]>n.size[2]*3);
++ if(flange){
++  const p=local(flange.position),opposite=world([p[0],p[1],-p[2]]);
++  if(!all.some(n=>n.role==='frame'&&distance(n.position,opposite)<8))put({...flange,id:'design-frame-opposite-side',label:'반대쪽 차체 측면 프레임',position:opposite,designed:true,
++   sourceIds:[base.id,flange.id],method:'symmetry',reason:'보이는 절곡 프레임의 반대쪽을 대칭으로 설계했습니다.'});
++ }
++ for(const side of [-1,1]){
++  const position=world([side*(base.size[0]/2-3),-base.size[1]/2-4,0]);
++  if(nodes.some(n=>n.role==='frame'&&distance(n.position,position)<12))continue;
++  put({id:'design-frame-'+(side<0?'rear':'front')+'-crossmember',label:side<0?'뒤쪽 하부 가로 프레임':'앞쪽 하부 가로 프레임',role:'frame',shape:'box',position,size:[5.5,8,safe(base.size[2]-11)],rotation:base.rotation,color:base.color,designed:true,
++   sourceIds:[base.id],method:'functional_design',reason:'차체 앞뒤를 연결하는 하부 가로 프레임을 새 설계로 보완했습니다. 바퀴 축 공간은 열어 둡니다.'});
++ }
++ if(!nodes.some(n=>/caster|castor|지지.?바퀴|보조.?바퀴|볼.?캐스터/i.test(n.id+' '+n.label))){
++  const x=base.size[0]*.38,ballDiameter=safe(base.size[0]*.109),ballY=ballDiameter/2;
++  const ground=(y:number)=>world([x,y-base.position[1],0]);
++  const bottom=base.position[1]-base.size[1]/2,socketY=ballDiameter*.84,socketHeight=safe(ballDiameter*.25),stemBottom=socketY+socketHeight/2,stemHeight=bottom-stemBottom;
++  if(stemHeight>=2){
++   put({id:'design-caster-ball',label:'앞쪽 볼 캐스터',role:'caster',shape:'sphere',position:ground(ballY),size:[ballDiameter,ballDiameter,ballDiameter],rotation:[0,0,0],color:'#242424',designed:true,
++    sourceIds:[base.id,...wheels.map(n=>n.id)],method:'functional_design',reason:'2륜 차체가 기울어지지 않도록 앞쪽 지지용 볼 캐스터를 추가한 설계입니다.'});
++   put({id:'design-caster-socket',label:'볼 캐스터 고정 소켓',role:'caster',shape:'cylinder',position:ground(socketY),size:[ballDiameter*.92,socketHeight,ballDiameter*.92],rotation:[0,0,0],color:'#aab3b7',designed:true,
++    sourceIds:[base.id,'design-caster-ball'],method:'functional_design',reason:'볼 캐스터를 지지대에 결합하기 위한 소켓의 개략 설계입니다.'});
++   put({id:'design-caster-stem',label:'볼 캐스터 차체 지지축',role:'support',shape:'cylinder',position:ground((bottom+stemBottom)/2),size:[6,stemHeight,6],rotation:[0,0,0],color:'#aab3b7',designed:true,
++    sourceIds:[base.id,'design-caster-socket'],method:'functional_design',reason:'하부 차체와 캐스터를 연결하는 지지축을 설계했습니다.'});
++  }
++ }
++ for(const side of [-1,1]){
++  const wheel=wheels.find(w=>Math.sign(local(w.position)[2])===side);if(!wheel)continue;
++  const p=local(wheel.position),axial=wheel.size[1],bottom=wheel.position[1]+12.3/2+2,top=base.position[1]-base.size[1]/2;
++  if(top-bottom<2)continue;
++  const position=world([p[0]-4,0,p[2]-side*(axial/2+29.9-12)]);position[1]=(bottom+top)/2;
++  put({id:'design-mount-motor-'+(side<0?'left':'right'),label:side<0?'왼쪽 모터 장착 브래킷':'오른쪽 모터 장착 브래킷',role:'mount',shape:'box',position,size:[36,top-bottom,20],rotation:base.rotation,color:'#909da4',designed:true,
++   sourceIds:[base.id,wheel.id],method:'functional_design',reason:'현재 제안한 #2941 모터를 하부 차체에 장착할 브래킷의 개략 형상입니다. 고정 홀과 나사는 실측 설계가 필요합니다.'});
++ }
++ return completed;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/mechanicalCompletionProject.ts
+@@ -0,0 +1,17 @@
++import {completeMechanicalScene,COMPLETION_VERSION,type MechanicalNode} from './mechanicalCompletion';
++import {structures,MM_PER_PX} from './assemblyGeometry';
++export function withMechanicalCompletion(project:any){
++ const source=project.embeddedVision||{};
++ if(!['raspberry_pi_2wd_robot','translated_pi_rover_c','translated_uno_motor_shield_rover','uno_obstacle_rover'].includes(source.recipe))return project;
++ if(source.structure_completion?.version===COMPLETION_VERSION)return project;
++ const current=structures(project.components||[]);
++ const nodes:MechanicalNode[]=current.map(o=>({id:o.part.id,label:o.part.properties.label||o.part.id,role:o.role,shape:o.part.properties.shape||'box',position:o.pose.position,size:o.size,rotation:o.pose.rotation,color:o.part.properties.color||'#aab3b7',designed:!!o.part.properties.evDesignedStructure}));
++ const additions=completeMechanicalScene(nodes,'two_wheel_rover');
++ if(!additions.length)return project;
++ const origin=current.find(o=>Array.isArray(o.part.properties.photoSceneOrigin))?.part.properties.photoSceneOrigin||[0,0];
++ const parts=additions.map(n=>({id:n.id,metadataId:'ev-structure',x:(n.position[0]-n.size[0]/2)/MM_PER_PX-6,y:(n.position[2]-n.size[2]/2)/MM_PER_PX-6,
++  properties:{shape:n.shape,label:n.label,width:n.size[0],height:n.size[1],depth:n.size[2],elevation:n.position[1]-n.size[1]/2,
++   rotationX:n.rotation[0]*180/Math.PI,rotation:-n.rotation[1]*180/Math.PI,rotationZ:n.rotation[2]*180/Math.PI,color:n.color,photoSceneOrigin:origin,dimensionsStatus:'UNKNOWN',displayScaleMm:220,
++   evDesignedStructure:{version:COMPLETION_VERSION,role:n.role,status:'INFERRED',source_kind:'DESIGN_COMPLETION',confidence:'low',method:n.method,sourceObjectIds:n.sourceIds,reason:n.reason}}}));
++ return {...project,components:[...project.components,...parts],embeddedVision:{...source,structure_completion:{version:COMPLETION_VERSION,generatedIds:parts.map(p=>p.id),status:'INFERRED',notice:'보이지 않는 부분은 전체 조립을 위한 설계 보완입니다. 실제 원본 형상과 치수는 미확인입니다.'}}};
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/mechanicalDetails.ts
+@@ -0,0 +1,27 @@
++import type {V} from './assemblyMath';
++export type MechanicalPrimitive={shape:'box'|'cylinder'|'sphere'|'torus';size?:V;radius?:number;tube?:number;segments?:number;position:V;rotation?:V;scale?:V;color?:string;metal?:number};
++/** Unit-space details are shared by the editor and the motion renderer. */
++export function mechanicalDetails(id:string,role:string):MechanicalPrimitive[]|undefined{
++ if(role==='wheel'){
++  const pieces:MechanicalPrimitive[]=[{shape:'torus',radius:.41,tube:.09,position:[0,0,0],rotation:[Math.PI/2,0,0],scale:[1,1,1/.18]},
++   {shape:'torus',radius:.305,tube:.025,position:[0,0,0],rotation:[Math.PI/2,0,0],scale:[1,1,16],color:'#343c40'},
++   {shape:'cylinder',radius:.12,size:[0,.9,0],position:[0,0,0],color:'#454d51'}];
++  for(let i=0;i<5;i++){const a=i*Math.PI*2/5;pieces.push({shape:'box',size:[.36,.74,.055],position:[.22*Math.cos(a),0,.22*Math.sin(a)],rotation:[0,-a,0],color:'#343c40'});}
++  for(const sign of [-1,1]){
++   pieces.push({shape:'cylinder',radius:.085,size:[0,.02,0],position:[0,sign*.46,0],color:'#aab4b9',metal:.65});
++   pieces.push({shape:'cylinder',radius:.037,size:[0,.03,0],position:[0,sign*.485,0],segments:6,color:'#c5ced1',metal:.75});
++  }
++  for(let i=0;i<28;i++){const a=i*Math.PI*2/28;pieces.push({shape:'box',size:[.018,.86,.045],position:[.486*Math.cos(a),0,.486*Math.sin(a)],rotation:[0,-a,0],color:'#303337'});}
++  return pieces;
++ }
++ if(role==='support')return [
++  {shape:'cylinder',radius:.43,size:[0,.86,0],segments:6,position:[0,0,0],metal:.5},
++  ...[-1,1].flatMap(sign=>([{shape:'cylinder',radius:.5,size:[0,.06,0],position:[0,sign*.45,0],metal:.65},
++   {shape:'cylinder',radius:.18,size:[0,.03,0],position:[0,sign*.485,0],color:'#485157',metal:.55}] as MechanicalPrimitive[]))];
++ if(id.startsWith('design-mount-motor-'))return [
++  {shape:'box',size:[1,.18,1],position:[0,-.41,0],metal:.65},
++  ...[-1,1].map(sign=>({shape:'box',size:[.12,.82,1],position:[sign*.44,.09,0],metal:.65} as MechanicalPrimitive)),
++  ...[-1,1].flatMap(x=>[-1,1].map(z=>({shape:'cylinder',radius:.055,size:[0,.05,0],position:[x*.44,.475,z*.28],segments:6,color:'#c2cbd0',metal:.75} as MechanicalPrimitive)))];
++ if(id==='design-caster-socket')return [{shape:'torus',radius:.4,tube:.1,position:[0,0,0],rotation:[Math.PI/2,0,0],scale:[1,1,5],metal:.7}];
++ return undefined;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/MechanicalShape.tsx
+@@ -0,0 +1,8 @@
++import {mechanicalDetails,type MechanicalPrimitive} from './mechanicalDetails';
++export function MechanicalShape({id,role,shape,color,ghost,selected}:{id:string;role:string;shape:string;color:string;ghost:boolean;selected:boolean}){
++ const pieces=mechanicalDetails(id,role)||[{shape,size:[1,1,1],position:[0,0,0]} as MechanicalPrimitive];
++ return <>{pieces.map((p,i)=><mesh key={i} position={p.position} rotation={p.rotation} scale={p.scale} castShadow={!ghost} receiveShadow raycast={ghost?()=>{}:undefined}>
++  {p.shape==='sphere'?<sphereGeometry args={[.5,28,20]}/>:p.shape==='torus'?<torusGeometry args={[p.radius!,p.tube!,12,56]}/>:p.shape==='cylinder'?<cylinderGeometry args={[p.radius??.5,p.radius??.5,p.size?.[1]??1,p.segments??40]}/>:<boxGeometry args={p.size||[1,1,1]}/>}
++  <meshStandardMaterial color={p.color||color} metalness={p.metal??.12} roughness={.65} transparent={ghost} opacity={ghost?.18:1} depthWrite={!ghost} emissive={selected?'#9bd1ff':'#000000'} emissiveIntensity={selected?.3:0}/>
++ </mesh>)}</>;
++}

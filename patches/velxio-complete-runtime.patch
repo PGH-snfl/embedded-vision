@@ -1,0 +1,4320 @@
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -10,6 +10,7 @@
+ import {photoAssemblyLayout} from './photoAssemblyLayout';
+ import {wireGeometry,cableConnectorPositions} from './wireGeometry';
+ import {motionWire} from './photoViewMotion';
++import {useFunctionalRuntime} from './FunctionalRuntime';
+ 
+ function JumperCable({
+   points,
+@@ -92,6 +93,7 @@
+   const photoExploded=useStore(s=>s.photoExploded);
+   const photoDrag=useStore(s=>s.photoDrag);
+   const photoMotion=useStore(s=>s.photoMotion);
++  const runtime=useFunctionalRuntime(s=>s.servos);
+   const animating=photoMotion?.project===project;
+   const photoLayout=useMemo(()=>photoAssemblyLayout(project),[project]);
+   const concealed=(ref:string)=>{
+@@ -103,7 +105,7 @@
+       {project.nets
+         .filter((n) => (animating||!photoFocus||photoExploded)&&!n.hidden&&(photoLayout.photos.length>0||enclosureView!=='assembled'||!n.endpoints.some(concealed)))
+         .map((net) => {
+-          const connection=motionWire(project,net,{focus:photoFocus,exploded:photoExploded,preview:photoDrag,motion:photoMotion},drag);
++          const connection=motionWire(project,net,{focus:photoFocus,exploded:photoExploded,preview:photoDrag,motion:photoMotion,runtime:running?runtime:undefined},drag);
+           if(!connection||connection.visibility<.001)return null;
+           const {a,b,points,warning}=connection;
+           // This net represents the whole mating header, never one jumper wire.
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -13,6 +13,7 @@
+ import {registerAssemblyScene} from './assemblyScene';
+ import {photoAssemblyLayout,photoPartTransform,photoPartVisible,photoViewFitZoom} from './photoAssemblyLayout';
+ import {connectedWirePath} from './connectedWiring';
++import {ServoBody} from './ServoBody';
+ import {advanceCameraMotion,startCameraMotion,cancelCameraMotion} from './viewCameraMotion';
+ import {
+   UnoModel,
+@@ -66,6 +67,7 @@
+     id = String(config?.nativeId || componentId.split('@')[1]);
+   const assemblyRotation=(config?.evAssembly as {pose?:{rotation?:V}}|undefined)?.pose?.rotation;
+   if (kind === 'arduino-uno') return <group rotation={assemblyRotation}><UnoBody componentId={componentId} rotation={rotation} assemblyRotation={assemblyRotation}/></group>;
++  if(kind==='servo')return <group rotation={assemblyRotation}><ServoBody id={id}/>{pins.map(p=><Lead key={p.id} points={[p.position,[p.position[0],.004,p.position[2]*.6]]}/>)}</group>;
+   if(kind==='dc-water-pump')return <group><group position={[0,.0125,0]} scale={[width,.025,depth]}><EnvironmentBody id={id} kind="pump" color="#4c7794"/></group>{pins.map(p=><Lead key={p.id} points={[p.position,[p.position[0]*.6,.01,p.position[2]]]} />)}</group>;
+   if (typeof config?.physicalModelId==='string')return <group rotation={assemblyRotation}><PhysicalBody modelId={config.physicalModelId} id={id}/></group>;
+   if (kind === 'led')
+--- a/frontend/src/components/circuitiny/photoViewMotion.ts
++++ b/frontend/src/components/circuitiny/photoViewMotion.ts
+@@ -4,14 +4,15 @@
+ import {photoAssemblyLayout,photoPartTransform,photoPartVisible,photoPinPart,photoPointMatrix,type PhotoTransform,type PhotoDrag,type V} from './photoAssemblyLayout';
+ import {connectedWirePath} from './connectedWiring';
+ import {resolvePin} from './project/pins';
++import {runtimeStructurePose,type RuntimeServos} from './runtimeStructure';
+ export const VIEW_MOTION_MS=720;
+ export const easeView=(t:number)=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
+ type Pose={transform:PhotoTransform;visibility:number};
+ type Cable={points:V[];visibility:number};
+ export type PhotoViewMotion={project:Project;started:number;duration:number;progress:number;parts:Record<string,Pose>;wires:Record<string,Cable>};
+-export type PhotoViewState={focus:boolean;exploded:boolean;preview?:PhotoDrag|null;motion?:PhotoViewMotion|null};
++export type PhotoViewState={focus:boolean;exploded:boolean;preview?:PhotoDrag|null;motion?:PhotoViewMotion|null;runtime?:RuntimeServos};
+ export function reducedViewMotion(){return typeof window!=='undefined'&&!!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}
+-export function motionPart(project:Project,c:ComponentInstance,view:PhotoViewState):Pose{
++function baseMotionPart(project:Project,c:ComponentInstance,view:PhotoViewState):Pose{
+  const layout=photoAssemblyLayout(project),target=photoPartTransform(c,layout,view.focus,view.exploded,view.preview),visible=Number(photoPartVisible(c,layout,view.focus,view.exploded));
+  target.scale*=visible;
+  const motion=view.motion?.project===project?view.motion:null,from=motion?.parts[c.instance];
+@@ -20,13 +21,16 @@
+  const quaternion=new T.Quaternion(...from.transform.quaternion).slerp(new T.Quaternion(...target.quaternion),t).toArray();
+  return {transform:{...target,position,quaternion,scale:T.MathUtils.lerp(from.transform.scale,target.scale,t)},visibility:T.MathUtils.lerp(from.visibility,visible,t)};
+ }
++export function motionPart(project:Project,c:ComponentInstance,view:PhotoViewState):Pose{
++ const pose=baseMotionPart(project,c,view);return view.focus?{...pose,transform:runtimeStructurePose(project,c,pose.transform,view.runtime,host=>baseMotionPart(project,host,view).transform)}:pose;
++}
+ /** Resample each saved bend with the same point count before blending routes. */
+ export function sampleCable(points:V[],t:number):V{
+  if(!points.length)return [0,0,0];if(points.length===1)return [...points[0]];
+  const at=Math.max(0,Math.min(1,t))*(points.length-1),i=Math.min(points.length-2,Math.floor(at));
+  return points[i].map((n,j)=>T.MathUtils.lerp(n,points[i+1][j],at-i)) as V;
+ }
+-export function motionWire(project:Project,net:Net,view:PhotoViewState,drag?:Parameters<typeof connectedWirePath>[2]){
++function baseMotionWire(project:Project,net:Net,view:PhotoViewState,drag?:Parameters<typeof connectedWirePath>[2]){
+  const target=connectedWirePath(project,net,drag,view);if(!target)return null;
+  const visible=Number(!view.focus||view.exploded),motion=view.motion?.project===project?view.motion:null,from=motion?.wires[net.id];
+  if(!motion||!from)return {...target,visibility:visible};
+@@ -36,13 +40,26 @@
+  // Quaternion interpolation is not linear: anchor both ends to the displayed pins.
+  for(const [i,ref] of net.endpoints.slice(0,2).entries()){
+   const part=photoPinPart(project,ref),pin=resolvePin(project,ref);if(!part||!pin)continue;
+-  points[i===0?0:points.length-1]=new T.Vector3(...pin.position).applyMatrix4(photoPointMatrix(part,motionPart(project,part,view).transform)).toArray();
++  points[i===0?0:points.length-1]=new T.Vector3(...pin.position).applyMatrix4(photoPointMatrix(part,baseMotionPart(project,part,view).transform)).toArray();
+  }
+  return {...target,points,a:{...target.a,position:points[0]},b:{...target.b,position:points[points.length-1]},visibility:T.MathUtils.lerp(from.visibility,visible,t)};
+ }
++export function motionWire(project:Project,net:Net,view:PhotoViewState,drag?:Parameters<typeof connectedWirePath>[2]){
++ const path=baseMotionWire(project,net,view,drag);if(!path||!view.focus||!view.runtime||!Object.keys(view.runtime).length)return path;
++ const deltas=net.endpoints.slice(0,2).map(ref=>{const c=photoPinPart(project,ref);if(!c)return new T.Matrix4();
++  const a=baseMotionPart(project,c,view).transform,b=motionPart(project,c,view).transform;
++  const rotation=new T.Quaternion(...b.quaternion).multiply(new T.Quaternion(...a.quaternion).invert());
++  return new T.Matrix4().compose(new T.Vector3(...b.position),rotation,new T.Vector3(1,1,1)).multiply(new T.Matrix4().makeTranslation(-a.position[0],-a.position[1],-a.position[2]));});
++ const lengths=[0];for(let i=1;i<path.points.length;i++)lengths.push(lengths[i-1]+new T.Vector3(...path.points[i]).distanceTo(new T.Vector3(...path.points[i-1])));
++ const points=path.points.map((point,i)=>new T.Vector3(...point).applyMatrix4(deltas[0]).lerp(new T.Vector3(...point).applyMatrix4(deltas[1]),lengths[i]/(lengths.at(-1)||1)).toArray() as V);
++ for(const [i,ref] of net.endpoints.slice(0,2).entries()){
++  const c=photoPinPart(project,ref),pin=resolvePin(project,ref);if(c&&pin)points[i===0?0:points.length-1]=new T.Vector3(...pin.position).applyMatrix4(photoPointMatrix(c,motionPart(project,c,view).transform)).toArray();
++ }
++ return {...path,points,a:{...path.a,position:points[0]},b:{...path.b,position:points[points.length-1]}};
++}
+ export function beginViewMotion(project:Project,view:PhotoViewState,started:number,duration=VIEW_MOTION_MS):PhotoViewMotion|null{
+  if(!photoAssemblyLayout(project).photos.length||duration<=0)return null;
+- const parts=Object.fromEntries([...project.components,...(project.boards||[])].map(c=>[c.instance,motionPart(project,c,view)]));
+- const wires:Record<string,Cable>={};for(const net of project.nets){const path=motionWire(project,net,view);if(path)wires[net.id]={points:path.points,visibility:path.visibility};}
++ const parts=Object.fromEntries([...project.components,...(project.boards||[])].map(c=>[c.instance,baseMotionPart(project,c,view)]));
++ const wires:Record<string,Cable>={};for(const net of project.nets){const path=baseMotionWire(project,net,view);if(path)wires[net.id]={points:path.points,visibility:path.visibility};}
+  return {project,started,duration,progress:0,parts,wires};
+ }
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -41,6 +41,7 @@
+ import {photoAssemblyLayout,photoPartTransform,nativePhotoPosition,photoMountOffset,photoSurfaceNormal} from './photoAssemblyLayout';
+ import {commitPhotoMount} from './PhotoMountControls';
+ import {motionPart} from './photoViewMotion';
++import {useFunctionalRuntime} from './FunctionalRuntime';
+ import {startCameraMotion,cancelCameraMotion} from './viewCameraMotion';
+ type Violation = { severity: 'error' | 'warning'; involves: string[] };
+ const STRIP_LED_N = 8;
+@@ -639,9 +640,10 @@
+   const photoExploded=useStore(s=>s.photoExploded);
+   const photoDrag=useStore(s=>s.photoDrag);
+   const photoMotion=useStore(s=>s.photoMotion);
++  const runtime=useFunctionalRuntime(s=>s.servos);
+   const photoProject=useStore(s=>s.project);
+   const photoLayout=useMemo(()=>photoAssemblyLayout(photoProject),[photoProject]);
+-  const photoPose=motionPart(photoProject,c,{focus:photoFocus,exploded:photoExploded,preview:photoDrag,motion:photoMotion});
++  const photoPose=motionPart(photoProject,c,{focus:photoFocus,exploded:photoExploded,preview:photoDrag,motion:photoMotion,runtime:simulating?runtime:undefined});
+   const photoTransform=photoPose.transform;
+   const photoVisible=photoPose.visibility>.001;
+   const photoInteractive=photoVisible&&!(photoMotion?.project===photoProject);
+@@ -999,12 +1001,14 @@
+  const project=useStore(s=>s.project),enabled=useStore(s=>s.photoFocus&&s.photoExploded);
+  const preview=useStore(s=>s.photoDrag);
+  const motion=useStore(s=>s.photoMotion);
++ const runtime=useFunctionalRuntime(s=>s.servos);
++ const simulating=useStore(s=>s.simulating);
+  const layout=useMemo(()=>photoAssemblyLayout(project),[project]);
+  if(!enabled)return null;
+  return <group name="photo-assembly-guides">{layout.photos.map(p=>{
+   const transform=photoPartTransform(p.part,layout,true,false),props=p.part.config?.structure as Record<string,unknown>;
+   const start:[number,number,number]=[...transform.position];start[1]+=(Number(props.elevation||0)+Number(props.height||20)/2)/1000*transform.scale;
+-  const target=motionPart(project,p.part,{focus:true,exploded:true,preview,motion}).transform,end=[...target.position] as [number,number,number];end[1]+=(Number(props.elevation||0)+Number(props.height||20)/2)/1000*target.scale;
++  const target=motionPart(project,p.part,{focus:true,exploded:true,preview,motion,runtime:simulating?runtime:undefined}).transform,end=[...target.position] as [number,number,number];end[1]+=(Number(props.elevation||0)+Number(props.height||20)/2)/1000*target.scale;
+   return <Line key={p.part.instance} points={[start,end]} color="#7f8e9a" transparent opacity={.32} lineWidth={.7} dashed dashSize={.005} gapSize={.004} raycast={()=>{}}/>;
+  })}</group>;
+ }
+--- a/frontend/src/components/editor/EditorToolbar.tsx
++++ b/frontend/src/components/editor/EditorToolbar.tsx
+@@ -1,6 +1,7 @@
+ import { useState, useCallback, useRef, useEffect } from 'react';
+ import { shouldAutoRunPhoto } from './embeddedPhotoAutoRun';
+ import {captureAssemblyVisual} from '../circuitiny/assemblyScene';
++import {verifyCurrentFunctionalSystem,useFunctionalVerification} from '../circuitiny/functionalVerification';
+ import { useTranslation } from 'react-i18next';
+ import { registerEditorCommand } from '../../lib/editorCommands';
+ import { publishCompileOutput } from '../../lib/intellisenseRegistry';
+@@ -268,6 +269,7 @@
+   // Drives the Run-button spinner so the user gets feedback during the
+   // (sometimes multi-second, cold-worker) solve instead of a dead button.
+   const [verifying, setVerifying] = useState(false);
++  const functionalChecking=useFunctionalVerification(s=>s.running);
+   // Synchronous re-entrancy guard: a click while a run/verify is already in
+   // flight is ignored, so rapid clicks can't stack multiple verifications.
+   const runInFlightRef = useRef(false);
+@@ -821,6 +823,16 @@
+     return result.handled;
+   };
+ 
++  const checkGeneratedRun=async(hex:string)=>{
++    if(!compact||!getMotionSource()?.source_project)return true;
++    const state=useSimulatorStore.getState();if(state.boards.length!==1||state.boards[0].boardKind!=='arduino-uno')return true;
++    setVerifying(true);
++    try{const report=await verifyCurrentFunctionalSystem(hex);if(report.status==='fail'){
++      setMessage({type:'error',text:'입력·출력 동작 시험에 실패했습니다. 조작·동작 검사에서 결과를 확인하고 회로·코드를 수정하세요.'});return false;}
++      return true;
++    }catch(error){setMessage({type:'error',text:error instanceof Error?error.message:String(error)});return false;}
++    finally{setVerifying(false);}
++  };
+   const handleRun = async (skipVerify = false) => {
+     if (requestMotion()) return;
+     console.log('[handleRun] click', { activeBoardId, running, codeChangedSinceLastCompile });
+@@ -1042,6 +1054,7 @@
+           .boards.find((b) => b.id === activeBoardId);
+         if (autoRunAfterCompile.current && updatedBoard?.compiledProgram) {
+           autoRunAfterCompile.current = false;
++          if(!await checkGeneratedRun(updatedBoard.compiledProgram))return;
+           trackRunSimulation(updatedBoard.boardKind);
+           reportRun(updatedBoard.boardKind);
+           startBoard(activeBoardId);
+@@ -1054,6 +1067,7 @@
+ 
+       trackRunSimulation(board?.boardKind);
+       reportRun(board?.boardKind);
++      if(board?.compiledProgram&&!await checkGeneratedRun(board.compiledProgram))return;
+       startBoard(activeBoardId);
+       setMessage(null);
+       return;
+@@ -1798,10 +1812,10 @@
+       {compact && <div className="ev-run-controls">
+         <button className="ev-run" onClick={() => isMultiBoard ? handleRunAll() : handleRun()}
+           disabled={!ready || compiling || verifying || (!motionMode && (isBoardless ? digitalRunning : isMultiBoard ? compileAllRunning || anyBoardRunning : running || !activeBoard))}>
+-          {!ready ? '회로 불러오는 중…' : motionMode ? '▶ 운동 미리보기' : verifying ? '회로 확인 중…' : compiling ? '코드 준비 중…' : running || anyBoardRunning ? '● 실행 중' : '▶ 시뮬레이션 실행'}
++          {!ready ? '회로 불러오는 중…' : motionMode ? '▶ 운동 미리보기' : verifying ? (functionalChecking?'동작 시험 중…':'회로 확인 중…') : compiling ? '코드 준비 중…' : running || anyBoardRunning ? '● 실행 중' : '▶ 시뮬레이션 실행'}
+         </button>
+         <button onClick={handleStop} disabled={isBoardless ? !digitalRunning : !anyBoardRunning}>■ 정지</button>
+-        <span className="ev-runtime" role="status">{message?.type==='error' ? message.text : motionMode ? '회로와 코드를 편집한 뒤 운동 모델을 확인하세요 · 전기 동작 검증은 별도' : verifying ? '배선 검사 중' : compiling ? '코드를 보드 실행 파일로 변환합니다' : running || anyBoardRunning ? '가상 보드가 동작하고 있습니다' : ready && !autoRunAllowed && new URLSearchParams(window.location.search).get('autorun')==='1' ? '저장된 편집 내용을 복원했습니다. 확인 후 실행을 누르세요.' : '실행하면 코드를 자동으로 준비합니다'}</span>
++        <span className="ev-runtime" role="status">{message?.type==='error' ? message.text : motionMode ? '회로와 코드를 편집한 뒤 운동 모델을 확인하세요 · 전기 동작 검증은 별도' : verifying ? (functionalChecking?'생성 코드의 입력·출력 동작 시험 중':'배선 검사 중') : compiling ? '코드를 보드 실행 파일로 변환합니다' : running || anyBoardRunning ? '가상 보드가 동작하고 있습니다' : ready && !autoRunAllowed && new URLSearchParams(window.location.search).get('autorun')==='1' ? '저장된 편집 내용을 복원했습니다. 확인 후 실행을 누르세요.' : '실행하면 코드를 자동으로 준비합니다'}</span>
+       </div>}
+       {!compact && <div className="editor-toolbar-wrapper" style={{ position: 'relative' }}>
+         <div className="editor-toolbar" ref={toolbarRef}>
+--- a/frontend/src/simulation/parts/ComplexParts.ts
++++ b/frontend/src/simulation/parts/ComplexParts.ts
+@@ -534,13 +534,13 @@
+ PartSimulationRegistry.register('buzzer', {
+   attachEvents: (element, avrSimulator, getArduinoPinHelper, _componentId, getPinResolver) => {
+     const pinSIG =
+-      getArduinoPinHelper('1') ?? getArduinoPinHelper('+') ?? getArduinoPinHelper('POS');
++      getArduinoPinHelper('2') ?? getArduinoPinHelper('1') ?? getArduinoPinHelper('+') ?? getArduinoPinHelper('POS');
+     const pinManager = (avrSimulator as any).pinManager;
+     // PWM tracking still needs the integer pin number; resolver doesn't
+     // expose duty. The HIGH/LOW path migrates to PinResolver below.
+     const useResolver = typeof getPinResolver === 'function';
+     const sigResolver = useResolver
+-      ? getPinResolver!('1') ?? getPinResolver!('+') ?? getPinResolver!('POS')
++      ? getPinResolver!('2') ?? getPinResolver!('1') ?? getPinResolver!('+') ?? getPinResolver!('POS')
+       : null;
+ 
+     let audioCtx: AudioContext | null = null;
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -2,6 +2,8 @@
+ import { useStore as useCircuitinyStore } from '../components/circuitiny/store';
+ import { EmbeddedVisionBridge } from '../components/EmbeddedVisionBridge';
+ import {EnvironmentRuntime} from '../components/circuitiny/EnvironmentRuntime';
++import {FunctionalRuntime} from '../components/circuitiny/FunctionalRuntime';
++import {FunctionalControls} from '../components/circuitiny/FunctionalControls';
+ import { EmbeddedRobotCode } from '../components/EmbeddedRobotCode';
+ import { EmbeddedSystemConversion } from '../components/EmbeddedCodeTranslation';
+ /**
+@@ -605,6 +607,7 @@
+   return (
+     <div className={embedded ? `app embedded-workbench ev-side-tools${toolsOpen?' ev-tools-open':''}` : 'app'}>
+       <EnvironmentRuntime/>
++      <FunctionalRuntime/>
+       {embedded ? <>
+        <EmbeddedVisionBridge onReady={(ready,restored,simulationNotice,inspectionMode)=>{setInspection(!!inspectionMode);setSimulationUnavailable(simulationNotice);setAutoRunAllowed(ready&&!restored&&!simulationNotice);setImportReady(ready);}} actions={<>
+         <div className="ev-shared-actions">
+@@ -613,6 +616,7 @@
+         </div>
+         {!inspection&&<div className="ev-shared-execution">
+          {!importReady?<small>회로를 불러오는 중입니다.</small>:simulationUnavailable?<small>이 변환 회로에서는 실행할 수 없습니다.</small>:<EditorToolbar compact ready={importReady} autoRunAllowed={autoRunAllowed} consoleOpen={consoleOpen} setConsoleOpen={setConsoleOpen} compileLogs={compileLogs} setCompileLogs={setCompileLogs}/>}
++         {importReady&&!inspection&&<FunctionalControls/>}
+          <button className="ev-output-toggle" disabled={!!simulationUnavailable} aria-expanded={resultsOpen} onClick={()=>{setResultsOpen(!resultsOpen);setConsoleOpen(false);if(isMobile)setMobileView('circuit');}}>보드 출력 {resultsOpen?'접기':'보기'}</button>
+         </div>}
+         <div className="ev-view-switch" role="group" aria-label="작업 화면">
+--- /dev/null
++++ b/frontend/src/simulation/functional/circuit.ts
+@@ -0,0 +1,37 @@
++import {UnionFind} from '../spice/unionFind';
++import {breadboardGroupKey} from '../../utils/breadboardNets';
++export type FunctionalPart={id:string;metadataId:string;properties:Record<string,unknown>};
++export type FunctionalProject={components:FunctionalPart[];boards:Array<{id:string;boardKind:string}>;wires:Array<{id:string;start:{componentId:string;pinName:string};end:{componentId:string;pinName:string}}>;embeddedVision?:Record<string,unknown>};
++export function functionalNets(project:FunctionalProject){
++ const uf=new UnionFind(),types=new Map(project.components.map(p=>[p.id,p.metadataId]));
++ const key=(id:string,pin:string)=>{
++  const name=id+':'+pin,group=breadboardGroupKey(types.get(id)||'',pin);
++  if(group)uf.union(name,id+':strip:'+group);
++  if(project.boards.some(b=>b.id===id)&&/^GND(?:[._]?\d+)?$/i.test(pin))uf.union(name,id+':GND');
++  return name;
++ };
++ for(const w of project.wires)uf.union(key(w.start.componentId,w.start.pinName),key(w.end.componentId,w.end.pinName));
++ const connected=(a:string,b:string)=>uf.find(a)===uf.find(b);
++ const boardPin=(part:string,pin:string,series=false):number|null=>{
++  const roots=new Set([uf.find(part+':'+pin)]);
++  if(series)for(let i=0;i<4;i++)for(const p of project.components.filter(c=>c.metadataId==='resistor')){
++   const a=uf.find(p.id+':1'),b=uf.find(p.id+':2');if(roots.has(a)||roots.has(b)){roots.add(a);roots.add(b);}
++  }
++  const board=project.boards[0];if(!board)return null;
++  const matches=Array.from({length:20},(_,i)=>i).filter(i=>roots.has(uf.find(board.id+':'+(i<14?String(i):'A'+(i-14)))));
++  return matches.length===1?matches[0]:null;
++ };
++ return {connected,boardPin};
++}
++const INPUTS:Record<string,{key:string;min:number;max:number;step:number;label:string}>={
++ potentiometer:{key:'value',min:0,max:1023,step:1,label:'다이얼'},
++ 'soil-moisture-sen0193':{key:'value',min:0,max:614,step:1,label:'토양 건조도 · 0 젖음 / 614 건조'},
++ 'photoresistor-sensor':{key:'lux',min:0,max:1000,step:1,label:'밝기 (lux: 빛의 세기)'},
++ 'hc-sr04':{key:'distance',min:2,max:200,step:1,label:'거리 (cm)'},
++};
++export type FunctionalControl={id:string;key:string;kind:'range'|'button';min:number;max:number;step:number;value:number;label:string};
++export function functionalInputs(project:FunctionalProject):FunctionalControl[]{return project.components.flatMap<FunctionalControl>(p=>{
++ const control=INPUTS[p.metadataId];if(control)return [{...control,id:p.id,kind:'range' as const,value:Number(p.properties[control.key]??(control.min+control.max)/2)}];
++ if(p.metadataId.startsWith('pushbutton'))return [{id:p.id,key:'pressed',kind:'button' as const,min:0,max:1,step:1,value:0,label:'버튼'}];
++ return [];
++});}
+--- /dev/null
++++ b/frontend/src/simulation/functional/FunctionalProbe.ts
+@@ -0,0 +1,125 @@
++/** Execute the user's actual HEX in a separate AVR + real ngspice circuit. */
++import {AVRSimulator} from '../AVRSimulator';
++import {PinManager} from '../PinManager';
++import {buildInputFromStore} from '../spice/storeAdapter';
++import {buildNetlist} from '../spice/NetlistBuilder';
++import type {SolverPort} from '../spice/ports/SolverPort';
++import {HD44780Decoder} from '../HD44780Decoder';
++import {functionalInputs,functionalNets,type FunctionalProject} from './circuit';
++import {readPumpCircuit} from '../../components/circuitiny/pumpCircuit';
++import {waterBinding} from '../../components/circuitiny/environmentObjects';
++export type ProbeCheck={id:string;status:'pass'|'fail'|'unsupported';message:string};
++export type ProbeSample={input:string;value:number;outputs:Record<string,number>;pulses:Record<string,number[]>;text:Record<string,string>;guestMs:number};
++export type ProbeReport={status:'pass'|'fail'|'unsupported';checks:ProbeCheck[];samples:ProbeSample[];engine:'avr8js+ngspice';scope:string};
++type Options={signal?:AbortSignal;yieldControl?:()=>Promise<void>;progress?:(message:string)=>void};
++const scope='생성된 코드·실제 연결의 입력/출력 자동 시험 · 실물·균형·접촉 역학 검증 제외';
++export async function probeFunctionalSystem(original:FunctionalProject,hex:string,solver:SolverPort,options:Options={}):Promise<ProbeReport>{
++ const checks:ProbeCheck[]=[],samples:ProbeSample[]=[],report=(status:ProbeReport['status']):ProbeReport=>({status,checks,samples,engine:'avr8js+ngspice',scope});
++ const fail=(id:string,message:string)=>{checks.push({id,status:'fail',message});};
++ if(original.boards.length!==1||original.boards[0].boardKind!=='arduino-uno'){
++  checks.push({id:'board',status:'unsupported',message:'이 자동 동작 시험은 단일 Arduino UNO 실행 회로를 대상으로 합니다.'});return report('unsupported');}
++ if(!hex.trim().startsWith(':')){fail('firmware','실행할 HEX가 없습니다. 코드를 먼저 컴파일하세요.');return report('fail');}
++ if(original.components.length>128||original.wires.length>256){fail('size','자동 시험 범위를 초과했습니다.');return report('fail');}
++ const project=structuredClone(original),board=project.boards[0],nets=functionalNets(project);
++ const inputs=functionalInputs(project).filter(c=>{
++  const p=project.components.find(p=>p.id===c.id)!;
++  if(c.kind==='button')return nets.boardPin(c.id,'1.l',true)!==null||nets.boardPin(c.id,'2.l',true)!==null;
++  return p.metadataId==='hc-sr04'||nets.boardPin(c.id,p.metadataId==='photoresistor-sensor'?'AO':'SIG')!==null;
++ });
++ const outputs=project.components.filter(c=>['led','servo','dc-water-pump','buzzer','lcd1602'].includes(c.metadataId));
++ if(!outputs.length){checks.push({id:'outputs',status:'unsupported',message:'자동 측정 대상 출력이 없습니다.'});return report('unsupported');}
++ const scenarios=[{id:'baseline',key:'',value:0},...inputs.slice(0,6).flatMap(c=>(c.key==='distance'?[c.min,100,c.max]:[c.min,c.max]).map(value=>({id:c.id,key:c.key,value})))];
++ const maxMs=inputs.length?320:1200;
++ const gate=()=>{if(options.signal?.aborted)throw new DOMException('검사를 중단했습니다.','AbortError');};
++ await solver.init();
++ try{for(const scenario of scenarios){
++  gate();options.progress?.(scenario.id==='baseline'?'기본 동작 시험 중…':`${scenario.id} 입력 ${scenario.value} 시험 중…`);
++  const parts=structuredClone(project.components),changed=parts.find(p=>p.id===scenario.id);if(changed)changed.properties[scenario.key]=scenario.key==='pressed'?!!scenario.value:scenario.value;
++  const pm=new PinManager(),sim=new AVRSimulator(pm,'uno');sim.loadHex(hex);const dispose:Array<()=>void>=[];
++  const counts=new Map<number,{on:boolean;last:number;high:number;rise:number;pulses:number[];edges:number}>();
++  for(let pin=0;pin<20;pin++){const counter={on:false,last:0,high:0,rise:-1,pulses:[] as number[],edges:0};counts.set(pin,counter);
++   dispose.push(pm.onPinChange(pin,(_pin,on)=>{const now=sim.getCurrentCycles();if(counter.on)counter.high+=now-counter.last;counter.last=now;counter.on=on;counter.edges++;
++    if(on)counter.rise=now;else if(counter.rise>=0){const us=(now-counter.rise)/16;if(us>=400&&us<=2600)counter.pulses.push(us);counter.rise=-1;}}));}
++  let currentMap=new Map<string,string>();
++  let latestVoltage: (ref:string)=>number|undefined=()=>undefined;
++  const solve=async(overrides:Record<string,number>={})=>{
++   gate();const pins:Record<string,any>={};for(let pin=0;pin<20;pin++)pins[pin<14?String(pin):'A'+(pin-14)]=pm.getOutputPins().has(pin)?{type:'digital',v:overrides[String(pin)]??(pm.getPinState(pin)?5:0)}:{type:'input',pull:pm.getPinPull(pin)};
++   const input=buildInputFromStore({components:parts,wires:project.wires,boards:[{...board,pinStates:pins}]} as never);input.analysis={kind:'op'};
++   const built=buildNetlist(input);currentMap=built.pinNetMap;await solver.loadCircuit(built.netlist);
++   const names=new Set<string>([...built.pinNetMap.values()].filter(n=>n!=='0').map(n=>`v(${n})`));
++   for(const p of outputs){if(p.metadataId==='led')names.add(`i(v_${p.id}_sense)`.toLowerCase());if(p.metadataId==='dc-water-pump')names.add(`i(v_${p.id}_sense)`.toLowerCase());}
++   const result=await solver.solve({kind:'op'},{vectorsOfInterest:[...names]});
++   if(result.warnings.some(w=>/\berror\b|no convergence|timestep too small/i.test(w)))throw Error('회로 해석이 수렴하지 않았습니다.');
++   const vector=(name:string)=>{const key=name.toLowerCase(),v=result.vectors.get(key)||result.vectors.get(key.replace(/^v\((.+)\)$/,'$1'))||result.vectors.get(key.replace(/^i\((.+)\)$/,'$1#branch'));return v?.real[0];};
++   const voltage=(ref:string)=>{const node=currentMap.get(ref);return node==='0'?0:node?vector(`v(${node})`):undefined;};
++   latestVoltage=voltage;
++   const snapshot={converged:true,error:null,pinNetMap:currentMap,nodeVoltages:Object.fromEntries([...new Set(currentMap.values())].map(n=>[n,n==='0'?0:vector(`v(${n})`)??NaN])),branchCurrents:Object.fromEntries(outputs.map(p=>[('v_'+p.id+'_sense').toLowerCase(),vector(`i(v_${p.id}_sense)`)??NaN]))};
++   return {voltage,vector,snapshot};
++  };
++  const lcds=outputs.filter(p=>p.metadataId==='lcd1602').map(p=>({part:p,decoder:new HD44780Decoder({cols:16,rows:2})}));
++  for(const {part,decoder} of lcds){const enable=nets.boardPin(part.id,'E');if(enable!==null)dispose.push(pm.onPinChange(enable,()=>{
++   if((latestVoltage(part.id+':VDD')??0)<4||(latestVoltage(part.id+':VSS')??Infinity)>.1)return;
++   const level=(name:string)=>{const pin=nets.boardPin(part.id,name);return pin===null?nets.connected(part.id+':'+name,board.id+':5V'):pm.getPinState(pin);};
++   if(level('RW'))return;
++   let byte=8|(level('RS')?1:0)|(level('E')?4:0);for(let bit=0;bit<4;bit++)if(level('D'+(bit+4)))byte|=1<<(bit+4);decoder.feedPCF8574Byte(byte);
++  }));}
++  try{
++   let solved=await solve();
++   for(const p of parts.filter(p=>p.metadataId==='hc-sr04')){
++    const trig=nets.boardPin(p.id,'TRIG'),echo=nets.boardPin(p.id,'ECHO');
++    if(trig!==null&&echo!==null&&(solved.voltage(p.id+':VCC')??0)>4&&(solved.voltage(p.id+':GND')??Infinity)<.1)
++     sim.lineHub().attach({sensor_type:'hc-sr04',pin:trig,echo_pin:echo,distance:Number(p.properties.distance??100)});
++   }
++   let end=sim.getCurrentCycles()+maxMs*16000,lastYield=0;
++   while(sim.getCurrentCycles()<end){
++    gate();solved=await solve();
++    for(let pin=0;pin<20;pin++){
++     if(pm.getOutputPins().has(pin)||sim.ownsPin(pin))continue;
++     const volts=solved.voltage(board.id+':'+(pin<14?String(pin):'A'+(pin-14)));
++     if(volts!==undefined&&Number.isFinite(volts)){
++      if(pin>=14&&sim.getADC())sim.getADC()!.channelValues[pin-14]=Math.max(0,Math.min(5,volts));
++      sim.setPinState(pin,volts>2.5);
++     }
++    }
++    const until=Math.min(end,sim.getCurrentCycles()+20*16000);while(sim.getCurrentCycles()<until)sim.step();
++    if(options.yieldControl&&sim.getCurrentCycles()-lastYield>=160000){lastYield=sim.getCurrentCycles();await options.yieldControl();}
++   }
++   const now=sim.getCurrentCycles(),readings:Record<string,number>={},pulses:Record<string,number[]>={},text:Record<string,string>={};
++   const duty=(pin:number)=>{const c=counts.get(pin)!;return (c.high+(c.on?now-c.last:0))/Math.max(1,now);};
++   solved=await solve();
++   for(const p of outputs){
++    if(p.metadataId==='servo'){
++     const pin=nets.boardPin(p.id,'PWM'),powered=(solved.voltage(p.id+':V+')??0)>3&&(solved.voltage(p.id+':GND')??Infinity)<.1;
++     const widths=pin===null||!powered?[]:counts.get(pin)!.pulses.slice(-16);pulses[p.id]=widths;
++     readings[p.id]=widths.length?widths.reduce((a,b)=>a+b,0)/widths.length:0;
++    }else if(p.metadataId==='led'){
++     const pin=nets.boardPin(p.id,'A',true)??nets.boardPin(p.id,'C',true);
++     if(pin===null)readings[p.id]=Math.max(0,solved.vector(`i(v_${p.id}_sense)`)??0);
++     else{const high=await solve({[pin]:5}),a=high.vector(`i(v_${p.id}_sense)`)??0,low=await solve({[pin]:0}),b=low.vector(`i(v_${p.id}_sense)`)??0;readings[p.id]=Math.max(0,a*duty(pin)+b*(1-duty(pin)));}
++    }else if(p.metadataId==='dc-water-pump'){
++     const binding=waterBinding(p.properties),reading=binding?readPumpCircuit(binding,parts,project.wires,solved.snapshot,pm.getPinState(binding.controlPin)):null;
++     readings[p.id]=Math.max(0,reading?(reading.fault?0:reading.current):solved.vector(`i(v_${p.id}_sense)`)??0);
++    }else if(p.metadataId==='buzzer'){
++     const pin=nets.boardPin(p.id,'2',true),ground=(solved.voltage(p.id+':1')??Infinity)<.1;readings[p.id]=pin===null||!ground?0:counts.get(pin)!.edges/(maxMs/1000)/2;
++    }else{
++     const lcd=lcds.find(l=>l.part.id===p.id)!;text[p.id]=String.fromCharCode(...lcd.decoder.snapshot().characters).trim();readings[p.id]=text[p.id].length;
++    }
++   }
++   samples.push({input:scenario.id,value:scenario.value,outputs:readings,pulses,text,guestMs:now/16000});
++  }finally{dispose.forEach(fn=>fn());sim.lineHub().detachAll();sim.stop();}
++ }}catch(error){if(error instanceof DOMException&&error.name==='AbortError')throw error;fail('execution','실행/회로 해석 실패: '+String(error));return report('fail');}
++ for(const p of outputs){
++  const values=samples.map(s=>s.outputs[p.id]||0),active=values.some(v=>v>(p.metadataId==='led'?.00001:0));
++  checks.push({id:'output:'+p.id,status:active?'pass':'fail',message:active?`${p.id} 코드 출력과 부품 반응 측정 완료`:`${p.id}의 유효 출력이 없습니다. 전원·접지·신호·코드를 확인하세요.`});
++ }
++ if(inputs.length){
++  const spread=(values:number[])=>Math.max(...values)-Math.min(...values);
++  const responds=outputs.some(p=>{
++   if(p.metadataId==='lcd1602')return new Set(samples.map(s=>s.text[p.id])).size>1;
++   const values=samples.map(s=>s.outputs[p.id]||0);
++   if(p.metadataId==='servo')return spread(values)>20||spread(samples.map(s=>{const v=s.pulses[p.id]||[];return v.length?spread(v):0;}))>20;
++   return spread(values)>(p.metadataId==='led'?.0001:p.metadataId==='dc-water-pump'?.005:1);
++  });
++  checks.push({id:'feedback',status:responds?'pass':'fail',message:responds?'입력 변경에 따른 유효한 코드 출력 변화를 확인했습니다.':'시험한 입력 범위·시간에서 출력 변화가 없습니다. 임계값·입력 핀·동작 조건을 확인하세요.'});}
++ checks.push({id:'scope',status:'pass',message:scope});return report(checks.some(c=>c.status==='fail')?'fail':'pass');
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/FunctionalRuntime.tsx
+@@ -0,0 +1,40 @@
++import {useEffect,useRef} from 'react';
++import {create} from 'zustand';
++import {useSimulatorStore as native,getBoardPinManager,getBoardSimulator} from '../../store/useSimulatorStore';
++import {useElectricalStore} from '../../store/useElectricalStore';
++import {functionalNets,type FunctionalProject} from '../../simulation/functional/circuit';
++export type ServoReading={angle:number;neutral:number;pulseUs:number;guestMs:number;powered:boolean;active:boolean};
++export const useFunctionalRuntime=create<{servos:Record<string,ServoReading>}>(()=>({servos:{}}));
++export function FunctionalRuntime(){
++ const generation=native(s=>String(s.hydrationSeq)+':'+String(s.sensorResetNonce)),previousGeneration=useRef(generation);
++ const signature=native(s=>JSON.stringify([s.hydrationSeq,s.sensorResetNonce,s.running,s.boards.map(b=>[b.id,b.boardKind,b.running]),s.wires.map(w=>[w.start.componentId,w.start.pinName,w.end.componentId,w.end.pinName]),s.components.map(p=>[p.id,p.metadataId])]));
++ useEffect(()=>{
++  if(previousGeneration.current!==generation){useFunctionalRuntime.setState({servos:{}});previousGeneration.current=generation;}
++  const project=native.getState(),running=project.running&&project.boards[0]?.running;
++  if(!running){useFunctionalRuntime.setState(s=>({servos:Object.fromEntries(Object.entries(s.servos).filter(([id])=>project.components.some(p=>p.id===id)).map(([id,v])=>[id,{...v,active:false}]))}));return;}
++  useFunctionalRuntime.setState({servos:{}});
++  const nets=functionalNets(project as FunctionalProject),parts=project.components.filter(c=>c.metadataId==='servo'),board=project.boards[0];
++  let disposers:Array<()=>void>=[],attached=false;
++  const pending=new Map<string,{rise:number;last:number;pulseUs:number}>();
++  const timer=setInterval(()=>{
++   const sim=getBoardSimulator(board.id),pm=getBoardPinManager(board.id);if(!sim||!pm||!('getCurrentCycles' in sim)||!('getClockHz' in sim))return;
++   const now=Number(sim.getCurrentCycles())/Number(sim.getClockHz())*1000;
++   if(!attached){attached=true;for(const p of parts){const pin=nets.boardPin(p.id,'PWM');if(pin===null)continue;
++    const state={rise:-1,last:-Infinity,pulseUs:0};pending.set(p.id,state);
++    disposers.push(pm.onPinChange(pin,(_pin,high)=>{const ms=Number(sim.getCurrentCycles())/Number(sim.getClockHz())*1000;
++     if(high)state.rise=ms;else if(state.rise>=0){const us=(ms-state.rise)*1000;state.rise=-1;if(us>=544&&us<=2400){state.pulseUs=us;state.last=ms;}}}));}}
++   const electrical=useElectricalStore.getState(),previous=useFunctionalRuntime.getState().servos,next={...previous};let changed=false;
++   for(const p of parts){
++    const sample=pending.get(p.id),old=previous[p.id];if(!sample||!sample.pulseUs)continue;
++    const voltage=(name:string)=>{const net=electrical.pinNetMap.get(p.id+':'+name);return net==='0'?0:net?electrical.nodeVoltages[net.toLowerCase()]:undefined;};
++    const power=voltage('V+'),ground=voltage('GND'),powered=electrical.converged&&!electrical.error&&power!==undefined&&ground!==undefined&&power-ground>3&&ground<.1;
++    const active=powered&&now-sample.last<100,angle=active?(sample.pulseUs-544)/1856*180:old?.angle??90;
++    const reading={angle,neutral:old?.neutral??angle,pulseUs:sample.pulseUs,guestMs:sample.last,powered:!!powered,active};
++    if(!old||Math.abs(old.angle-angle)>.03||old.active!==active||old.powered!==powered){next[p.id]=reading;changed=true;}
++   }
++   if(changed)useFunctionalRuntime.setState({servos:next});
++  },33);
++  return()=>{clearInterval(timer);disposers.forEach(d=>d());disposers=[];};
++ },[signature]);
++ return null;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/runtimeStructure.ts
+@@ -0,0 +1,29 @@
++/** Kinematic poses driven by measured firmware pulses; no claimed balance physics. */
++import * as T from 'three';
++import type {Project,ComponentInstance} from './project/schema';
++import {photoAssemblyLayout,isPhotoPart,type PhotoTransform} from './photoAssemblyLayout';
++import type {ServoReading} from './FunctionalRuntime';
++export type RuntimeServos=Record<string,ServoReading>;
++const side=(text:string)=>/왼|좌측|left/i.test(text)?-1:/오른|우측|right/i.test(text)?1:0;
++export function runtimeStructurePose(project:Project,c:ComponentInstance,pose:PhotoTransform,servos:RuntimeServos|undefined,hostPose:(c:ComponentInstance)=>PhotoTransform){
++ if(!servos||!Object.keys(servos).length)return pose;
++ const layout=photoAssemblyLayout(project),owner=isPhotoPart(c)?c.instance:layout.mounts[c.instance]?.hostId;
++ const target=layout.photos.find(h=>h.part.instance===owner);if(!target)return pose;
++ const label=(p:ComponentInstance)=>String((p.config?.structure as Record<string,unknown>)?.label||p.instance);
++ const joints=Object.entries(servos).flatMap(([id,reading])=>{
++  const host=layout.photos.find(h=>h.part.instance===layout.mounts[id]?.hostId);if(!host||host.role!=='actuator')return [];
++  const name=label(host.part),ankle=/발목|ankle/i.test(name),upper=/상부|hip|upper/i.test(name),sameSide=side(name)!==0&&side(name)===side(label(target.part));
++  const child=target.part===host.part||sameSide&&(ankle?target.role==='foot':upper&&['leg','foot'].includes(target.role)||upper&&target.role==='actuator'&&/발목|ankle/i.test(label(target.part)));
++  return child?[{host,reading,order:ankle?1:0}]:[];
++ }).sort((a,b)=>a.order-b.order);
++ if(!joints.length)return pose;
++ const position=new T.Vector3(...pose.position),orientation=new T.Quaternion(...pose.quaternion),previous:Array<{pivot:T.Vector3;q:T.Quaternion}>=[];
++ for(const {host,reading} of joints){
++  const root=hostPose(host.part),props=host.part.config?.structure as Record<string,number>,pivot=new T.Vector3(...root.position).add(new T.Vector3(0,(Number(props.elevation||0)+Number(props.height||20)/2)/1000*root.scale,0));
++  for(const parent of previous)pivot.sub(parent.pivot).applyQuaternion(parent.q).add(parent.pivot);
++  const angle=(reading.angle-reading.neutral)*Math.PI/180;
++  const axis=new T.Vector3(1,0,0);for(const parent of previous)axis.applyQuaternion(parent.q);
++  const q=new T.Quaternion().setFromAxisAngle(axis,angle);position.sub(pivot).applyQuaternion(q).add(pivot);orientation.premultiply(q);previous.push({pivot,q});
++ }
++ return {...pose,position:position.toArray(),quaternion:orientation.toArray()};
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/ServoBody.tsx
+@@ -0,0 +1,17 @@
++import {useRef} from 'react';
++import {useFrame} from '@react-three/fiber';
++import * as T from 'three';
++import {useFunctionalRuntime} from './FunctionalRuntime';
++export function ServoBody({id}:{id:string}){
++ const arm=useRef<T.Group>(null);
++ useFrame(()=>{const sample=useFunctionalRuntime.getState().servos[id];if(arm.current&&sample)arm.current.rotation.y=(sample.angle-90)*Math.PI/180;});
++ return <group>
++  <mesh position={[0,.011,0]} castShadow><boxGeometry args={[.023,.022,.012]}/><meshStandardMaterial color="#1e4b87" roughness={.3}/></mesh>
++  <mesh position={[0,.021,0]}><boxGeometry args={[.032,.002,.012]}/><meshStandardMaterial color="#254f8b"/></mesh>
++  <group position={[.006,.026,0]} ref={arm} name={'runtime-servo-arm:'+id}>
++   <mesh><cylinderGeometry args={[.004,.004,.002,20]}/><meshStandardMaterial color="#e6e7e2"/></mesh>
++   <mesh position={[.008,0,0]}><boxGeometry args={[.02,.002,.004]}/><meshStandardMaterial color="#efefea"/></mesh>
++   <mesh position={[0,.0015,0]}><cylinderGeometry args={[.0013,.0013,.001,10]}/><meshStandardMaterial color="#9b9fa0" metalness={.8} roughness={.3}/></mesh>
++  </group>
++ </group>;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/functionalVerification.ts
+@@ -0,0 +1,31 @@
++import {create} from 'zustand';
++import {NgSpiceWorkerAdapter} from '../../simulation/spice/adapters/NgSpiceWorkerAdapter';
++import {probeFunctionalSystem,type ProbeReport} from '../../simulation/functional/FunctionalProbe';
++import type {FunctionalProject} from '../../simulation/functional/circuit';
++import {buildVlxPayload} from '../../utils/vlxFile';
++import {useSimulatorStore as native} from '../../store/useSimulatorStore';
++import {useEditorStore} from '../../store/useEditorStore';
++export const useFunctionalVerification=create<{running:boolean;message:string;report:ProbeReport|null;signature:string}>(()=>({running:false,message:'',report:null,signature:''}));
++let pending:Promise<ProbeReport>|null=null,controller:AbortController|null=null;
++export function cancelFunctionalVerification(){controller?.abort();}
++export function functionalSignature(project:FunctionalProject,hex:string){return JSON.stringify([hex,(project as FunctionalProject&{fileGroups?:unknown}).fileGroups,project.boards.map(b=>[b.id,b.boardKind]),project.wires.map(w=>[w.start.componentId,w.start.pinName,w.end.componentId,w.end.pinName]),project.components.map(p=>[p.id,p.metadataId,Object.fromEntries(Object.entries(p.properties).filter(([k])=>!k.startsWith('ev')&&!['label','environmentKind','waterSystem'].includes(k)))])]);}
++export async function verifyCurrentFunctionalSystem(hex:string,force=false){
++ if(pending)return pending;
++ if(useEditorStore.getState().codeChangedSinceLastCompile)throw Error('코드가 변경됐습니다. 실행을 눌러 현재 코드를 컴파일한 뒤 검사하세요.');
++ const project=buildVlxPayload() as FunctionalProject,signature=functionalSignature(project,hex),old=useFunctionalVerification.getState();
++ if(!force&&old.signature===signature&&old.report)return old.report;
++ controller=new AbortController();const abort=controller,solver=new NgSpiceWorkerAdapter();
++ useFunctionalVerification.setState({running:true,message:'생성된 코드와 회로의 입력·출력을 시험합니다…',report:null,signature:''});
++ pending=(async()=>{
++  try{
++   const report=await probeFunctionalSystem(project,hex,solver,{signal:abort.signal,yieldControl:()=>new Promise(resolve=>setTimeout(resolve,0)),progress:message=>useFunctionalVerification.setState({message})});
++   const current=buildVlxPayload() as FunctionalProject;
++   if(functionalSignature(current,hex)!==signature)throw Error('검사 중 회로가 바뀌었습니다. 현재 설계를 다시 검사하세요.');
++   const state=native.getState(),board=state.boards.find(b=>b.id===state.activeBoardId);
++   if(board)state.updateBoard(board.id,{properties:{...board.properties,evSimulationVerification:{version:1,created_at:new Date().toISOString(),signature,report}}});
++   useFunctionalVerification.setState({report,signature,message:report.status==='pass'?'입력·출력 자동 시험 통과':report.status==='fail'?'동작 시험 실패 · 상세 결과를 확인하세요.':'자동 시험 미지원 · 실행 결과를 직접 확인하세요.'});return report;
++  }catch(error){useFunctionalVerification.setState({message:error instanceof Error?error.message:String(error),report:null,signature:''});throw error;}
++  finally{solver.dispose();useFunctionalVerification.setState({running:false});pending=null;controller=null;}
++ })();return pending;
++}
++export function currentProgram(){if(useEditorStore.getState().codeChangedSinceLastCompile)return null;const s=native.getState();return s.boards.find(b=>b.id===s.activeBoardId)?.compiledProgram;}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/FunctionalControls.tsx
+@@ -0,0 +1,49 @@
++import {useEffect,useState} from 'react';
++import {useSimulatorStore as native} from '../../store/useSimulatorStore';
++import {useEditorStore} from '../../store/useEditorStore';
++import {functionalInputs,type FunctionalProject} from '../../simulation/functional/circuit';
++import {dispatchSensorUpdate,getLastSensorValues,getSensorUpdate} from '../../simulation/SensorUpdateRegistry';
++import {runtimeLatchButton} from './actions';
++import {useFunctionalVerification,verifyCurrentFunctionalSystem,currentProgram,cancelFunctionalVerification} from './functionalVerification';
++import {useFunctionalRuntime} from './FunctionalRuntime';
++export function FunctionalControls(){
++ const parts=native(s=>s.components),boards=native(s=>s.boards),wires=native(s=>s.wires),running=native(s=>s.running),hydration=native(s=>s.hydrationSeq);
++ const verification=useFunctionalVerification(),servos=useFunctionalRuntime(s=>s.servos),[open,setOpen]=useState(false),[values,setValues]=useState<Record<string,number>>({}),[keyboard,setKeyboard]=useState(false),[notice,setNotice]=useState('');
++ const codeChanged=useEditorStore(s=>s.codeChangedSinceLastCompile);
++ const wiring=JSON.stringify(wires.map(w=>[w.start.componentId,w.start.pinName,w.end.componentId,w.end.pinName]));
++ const inputs=functionalInputs({components:parts,boards,wires} as FunctionalProject);
++ const change=(id:string,value:number)=>{
++  const control=inputs.find(p=>p.id===id);if(!control||!running)return;
++  if(control.kind==='button')runtimeLatchButton(id,!!value);
++  else if(getSensorUpdate(id))dispatchSensorUpdate(id,{[control.key]:value});else{setNotice(id+' 센서 연결을 기다리고 있습니다.');return;}
++  setValues(s=>({...s,[id]:value}));setNotice('');
++ };
++ useEffect(()=>{setValues({});setKeyboard(false);cancelFunctionalVerification();},[hydration]);
++ useEffect(()=>{if(!useFunctionalVerification.getState().running)useFunctionalVerification.setState({report:null,signature:'',message:''});},[wiring,hydration]);
++ useEffect(()=>{if(codeChanged&&!useFunctionalVerification.getState().running)useFunctionalVerification.setState({report:null,signature:'',message:'현재 코드가 변경됐습니다. 실행을 누르면 다시 컴파일하고 검사합니다.'});},[codeChanged]);
++ useEffect(()=>{
++  if(!keyboard||!running)return;
++  const key=(e:KeyboardEvent)=>{
++   if(e.target instanceof HTMLElement&&(e.target.isContentEditable||/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)))return;
++   const button=inputs.find(c=>c.kind==='button'),range=inputs.find(c=>c.kind==='range');
++   if(e.code==='Space'&&button){e.preventDefault();change(button.id,e.type==='keydown'?1:0);}
++   if(e.type==='keydown'&&range&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code)){
++    e.preventDefault();const old=Number(getLastSensorValues(range.id)?.[range.key]??values[range.id]??range.value),direction=['ArrowRight','ArrowUp'].includes(e.code)?1:-1;
++    change(range.id,Math.max(range.min,Math.min(range.max,old+direction*(range.max-range.min)/20)));
++   }
++  };
++  const release=()=>inputs.filter(c=>c.kind==='button').forEach(c=>runtimeLatchButton(c.id,false));
++  window.addEventListener('keydown',key);window.addEventListener('keyup',key);window.addEventListener('blur',release);
++  return()=>{release();window.removeEventListener('keydown',key);window.removeEventListener('keyup',key);window.removeEventListener('blur',release);};
++ },[keyboard,running,parts]);
++ return <details open={open} onToggle={e=>setOpen(e.currentTarget.open)} className="ev-functional-controls"><summary>조작·동작 검사{verification.running?' · 검사 중':verification.report?.status==='pass'?' · 통과':verification.report?.status==='fail'?' · 확인 필요':''}</summary>
++  <div style={{display:'flex',gap:8,flexWrap:'wrap',maxWidth:680,maxHeight:330,overflow:'auto',padding:8}}>
++   {inputs.map(c=><label key={c.id} style={{display:'grid',gap:4,minWidth:150}}>{c.id} · {c.label}{c.kind==='range'?<input aria-label={c.id+' '+c.label} disabled={!running} type="range" min={c.min} max={c.max} step={c.step} value={values[c.id]??Number(getLastSensorValues(c.id)?.[c.key]??c.value)} onChange={e=>change(c.id,Number(e.target.value))}/>:<button disabled={!running} onPointerDown={()=>change(c.id,1)} onPointerUp={()=>change(c.id,0)} onPointerLeave={()=>change(c.id,0)} onPointerCancel={()=>change(c.id,0)} onBlur={()=>change(c.id,0)}>누르고 있기</button>}<small>{c.kind==='range'?values[c.id]??Number(getLastSensorValues(c.id)?.[c.key]??c.value):'Space 키로도 조작'}</small></label>)}
++   {!!inputs.length&&<label><input type="checkbox" checked={keyboard} onChange={e=>setKeyboard(e.target.checked)}/>키보드 조작 · 방향키: 첫 센서 / Space: 첫 버튼</label>}
++   {Object.entries(servos).map(([id,s])=><small key={id}>{id}: {s.angle.toFixed(1)}° · {s.pulseUs.toFixed(0)}µs · {s.active?'코드 출력 반영':s.powered?'출력 정지':'전원 확인'}</small>)}
++   <div style={{flexBasis:'100%'}}><button disabled={verification.running||running||!currentProgram()} onClick={()=>{const hex=currentProgram();if(hex)void verifyCurrentFunctionalSystem(hex,true).catch(e=>setNotice(String(e)));}}>현재 회로·코드 동작 검사</button>{verification.running&&<button onClick={cancelFunctionalVerification}>검사 중단</button>}<span role="status">{notice||verification.message}</span>
++    {verification.report&&<details><summary>검사 상세 · {verification.report.status}</summary><p>{verification.report.scope}</p>{verification.report.checks.map(c=><p key={c.id}>{c.status==='pass'?'✓':c.status==='fail'?'✗':'—'} {c.message}</p>)}<button onClick={()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(verification.report,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='simulation-check.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>검사 결과 저장</button></details>}
++   </div>
++  </div>
++ </details>;
++}
+--- /dev/null
++++ b/frontend/src/__tests__/functional-probe.test.ts
+@@ -0,0 +1,50 @@
++// @vitest-environment jsdom
++import {it,expect,vi} from 'vitest';
++import {probeFunctionalSystem} from '../simulation/functional/FunctionalProbe';
++import {NgSpiceNodeAdapter} from '../simulation/spice/adapters/NgSpiceNodeAdapter';
++import dimmer from './fixtures/functional-dimmer.json';
++import servo from './fixtures/functional-servo.json';
++import watering from './fixtures/functional-watering-live.json';
++import biped from './fixtures/functional-biped.json';
++import lcd from './fixtures/functional-lcd.json';
++import buzzer from './fixtures/functional-buzzer.json';
++vi.stubGlobal('requestAnimationFrame',()=>1);vi.stubGlobal('cancelAnimationFrame',()=>{});
++for(const [name,fixture] of [['dimmer',dimmer],['servo',servo],['watering',watering]] as const)it('executes real '+name+' code against its circuit and input changes',async()=>{
++ const solver=new NgSpiceNodeAdapter(),before=JSON.stringify(fixture);try{
++  const report=await probeFunctionalSystem(fixture.project,fixture.hex,solver);
++  expect(report.status,JSON.stringify(report)).toBe('pass');expect(report.checks.find(c=>c.id==='feedback')?.status).toBe('pass');
++  expect(report.samples.length).toBeGreaterThan(2);expect(report.samples.every(s=>s.guestMs>=320)).toBe(true);expect(JSON.stringify(fixture)).toBe(before);
++ }finally{solver.dispose();}
++},30000);
++it('fails a disconnected servo supply instead of accepting GPIO pulses alone',async()=>{
++ const project=structuredClone(servo.project);project.wires=project.wires.filter(w=>![w.start,w.end].some(p=>p.componentId==='M1'&&p.pinName==='V+'));
++ const solver=new NgSpiceNodeAdapter();try{const report=await probeFunctionalSystem(project,servo.hex,solver);expect(report.status).toBe('fail');expect(report.checks.find(c=>c.id==='output:M1')?.status).toBe('fail');}finally{solver.dispose();}
++},30000);
++it('supports cancellation and reports unimplemented boards without executing them',async()=>{
++ const solver=new NgSpiceNodeAdapter();try{
++  const project={...servo.project,boards:servo.project.boards.map(b=>({...b,boardKind:'raspberry-pi-3'}))};
++  expect((await probeFunctionalSystem(project,servo.hex,solver)).status).toBe('unsupported');
++  const controller=new AbortController();controller.abort();await expect(probeFunctionalSystem(servo.project,servo.hex,solver,{signal:controller.signal})).rejects.toMatchObject({name:'AbortError'});
++ }finally{solver.dispose();}
++});
++for(const [name,fixture] of [['lcd',lcd],['buzzer',buzzer]] as const)it('executes the actual '+name+' output protocol',async()=>{
++ const solver=new NgSpiceNodeAdapter();try{
++  const report=await probeFunctionalSystem(fixture.project,fixture.hex,solver);expect(report.status,JSON.stringify(report)).toBe('pass');
++  if(name==='lcd')expect(report.samples[0].text.LCD1).toContain('Runtime ready');else expect(report.samples[0].outputs.BZ1).toBeGreaterThan(950);
++ }finally{solver.dispose();}
++},30000);
++it('fails a wrong ADC connection rather than accepting unrelated timer activity as an input response',async()=>{
++ const project=structuredClone(dimmer.project);for(const wire of project.wires)for(const ep of [wire.start,wire.end])if(ep.componentId==='U1'&&ep.pinName==='A0')ep.pinName='A1';
++ const solver=new NgSpiceNodeAdapter();try{const report=await probeFunctionalSystem(project,dimmer.hex,solver);expect(report.status).toBe('fail');}finally{solver.dispose();}
++},30000);
++it('runs the photographed four-servo robot and stops its pulse sequence when the distance changes',async()=>{
++ const solver=new NgSpiceNodeAdapter();try{
++  const report=await probeFunctionalSystem(biped.project,biped.hex,solver);
++  expect(report.status,JSON.stringify(report)).toBe('pass');
++  for(const id of ['M1','M2','M3','M4']){
++   const close=report.samples.find(s=>s.input==='S1'&&s.value===2)!.pulses[id],far=report.samples.find(s=>s.input==='S1'&&s.value===100)!.pulses[id];
++   expect(close.length).toBeGreaterThan(3);expect(Math.max(...close)-Math.min(...close)).toBeLessThan(12);
++   expect(Math.max(...far)-Math.min(...far)).toBeGreaterThan(10);
++  }
++ }finally{solver.dispose();}
++},30000);
+--- /dev/null
++++ b/frontend/src/__tests__/functional-runtime.test.ts
+@@ -0,0 +1,63 @@
++// @vitest-environment jsdom
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import {it,expect,vi} from 'vitest';
++import * as T from 'three';
++const live=vi.hoisted(()=>({sim:null as any,pm:null as any}));
++vi.mock('../store/useSimulatorStore',async original=>({...await original<typeof import('../store/useSimulatorStore')>(),getBoardSimulator:()=>live.sim,getBoardPinManager:()=>live.pm}));
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {useElectricalStore as electrical} from '../store/useElectricalStore';
++import {FunctionalRuntime,useFunctionalRuntime} from '../components/circuitiny/FunctionalRuntime';
++import {AVRSimulator} from '../simulation/AVRSimulator';
++import {PinManager} from '../simulation/PinManager';
++import {motionPart,motionWire} from '../components/circuitiny/photoViewMotion';
++import {photoAssemblyLayout,photoPointMatrix,photoPinPart} from '../components/circuitiny/photoAssemblyLayout';
++import {registerProject} from '../components/circuitiny/bridge';
++import {withPhotoMounts} from '../components/circuitiny/photoMounts';
++import {importVlxFile} from '../utils/vlxFile';
++import {resolvePin} from '../components/circuitiny/project/pins';
++import servo from './fixtures/functional-servo.json';
++import biped from './fixtures/functional-biped.json';
++import '@wokwi/elements';
++import '../velxio-elements/capacitor-element';
++import '../velxio-elements/capacitor-electrolytic-element';
++
++it('reads real servo pulses, requires circuit power and freezes after stop',async()=>{
++ vi.useFakeTimers();vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.stubGlobal('requestAnimationFrame',()=>1);vi.stubGlobal('cancelAnimationFrame',()=>{});
++ const pm=live.pm=new PinManager(),sim=live.sim=new AVRSimulator(pm,'uno');sim.loadHex(servo.hex);
++ native.setState({components:structuredClone(servo.project.components),wires:servo.project.wires,boards:servo.project.boards.map(b=>({...b,running:true})) as never,running:true});
++ electrical.setState({converged:true,error:null,pinNetMap:new Map([['M1:V+','supply'],['M1:GND','0']]),nodeVoltages:{supply:5}});
++ const root=createRoot(document.createElement('div'));await act(async()=>root.render(createElement(FunctionalRuntime)));
++ try{
++  await act(async()=>vi.advanceTimersByTime(33));sim.getADC()!.channelValues[0]=0;
++  for(let i=0;i<1000000;i++)sim.step();await act(async()=>vi.advanceTimersByTime(33));
++  const low=useFunctionalRuntime.getState().servos.M1;expect(low.active).toBe(true);expect(low.pulseUs).toBeGreaterThan(980);expect(low.pulseUs).toBeLessThan(1030);
++  sim.getADC()!.channelValues[0]=5;for(let i=0;i<1000000;i++)sim.step();await act(async()=>vi.advanceTimersByTime(33));
++  const high=useFunctionalRuntime.getState().servos.M1;expect(high.pulseUs).toBeGreaterThan(1980);expect(high.angle-low.angle).toBeGreaterThan(85);
++  electrical.setState({nodeVoltages:{supply:0}});await act(async()=>vi.advanceTimersByTime(33));expect(useFunctionalRuntime.getState().servos.M1.active).toBe(false);expect(useFunctionalRuntime.getState().servos.M1.angle).toBe(high.angle);
++  await act(async()=>native.setState({running:false}));const held=useFunctionalRuntime.getState().servos.M1.angle;for(let i=0;i<100000;i++)sim.step();await act(async()=>vi.advanceTimersByTime(330));expect(useFunctionalRuntime.getState().servos.M1.angle).toBe(held);
++ }finally{await act(async()=>root.unmount());vi.useRealTimers();vi.unstubAllGlobals();}
++});
++it('moves photographed legs and feet from joint outputs and keeps every cable on the displayed pins',async()=>{
++ const raw=withPhotoMounts(biped.project);await importVlxFile({text:async()=>JSON.stringify(raw)} as File);
++ for(const p of [...raw.boards,...raw.components]){
++  const kind='boardKind' in p?p.boardKind:p.metadataId;if(kind==='ev-structure')continue;
++  const el=document.createElement(kind==='capacitor-electrolytic'?'velxio-capacitor-electrolytic':'wokwi-'+kind) as HTMLElement&{updateComplete?:Promise<unknown>};el.id=p.id;Object.assign(el,p.properties||{});document.body.append(el);if(el.updateComplete)await el.updateComplete;
++ }
++ const project=registerProject(native.getState()),layout=photoAssemblyLayout(project),all=[...project.components,...(project.boards||[])];
++ const runtime=Object.fromEntries(['M1','M2','M3','M4'].map((id,i)=>[id,{angle:90+(i%2?-12:12),neutral:90,pulseUs:1600,guestMs:50,powered:true,active:true}]));
++ const foot=layout.photos.find(p=>p.role==='foot')!.part;
++ for(const exploded of [false,true]){
++  const base=motionPart(project,foot,{focus:true,exploded}),moved=motionPart(project,foot,{focus:true,exploded,runtime});
++  expect(new T.Vector3(...base.transform.position).distanceTo(new T.Vector3(...moved.transform.position))).toBeGreaterThan(.001);
++  for(const net of project.nets){const path=motionWire(project,net,{focus:true,exploded,runtime});if(!path)continue;
++   for(const [i,ref] of net.endpoints.entries()){
++    const part=photoPinPart(project,ref)!,pin=resolvePin(project,ref)!;
++    const expected=new T.Vector3(...pin.position).applyMatrix4(photoPointMatrix(part,motionPart(project,part,{focus:true,exploded,runtime}).transform));
++    expect(expected.distanceTo(new T.Vector3(...path.points[i===0?0:path.points.length-1]))).toBeLessThan(1e-8);
++   }
++  }
++ }
++ const unrelated=all.find(c=>c.instance==='photo-sensor-O1')!;expect(motionPart(project,unrelated,{focus:true,exploded:false,runtime})).toEqual(motionPart(project,unrelated,{focus:true,exploded:false}));
++ document.body.replaceChildren();
++});
+--- /dev/null
++++ b/frontend/src/__tests__/functional-controls.test.ts
+@@ -0,0 +1,29 @@
++// @vitest-environment jsdom
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import {it,expect,vi} from 'vitest';
++import {FunctionalControls} from '../components/circuitiny/FunctionalControls';
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {useEditorStore} from '../store/useEditorStore';
++import {registerSensorUpdate,unregisterSensorUpdate} from '../simulation/SensorUpdateRegistry';
++import servo from './fixtures/functional-servo.json';
++it('connects keyboard controls to registered inputs, holds a button until keyup and ignores typing',async()=>{
++ vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
++ native.setState({components:[...structuredClone(servo.project.components),{id:'BTN',metadataId:'pushbutton-6mm',x:0,y:0,properties:{}}],boards:servo.project.boards as never,wires:servo.project.wires,running:true});
++ useEditorStore.setState({codeChangedSinceLastCompile:false});
++ const received:number[]=[],element=document.createElement('div'),events:string[]=[];element.id='BTN';document.body.append(element);
++ element.addEventListener('button-press',()=>events.push('down'));element.addEventListener('button-release',()=>events.push('up'));
++ registerSensorUpdate('S1',v=>received.push(Number(v.value)));
++ const host=document.createElement('div'),root=createRoot(host);
++ try{
++  await act(async()=>root.render(createElement(FunctionalControls)));
++  const checkbox=host.querySelector('input[type=checkbox]')!;await act(async()=>(checkbox as HTMLInputElement).click());
++  events.length=0;await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{code:'Space',bubbles:true,cancelable:true})));
++  expect(events).toEqual(['down']);await act(async()=>window.dispatchEvent(new KeyboardEvent('keyup',{code:'Space',bubbles:true})));
++  expect(events).toEqual(['down','up']);
++  await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{code:'ArrowRight',bubbles:true,cancelable:true})));expect(received.length).toBe(1);expect(received[0]).toBeGreaterThan(500);
++  const edit=document.createElement('input');document.body.append(edit);edit.dispatchEvent(new KeyboardEvent('keydown',{code:'ArrowRight',bubbles:true}));expect(received.length).toBe(1);edit.remove();
++  await act(async()=>native.setState({running:false}));const count=received.length;
++  window.dispatchEvent(new KeyboardEvent('keydown',{code:'ArrowRight',bubbles:true}));expect(received.length).toBe(count);
++ }finally{await act(async()=>root.unmount());unregisterSensorUpdate('S1');element.remove();vi.unstubAllGlobals();}
++});
+--- /dev/null
++++ b/frontend/src/__tests__/functional-verification-manager.test.ts
+@@ -0,0 +1,23 @@
++// @vitest-environment jsdom
++import {it,expect,vi} from 'vitest';
++vi.mock('../simulation/spice/adapters/NgSpiceWorkerAdapter',async()=>({NgSpiceWorkerAdapter:(await import('../simulation/spice/adapters/NgSpiceNodeAdapter')).NgSpiceNodeAdapter}));
++import {verifyCurrentFunctionalSystem,useFunctionalVerification,functionalSignature} from '../components/circuitiny/functionalVerification';
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {useEditorStore} from '../store/useEditorStore';
++import {importVlxFile,buildVlxPayload} from '../utils/vlxFile';
++import dimmer from './fixtures/functional-dimmer.json';
++vi.stubGlobal('requestAnimationFrame',()=>1);vi.stubGlobal('cancelAnimationFrame',()=>{});
++it('verifies the imported code, reuses only an identical result, and reruns after a pin edit',async()=>{
++ await importVlxFile({text:async()=>JSON.stringify(dimmer.project)} as File);useEditorStore.setState({codeChangedSinceLastCompile:false});
++ const before=JSON.stringify(buildVlxPayload().fileGroups),report=await verifyCurrentFunctionalSystem(dimmer.hex,true);
++ expect(report.status).toBe('pass');expect(useFunctionalVerification.getState().running).toBe(false);
++ expect((buildVlxPayload().boards[0].properties?.evSimulationVerification as {report:{status:string}}).report.status).toBe('pass');
++ expect(await verifyCurrentFunctionalSystem(dimmer.hex)).toBe(report);
++ native.setState(s=>({wires:s.wires.map(w=>({...w,start:w.start.componentId==='U1'&&w.start.pinName==='A0'?{...w.start,pinName:'A1'}:w.start,end:w.end.componentId==='U1'&&w.end.pinName==='A0'?{...w.end,pinName:'A1'}:w.end}))}));
++ const failed=await verifyCurrentFunctionalSystem(dimmer.hex);expect(failed.status).toBe('fail');expect(failed).not.toBe(report);expect(JSON.stringify(buildVlxPayload().fileGroups)).toBe(before);
++ useEditorStore.setState({codeChangedSinceLastCompile:true});await expect(verifyCurrentFunctionalSystem(dimmer.hex)).rejects.toThrow('코드가 변경');
++},30000);
++it('ignores drawing coordinates but includes the edited code in the check fingerprint',()=>{
++ const first=structuredClone(dimmer.project),moved=structuredClone(first);moved.wires[0].start.x+=10;
++ expect(functionalSignature(first,dimmer.hex)).toBe(functionalSignature(moved,dimmer.hex));moved.fileGroups['group-U1'][0].content+='\n// edit';expect(functionalSignature(first,dimmer.hex)).not.toBe(functionalSignature(moved,dimmer.hex));
++});
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/functional-biped.json
+@@ -0,0 +1,2924 @@
++{
++  "project": {
++    "format": "velxio-project",
++    "version": 1,
++    "exportedAt": "2026-11-10T05:15:52.726813+00:00",
++    "name": "거리 연동 4관절 이족 동작 시제품",
++    "boards": [
++      {
++        "id": "U1",
++        "name": "Arduino UNO · 기능 구현 설계",
++        "boardKind": "arduino-uno",
++        "x": -553.7007874015749,
++        "y": -272.12598425196853,
++        "properties": {
++          "label": "Arduino UNO R3",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "거리 판단과 네 서보 제어",
++            "selection_reason": "P2 대신 사용하는 새 제어보드이다.",
++            "module_refs": [
++              "CASE1.control"
++            ],
++            "observed_part_ids": [
++              "P2"
++            ],
++            "enclosure_id": "CASE1",
++            "location": "internal",
++            "parameters": {
++              "power": "USB 5V",
++              "initial_output": "네 관절 90도, 동작 정지"
++            },
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -110.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -553.7007874015749,
++              -272.12598425196853,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        },
++        "activeFileGroupId": "group-U1",
++        "languageMode": "arduino",
++        "serialBaudRate": 115200
++      }
++    ],
++    "components": [
++      {
++        "id": "build-case-CASE1",
++        "metadataId": "ev-structure",
++        "x": -686.3149606299213,
++        "y": -421.74803149606305,
++        "properties": {
++          "label": "상하판 사이와 상부의 제어·구동 공간",
++          "shape": "box",
++          "width": 360,
++          "height": 90,
++          "depth": 220,
++          "elevation": 0,
++          "color": "#8c9ca7",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "designBasis": "functional_implementation",
++          "evEnclosure": {
++            "id": "CASE1",
++            "name": "상하판 사이와 상부의 제어·구동 공간",
++            "design_selected": true,
++            "rationale": "선정 부품을 장착하고 배선 공간을 확보하도록 외장 치수를 정했습니다.",
++            "assumptions": [
++              "부품·전압·치수·관절 각도·20cm 기준·800ms 주기는 모두 새 설계 선정값이며 사진 관측값이 아니다.",
++              "선정된 네 서보는 내장 드라이버형이므로 외부 모터 드라이버나 모터 단자용 역기전력 다이오드를 별도로 연결하지 않는다.",
++              "UNO는 USB로 공급하며 PS1의 +를 UNO 5V에 연결하지 않는다. 접지만 공통으로 한다.",
++              "R6의 절연 하네스로 연결하며 서보 전원선은 신호선과 분리 배선한다. 하네스는 실행 모델이 없어 parts에 가상 전기 부품으로 만들지 않았다.",
++              "PS1은 새 설계에서 5V·5A급 전류 제한형을 선정한다. 실제 서보의 정지 전류 합과 배선 용량은 사용자가 최종 확인한다.",
++              "혼은 중립 90도에서 장착하고 관절 간섭을 지지 시험으로 확인한다. 원본 부품의 전기적 재사용을 전제로 하지 않는다.",
++              "초음파 무응답은 정지로 처리하므로 설정된 측정 시간 밖의 먼 물체도 동작을 허용하지 않는다."
++            ],
++            "unknowns": []
++          }
++        }
++      },
++      {
++        "id": "S1",
++        "metadataId": "hc-sr04",
++        "x": -91.03937007874016,
++        "y": -213.87401574803152,
++        "properties": {
++          "distance": 34.0,
++          "label": "HC-SR04 초음파 거리 센서",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "hc-sr04",
++            "name": "HC-SR04 초음파 거리 센서",
++            "quantity": 1,
++            "purpose": "전방 거리 입력",
++            "selection_reason": "P1의 기능 후보를 구현하는 카탈로그 부품으로 새 선정한다.",
++            "module_refs": [
++              "CASE1.sensing"
++            ],
++            "observed_part_ids": [
++              "P1"
++            ],
++            "enclosure_id": "CASE1",
++            "location": "panel",
++            "parameters": {
++              "distance": 34.0,
++              "voltage_V": 5.0
++            },
++            "pin_basis": "기존 거리 표시 회로와 센서 실행 모델"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                0.0,
++                92,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -91.03937007874016,
++              -213.87401574803152,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "M1",
++        "metadataId": "servo",
++        "x": 324.70866141732284,
++        "y": -223.3228346456693,
++        "properties": {
++          "angle": 0,
++          "label": "180도 RC 서보모터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "servo",
++            "name": "180도 RC 서보모터",
++            "quantity": 1,
++            "purpose": "사진 왼쪽 상부 관절",
++            "selection_reason": "P3 중 한 개에 대응하는 새 위치 제어 서보이다.",
++            "module_refs": [
++              "CASE1.actuation"
++            ],
++            "observed_part_ids": [
++              "P3"
++            ],
++            "enclosure_id": "CASE1",
++            "location": "internal",
++            "parameters": {
++              "voltage_V": 5.0,
++              "initial_angle_deg": 90.0,
++              "motion_range_deg": "82~98"
++            },
++            "pin_basis": "Wokwi ServoElement.pinInfo"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                110.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              324.70866141732284,
++              -223.3228346456693,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "M2",
++        "metadataId": "servo",
++        "x": -506.7874015748032,
++        "y": 135.73228346456693,
++        "properties": {
++          "angle": 0,
++          "label": "180도 RC 서보모터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "servo",
++            "name": "180도 RC 서보모터",
++            "quantity": 1,
++            "purpose": "사진 오른쪽 상부 관절",
++            "selection_reason": "P3의 나머지 한 개에 대응한다.",
++            "module_refs": [
++              "CASE1.actuation"
++            ],
++            "observed_part_ids": [
++              "P3"
++            ],
++            "enclosure_id": "CASE1",
++            "location": "internal",
++            "parameters": {
++              "voltage_V": 5.0,
++              "initial_angle_deg": 90.0,
++              "motion_range_deg": "82~98"
++            },
++            "pin_basis": "Wokwi ServoElement.pinInfo"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -110.0,
++                12,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -506.7874015748032,
++              135.73228346456693,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "C1",
++        "metadataId": "capacitor-electrolytic",
++        "x": -28.67716535433071,
++        "y": 160.2992125984252,
++        "properties": {
++          "value": "1000uF",
++          "voltageRating": 10.0,
++          "label": "전해 커패시터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "capacitor-electrolytic",
++            "name": "전해 커패시터",
++            "quantity": 1,
++            "purpose": "서보 전원 완충",
++            "selection_reason": "새 설계의 전원 보완품이다.",
++            "module_refs": [
++              "CASE1.filter"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "CASE1",
++            "location": "internal",
++            "parameters": {
++              "value": "1000uF",
++              "voltageRating": 10.0
++            },
++            "pin_basis": "기존 급수 참조 회로의 전해 커패시터 모델"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                0.0,
++                12,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -28.67716535433071,
++              160.2992125984252,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "C2",
++        "metadataId": "capacitor",
++        "x": 394.62992125984255,
++        "y": 167.85826771653547,
++        "properties": {
++          "value": "100nF",
++          "label": "무극성 커패시터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "capacitor",
++            "name": "무극성 커패시터",
++            "quantity": 1,
++            "purpose": "센서 전원 디커플링",
++            "selection_reason": "센서 가까이에 배치하는 새 보완품이다.",
++            "module_refs": [
++              "CASE1.filter"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "CASE1",
++            "location": "panel",
++            "parameters": {
++              "value": "100nF",
++              "selected_voltage_rating_V": 25.0
++            },
++            "pin_basis": "기존 SPICE 커패시터 모델"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                110.0,
++                92,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              394.62992125984255,
++              167.85826771653547,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "M3",
++        "metadataId": "servo",
++        "x": 929.4330708661419,
++        "y": -223.3228346456693,
++        "properties": {
++          "angle": 0,
++          "label": "180도 RC 서보모터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "servo",
++            "name": "180도 RC 서보모터",
++            "quantity": 1,
++            "purpose": "사진 왼쪽 발목 관절",
++            "selection_reason": "P4 중 한 개에 대응한다.",
++            "module_refs": [
++              "CASE1.actuation"
++            ],
++            "observed_part_ids": [
++              "P4"
++            ],
++            "enclosure_id": "CASE1",
++            "location": "external",
++            "parameters": {
++              "voltage_V": 5.0,
++              "initial_angle_deg": 90.0,
++              "motion_range_deg": "84~96"
++            },
++            "pin_basis": "Wokwi ServoElement.pinInfo"
++          },
++          "evDesignMount": "external",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                270.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              929.4330708661419,
++              -223.3228346456693,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "M4",
++        "metadataId": "servo",
++        "x": 1345.181102362205,
++        "y": -223.3228346456693,
++        "properties": {
++          "angle": 0,
++          "label": "180도 RC 서보모터",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "servo",
++            "name": "180도 RC 서보모터",
++            "quantity": 1,
++            "purpose": "사진 오른쪽 발목 관절",
++            "selection_reason": "P4의 나머지 한 개에 대응한다.",
++            "module_refs": [
++              "CASE1.actuation"
++            ],
++            "observed_part_ids": [
++              "P4"
++            ],
++            "enclosure_id": "CASE1",
++            "location": "external",
++            "parameters": {
++              "voltage_V": 5.0,
++              "initial_angle_deg": 90.0,
++              "motion_range_deg": "84~96"
++            },
++            "pin_basis": "Wokwi ServoElement.pinInfo"
++          },
++          "evDesignMount": "external",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                380.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              1345.181102362205,
++              -223.3228346456693,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "PS1",
++        "metadataId": "dc-power-supply",
++        "x": 1779.8267716535436,
++        "y": -223.3228346456693,
++        "properties": {
++          "voltage": 5.0,
++          "enabled": true,
++          "label": "정전압 DC 전원",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "dc-power-supply",
++            "name": "정전압 DC 전원",
++            "quantity": 1,
++            "purpose": "네 서보 전원",
++            "selection_reason": "USB에서 서보 전류를 공급하지 않도록 분리한다.",
++            "module_refs": [
++              "CASE1.power"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "CASE1",
++            "location": "external",
++            "parameters": {
++              "voltage": 5.0,
++              "enabled": true,
++              "selected_supply_capacity_A": 5.0,
++              "selected_current_limit_A": 4.0
++            },
++            "pin_basis": "기존 DC 전원 SPICE 모델"
++          },
++          "evDesignMount": "external",
++          "evDesignEnclosure": "build-case-CASE1",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                490.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              1779.8267716535436,
++              -223.3228346456693,
++              0
++            ],
++            "host": {
++              "id": "build-case-CASE1",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "ST1",
++        "metadataId": "ev-structure",
++        "x": -176.07874015748033,
++        "y": -213.87401574803152,
++        "properties": {
++          "label": "몸통 하부 장착판",
++          "shape": "box",
++          "width": 90.0,
++          "height": 3.0,
++          "depth": 110.0,
++          "elevation": 108.5,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "platform",
++            "reason": "새 설계 치수로 좌우 관절과 기판을 지지한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "몸통 하부 장착판",
++            "purpose": "새 설계 치수로 좌우 관절과 기판을 지지한다.",
++            "selection_reason": "새 설계 치수로 좌우 관절과 기판을 지지한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST2",
++        "metadataId": "ev-structure",
++        "x": -176.07874015748033,
++        "y": -213.87401574803152,
++        "properties": {
++          "label": "몸통 상부 장착판",
++          "shape": "box",
++          "width": 90.0,
++          "height": 3.0,
++          "depth": 110.0,
++          "elevation": 163.5,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "platform",
++            "reason": "전면 센서와 배선 고정점을 지지한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "몸통 상부 장착판",
++            "purpose": "전면 센서와 배선 고정점을 지지한다.",
++            "selection_reason": "전면 센서와 배선 고정점을 지지한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST3",
++        "metadataId": "ev-structure",
++        "x": 77.1496062992126,
++        "y": -198.75590551181105,
++        "properties": {
++          "label": "왼쪽 몸통 지지대",
++          "shape": "cylinder",
++          "width": 6.0,
++          "height": 52.0,
++          "depth": 6.0,
++          "elevation": 111.5,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "support",
++            "reason": "상하판 간격을 유지한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "왼쪽 몸통 지지대",
++            "purpose": "상하판 간격을 유지한다.",
++            "selection_reason": "상하판 간격을 유지한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST4",
++        "metadataId": "ev-structure",
++        "x": 77.1496062992126,
++        "y": 164.07874015748033,
++        "properties": {
++          "label": "오른쪽 몸통 지지대",
++          "shape": "cylinder",
++          "width": 6.0,
++          "height": 52.0,
++          "depth": 6.0,
++          "elevation": 111.5,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "support",
++            "reason": "상하판 간격을 유지한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "오른쪽 몸통 지지대",
++            "purpose": "상하판 간격을 유지한다.",
++            "selection_reason": "상하판 간격을 유지한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST5",
++        "metadataId": "ev-structure",
++        "x": -11.669291338582678,
++        "y": -204.42519685039372,
++        "properties": {
++          "label": "왼쪽 다리 연결판",
++          "shape": "box",
++          "width": 3.0,
++          "height": 55.0,
++          "depth": 25.0,
++          "elevation": 51.5,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "왼쪽 상부 관절과 발목 서보 혼을 연결한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "왼쪽 다리 연결판",
++            "purpose": "왼쪽 상부 관절과 발목 서보 혼을 연결한다.",
++            "selection_reason": "왼쪽 상부 관절과 발목 서보 혼을 연결한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST6",
++        "metadataId": "ev-structure",
++        "x": -11.669291338582678,
++        "y": 97.93700787401576,
++        "properties": {
++          "label": "오른쪽 다리 연결판",
++          "shape": "box",
++          "width": 3.0,
++          "height": 55.0,
++          "depth": 25.0,
++          "elevation": 51.5,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "오른쪽 상부 관절과 발목 서보 혼을 연결한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "오른쪽 다리 연결판",
++            "purpose": "오른쪽 상부 관절과 발목 서보 혼을 연결한다.",
++            "selection_reason": "오른쪽 상부 관절과 발목 서보 혼을 연결한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST7",
++        "metadataId": "ev-structure",
++        "x": -130.7244094488189,
++        "y": -297.02362204724415,
++        "properties": {
++          "label": "왼쪽 시험 발판",
++          "shape": "box",
++          "width": 90.0,
++          "height": 3.0,
++          "depth": 60.0,
++          "elevation": 0.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "support",
++            "reason": "왼쪽 발목 서보를 장착하는 새 시험용 판이다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "왼쪽 시험 발판",
++            "purpose": "왼쪽 발목 서보를 장착하는 새 시험용 판이다.",
++            "selection_reason": "왼쪽 발목 서보를 장착하는 새 시험용 판이다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST8",
++        "metadataId": "ev-structure",
++        "x": -130.7244094488189,
++        "y": 58.25196850393701,
++        "properties": {
++          "label": "오른쪽 시험 발판",
++          "shape": "box",
++          "width": 90.0,
++          "height": 3.0,
++          "depth": 60.0,
++          "elevation": 0.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "support",
++            "reason": "오른쪽 발목 서보를 장착하는 새 시험용 판이다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "오른쪽 시험 발판",
++            "purpose": "오른쪽 발목 서보를 장착하는 새 시험용 판이다.",
++            "selection_reason": "오른쪽 발목 서보를 장착하는 새 시험용 판이다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST9",
++        "metadataId": "ev-structure",
++        "x": 120.61417322834647,
++        "y": -100.48818897637796,
++        "properties": {
++          "label": "센서 장착판",
++          "shape": "box",
++          "width": 3.0,
++          "height": 30.0,
++          "depth": 50.0,
++          "elevation": 169.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "센서를 전방으로 고정한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "센서 장착판",
++            "purpose": "센서를 전방으로 고정한다.",
++            "selection_reason": "센서를 전방으로 고정한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST10",
++        "metadataId": "ev-structure",
++        "x": -280.0157480314961,
++        "y": -34.34645669291339,
++        "properties": {
++          "label": "매달림 시험 지지대",
++          "shape": "box",
++          "width": 15.0,
++          "height": 260.0,
++          "depth": 15.0,
++          "elevation": 0.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "support",
++            "reason": "몸통을 고정하여 낙하·전도 없이 관절 동작을 시험한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "매달림 시험 지지대",
++            "purpose": "몸통을 고정하여 낙하·전도 없이 관절 동작을 시험한다.",
++            "selection_reason": "몸통을 고정하여 낙하·전도 없이 관절 동작을 시험한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "ST11",
++        "metadataId": "ev-structure",
++        "x": -459.5433070866142,
++        "y": -346.15748031496065,
++        "properties": {
++          "label": "시험 지지대 베이스",
++          "shape": "box",
++          "width": 180.0,
++          "height": 8.0,
++          "depth": 180.0,
++          "elevation": -8.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "platform",
++            "reason": "매달림 시험 지지대를 고정한다."
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "시험 지지대 베이스",
++            "purpose": "매달림 시험 지지대를 고정한다.",
++            "selection_reason": "매달림 시험 지지대를 고정한다.",
++            "quantity": 1
++          }
++        }
++      },
++      {
++        "id": "photo-sensor-O1",
++        "metadataId": "ev-structure",
++        "x": -574.3639267170073,
++        "y": 48.047244094488185,
++        "properties": {
++          "shape": "box",
++          "width": 13.2,
++          "height": 79.2,
++          "depth": 191.4,
++          "elevation": 391.6,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#151719",
++          "label": "전면 센서",
++          "evPhotoStructure": {
++            "id": "O1",
++            "label": "전면 센서",
++            "role": "sensor",
++            "status": "INFERRED",
++            "confidence": "high",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.303,
++                "y0": 0.312,
++                "x1": 0.565,
++                "y1": 0.448
++              }
++            ],
++            "observation": "검은 기판과 은색 원통 두 개가 보인다.",
++            "assumptions": [
++              "뒤쪽 깊이는 근사이다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.35,
++              1.96,
++              0.0
++            ],
++            "size": [
++              0.06,
++              0.36,
++              0.87
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#151719",
++            "outline": null,
++            "details": [
++              {
++                "shape": "cylinder",
++                "position": [
++                  1.2,
++                  0.0,
++                  -0.27
++                ],
++                "size": [
++                  0.63,
++                  2.0,
++                  0.63
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  -1.5708
++                ],
++                "color": "#c6c8ca"
++              },
++              {
++                "shape": "cylinder",
++                "position": [
++                  1.2,
++                  0.0,
++                  0.27
++                ],
++                "size": [
++                  0.63,
++                  2.0,
++                  0.63
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  -1.5708
++                ],
++                "color": "#c6c8ca"
++              },
++              {
++                "shape": "cylinder",
++                "position": [
++                  2.0,
++                  0.0,
++                  -0.27
++                ],
++                "size": [
++                  0.48,
++                  0.12,
++                  0.48
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  -1.5708
++                ],
++                "color": "#35373a"
++              },
++              {
++                "shape": "cylinder",
++                "position": [
++                  2.0,
++                  0.0,
++                  0.27
++                ],
++                "size": [
++                  0.48,
++                  0.12,
++                  0.48
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  -1.5708
++                ],
++                "color": "#35373a"
++              }
++            ],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-other-O2",
++        "metadataId": "ev-structure",
++        "x": -1152.253690496535,
++        "y": 168.6141732283465,
++        "properties": {
++          "shape": "box",
++          "width": 112.2,
++          "height": 11.0,
++          "depth": 127.6,
++          "elevation": 434.5,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#235269",
++          "label": "상부 노출 기판",
++          "evPhotoStructure": {
++            "id": "O2",
++            "label": "상부 노출 기판",
++            "role": "other",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.405,
++                "y0": 0.247,
++                "x1": 0.593,
++                "y1": 0.35
++              }
++            ],
++            "observation": "센서 뒤에 기판과 밝은 커넥터가 일부 보인다.",
++            "assumptions": [
++              "가려진 기판의 전체 외곽은 근사이다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              -0.12,
++              2.0,
++              0.0
++            ],
++            "size": [
++              0.51,
++              0.05,
++              0.58
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#235269",
++            "outline": null,
++            "details": [
++              {
++                "shape": "box",
++                "position": [
++                  0.25,
++                  0.8,
++                  -0.15
++                ],
++                "size": [
++                  0.42,
++                  1.3,
++                  0.3
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  0.0
++                ],
++                "color": "#e2e2dc"
++              },
++              {
++                "shape": "box",
++                "position": [
++                  -0.1,
++                  0.8,
++                  0.3
++                ],
++                "size": [
++                  0.55,
++                  1.0,
++                  0.15
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  0.0
++                ],
++                "color": "#202126"
++              }
++            ],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-platform-O3",
++        "metadataId": "ev-structure",
++        "x": -1235.4032967957476,
++        "y": -60.047244094488185,
++        "properties": {
++          "shape": "box",
++          "width": 209.0,
++          "height": 13.2,
++          "depth": 248.6,
++          "elevation": 371.8,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#17191c",
++          "label": "상부 플랫폼·센서 프레임",
++          "evPhotoStructure": {
++            "id": "O3",
++            "label": "상부 플랫폼·센서 프레임",
++            "role": "platform",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.258,
++                "y0": 0.223,
++                "x1": 0.698,
++                "y1": 0.472
++              }
++            ],
++            "observation": "검은 상판과 위로 솟은 지지판, 좌우 돌출부가 보인다.",
++            "assumptions": [
++              "상판 후면과 지지판 결합부는 가려져 있다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.0,
++              1.72,
++              0.0
++            ],
++            "size": [
++              0.95,
++              0.06,
++              1.13
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#17191c",
++            "outline": [
++              [
++                -0.5,
++                -0.3
++              ],
++              [
++                -0.35,
++                -0.5
++              ],
++              [
++                0.32,
++                -0.5
++              ],
++              [
++                0.5,
++                -0.34
++              ],
++              [
++                0.5,
++                0.34
++              ],
++              [
++                0.32,
++                0.5
++              ],
++              [
++                -0.35,
++                0.5
++              ],
++              [
++                -0.5,
++                0.3
++              ]
++            ],
++            "details": [
++              {
++                "shape": "box",
++                "position": [
++                  0.19,
++                  2.0,
++                  0.0
++                ],
++                "size": [
++                  0.04,
++                  2.0,
++                  0.78
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  0.0
++                ],
++                "color": "#131519"
++              },
++              {
++                "shape": "box",
++                "position": [
++                  0.18,
++                  2.0,
++                  -0.36
++                ],
++                "size": [
++                  0.045,
++                  2.0,
++                  0.09
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  0.12
++                ],
++                "color": "#131519"
++              },
++              {
++                "shape": "box",
++                "position": [
++                  0.18,
++                  2.0,
++                  0.36
++                ],
++                "size": [
++                  0.045,
++                  2.0,
++                  0.09
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  -0.12
++                ],
++                "color": "#131519"
++              }
++            ],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-platform-O4",
++        "metadataId": "ev-structure",
++        "x": -1256.1906983705508,
++        "y": -26.78740157480315,
++        "properties": {
++          "shape": "box",
++          "width": 220.0,
++          "height": 13.2,
++          "depth": 231.0,
++          "elevation": 244.2,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#202126",
++          "label": "하부 몸통판",
++          "evPhotoStructure": {
++            "id": "O4",
++            "label": "하부 몸통판",
++            "role": "platform",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.285,
++                "y0": 0.505,
++                "x1": 0.673,
++                "y1": 0.612
++              }
++            ],
++            "observation": "둥근 모서리의 검은 수평판이 보인다.",
++            "assumptions": [
++              "후면 외곽은 근사이다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.0,
++              1.14,
++              0.0
++            ],
++            "size": [
++              1.0,
++              0.06,
++              1.05
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#202126",
++            "outline": [
++              [
++                -0.5,
++                -0.3
++              ],
++              [
++                -0.35,
++                -0.5
++              ],
++              [
++                0.35,
++                -0.5
++              ],
++              [
++                0.5,
++                -0.3
++              ],
++              [
++                0.5,
++                0.3
++              ],
++              [
++                0.35,
++                0.5
++              ],
++              [
++                -0.35,
++                0.5
++              ],
++              [
++                -0.5,
++                0.3
++              ]
++            ],
++            "details": [],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-support-O5",
++        "metadataId": "ev-structure",
++        "x": -634.6473912839365,
++        "y": 0.2362204724409338,
++        "properties": {
++          "shape": "cylinder",
++          "width": 14.3,
++          "height": 114.4,
++          "depth": 14.3,
++          "elevation": 257.4,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#b39554",
++          "label": "사진 왼쪽 지지대",
++          "evPhotoStructure": {
++            "id": "O5",
++            "label": "사진 왼쪽 지지대",
++            "role": "support",
++            "status": "INFERRED",
++            "confidence": "high",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.312,
++                "y0": 0.448,
++                "x1": 0.352,
++                "y1": 0.577
++              }
++            ],
++            "observation": "금색 수직 지지대이다.",
++            "assumptions": [
++              "원형 단면으로 근사한다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "cylinder",
++            "position": [
++              0.28,
++              1.43,
++              -0.46
++            ],
++            "size": [
++              0.065,
++              0.52,
++              0.065
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#b39554",
++            "outline": null,
++            "details": [],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-support-O6",
++        "metadataId": "ev-structure",
++        "x": -634.6473912839365,
++        "y": 765.2125984251969,
++        "properties": {
++          "shape": "cylinder",
++          "width": 14.3,
++          "height": 114.4,
++          "depth": 14.3,
++          "elevation": 257.4,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#b39554",
++          "label": "사진 오른쪽 지지대",
++          "evPhotoStructure": {
++            "id": "O6",
++            "label": "사진 오른쪽 지지대",
++            "role": "support",
++            "status": "INFERRED",
++            "confidence": "high",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.558,
++                "y0": 0.458,
++                "x1": 0.6,
++                "y1": 0.593
++              }
++            ],
++            "observation": "금색 수직 지지대이다.",
++            "assumptions": [
++              "원형 단면으로 근사한다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "cylinder",
++            "position": [
++              0.28,
++              1.43,
++              0.46
++            ],
++            "size": [
++              0.065,
++              0.52,
++              0.065
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#b39554",
++            "outline": null,
++            "details": [],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-actuator-O7",
++        "metadataId": "ev-structure",
++        "x": -1040.0017219925978,
++        "y": 23.10236220472437,
++        "properties": {
++          "shape": "box",
++          "width": 96.8,
++          "height": 85.8,
++          "depth": 55.0,
++          "elevation": 271.7,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#eeeeea",
++          "label": "왼쪽 상부 구동부",
++          "evPhotoStructure": {
++            "id": "O7",
++            "label": "왼쪽 상부 구동부",
++            "role": "actuator",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.338,
++                "y0": 0.447,
++                "x1": 0.415,
++                "y1": 0.555
++              }
++            ],
++            "observation": "흰색 구동부 외장이 일부 보인다.",
++            "assumptions": [
++              "뒤쪽 크기는 근사이다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              -0.02,
++              1.43,
++              -0.34
++            ],
++            "size": [
++              0.44,
++              0.39,
++              0.25
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#eeeeea",
++            "outline": null,
++            "details": [],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-actuator-O8",
++        "metadataId": "ev-structure",
++        "x": -1040.0017219925978,
++        "y": 588.5196850393702,
++        "properties": {
++          "shape": "box",
++          "width": 96.8,
++          "height": 85.8,
++          "depth": 55.0,
++          "elevation": 271.7,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#eeeeea",
++          "label": "오른쪽 상부 구동부",
++          "evPhotoStructure": {
++            "id": "O8",
++            "label": "오른쪽 상부 구동부",
++            "role": "actuator",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.583,
++                "y0": 0.445,
++                "x1": 0.658,
++                "y1": 0.58
++              }
++            ],
++            "observation": "흰색 구동부 외장이 보인다.",
++            "assumptions": [
++              "뒤쪽 크기는 근사이다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              -0.02,
++              1.43,
++              0.34
++            ],
++            "size": [
++              0.44,
++              0.39,
++              0.25
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#eeeeea",
++            "outline": null,
++            "details": [],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-leg-O9",
++        "metadataId": "ev-structure",
++        "x": -890.3324306540152,
++        "y": -35.102362204724415,
++        "properties": {
++          "shape": "box",
++          "width": 26.4,
++          "height": 123.2,
++          "depth": 59.4,
++          "elevation": 121.0,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": -1.7188733853924696,
++          "color": "#17191d",
++          "label": "왼쪽 다리",
++          "evPhotoStructure": {
++            "id": "O9",
++            "label": "왼쪽 다리",
++            "role": "leg",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.317,
++                "y0": 0.583,
++                "x1": 0.42,
++                "y1": 0.745
++              }
++            ],
++            "observation": "검은 세로 브래킷이 몸통과 발목을 잇는다.",
++            "assumptions": [
++              "가려진 뒷면 형상은 생략한다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.0,
++              0.83,
++              -0.4
++            ],
++            "size": [
++              0.12,
++              0.56,
++              0.27
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              -0.03
++            ],
++            "color": "#17191d",
++            "outline": null,
++            "details": [],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-leg-O10",
++        "metadataId": "ev-structure",
++        "x": -890.3324306540152,
++        "y": 630.0944881889765,
++        "properties": {
++          "shape": "box",
++          "width": 26.4,
++          "height": 123.2,
++          "depth": 59.4,
++          "elevation": 121.0,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 1.7188733853924696,
++          "color": "#17191d",
++          "label": "오른쪽 다리",
++          "evPhotoStructure": {
++            "id": "O10",
++            "label": "오른쪽 다리",
++            "role": "leg",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.552,
++                "y0": 0.592,
++                "x1": 0.63,
++                "y1": 0.755
++              }
++            ],
++            "observation": "검은 세로 브래킷이 보인다.",
++            "assumptions": [
++              "가려진 뒷면 형상은 생략한다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.0,
++              0.83,
++              0.4
++            ],
++            "size": [
++              0.12,
++              0.56,
++              0.27
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.03
++            ],
++            "color": "#17191d",
++            "outline": null,
++            "details": [],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-actuator-O11",
++        "metadataId": "ev-structure",
++        "x": -981.7969975831492,
++        "y": -97.46456692913388,
++        "properties": {
++          "shape": "box",
++          "width": 74.8,
++          "height": 79.2,
++          "depth": 92.4,
++          "elevation": 46.2,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#16191e",
++          "label": "왼쪽 발목 구동부",
++          "evPhotoStructure": {
++            "id": "O11",
++            "label": "왼쪽 발목 구동부",
++            "role": "actuator",
++            "status": "INFERRED",
++            "confidence": "high",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.277,
++                "y0": 0.63,
++                "x1": 0.45,
++                "y1": 0.75
++              }
++            ],
++            "observation": "검은 외장과 세로로 놓인 은색 혼이 보인다.",
++            "assumptions": [
++              "출력축 깊이는 근사이다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.0,
++              0.39,
++              -0.4
++            ],
++            "size": [
++              0.34,
++              0.36,
++              0.42
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#16191e",
++            "outline": null,
++            "details": [
++              {
++                "shape": "box",
++                "position": [
++                  0.53,
++                  0.0,
++                  -0.04
++                ],
++                "size": [
++                  0.08,
++                  0.83,
++                  0.15
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  0.0
++                ],
++                "color": "#c9cbcc"
++              },
++              {
++                "shape": "cylinder",
++                "position": [
++                  0.57,
++                  -0.27,
++                  -0.04
++                ],
++                "size": [
++                  0.13,
++                  0.04,
++                  0.13
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  -1.5708
++                ],
++                "color": "#85898d"
++              }
++            ],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-actuator-O12",
++        "metadataId": "ev-structure",
++        "x": -981.7969975831492,
++        "y": 567.732283464567,
++        "properties": {
++          "shape": "box",
++          "width": 74.8,
++          "height": 79.2,
++          "depth": 92.4,
++          "elevation": 46.2,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#16191e",
++          "label": "오른쪽 발목 구동부",
++          "evPhotoStructure": {
++            "id": "O12",
++            "label": "오른쪽 발목 구동부",
++            "role": "actuator",
++            "status": "INFERRED",
++            "confidence": "high",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.558,
++                "y0": 0.622,
++                "x1": 0.722,
++                "y1": 0.765
++              }
++            ],
++            "observation": "검은 외장과 은색 혼이 보인다.",
++            "assumptions": [
++              "출력축 깊이는 근사이다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.0,
++              0.39,
++              0.4
++            ],
++            "size": [
++              0.34,
++              0.36,
++              0.42
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#16191e",
++            "outline": null,
++            "details": [
++              {
++                "shape": "box",
++                "position": [
++                  0.53,
++                  0.0,
++                  0.04
++                ],
++                "size": [
++                  0.08,
++                  0.83,
++                  0.15
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  0.0
++                ],
++                "color": "#c9cbcc"
++              },
++              {
++                "shape": "cylinder",
++                "position": [
++                  0.57,
++                  -0.27,
++                  0.04
++                ],
++                "size": [
++                  0.13,
++                  0.04,
++                  0.13
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  -1.5708
++                ],
++                "color": "#85898d"
++              }
++            ],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-foot-O13",
++        "metadataId": "ev-structure",
++        "x": -1114.8363676618892,
++        "y": -247.13385826771656,
++        "properties": {
++          "shape": "box",
++          "width": 198.0,
++          "height": 19.8,
++          "depth": 140.8,
++          "elevation": 0.0,
++          "rotation": 4.010704565915763,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#20232a",
++          "label": "왼쪽 발판",
++          "evPhotoStructure": {
++            "id": "O13",
++            "label": "왼쪽 발판",
++            "role": "foot",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.187,
++                "y0": 0.693,
++                "x1": 0.48,
++                "y1": 0.845
++              }
++            ],
++            "observation": "앞쪽으로 벌어진 검은 발판과 개구부가 보인다.",
++            "assumptions": [
++              "개구부 윤곽과 원근 왜곡을 단순화한다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.12,
++              0.045,
++              -0.47
++            ],
++            "size": [
++              0.9,
++              0.09,
++              0.64
++            ],
++            "rotation": [
++              0.0,
++              -0.07,
++              0.0
++            ],
++            "color": "#20232a",
++            "outline": [
++              [
++                -0.5,
++                -0.27
++              ],
++              [
++                -0.35,
++                -0.42
++              ],
++              [
++                0.28,
++                -0.5
++              ],
++              [
++                0.5,
++                -0.32
++              ],
++              [
++                0.43,
++                -0.06
++              ],
++              [
++                0.5,
++                0.15
++              ],
++              [
++                0.4,
++                0.43
++              ],
++              [
++                0.05,
++                0.5
++              ],
++              [
++                -0.43,
++                0.3
++              ]
++            ],
++            "details": [],
++            "holes": [
++              [
++                [
++                  0.12,
++                  -0.32
++                ],
++                [
++                  0.32,
++                  -0.26
++                ],
++                [
++                  0.27,
++                  -0.14
++                ],
++                [
++                  0.12,
++                  -0.2
++                ]
++              ],
++              [
++                [
++                  0.14,
++                  0.12
++                ],
++                [
++                  0.33,
++                  0.14
++                ],
++                [
++                  0.3,
++                  0.29
++                ],
++                [
++                  0.15,
++                  0.27
++                ]
++              ]
++            ]
++          }
++        }
++      },
++      {
++        "id": "photo-foot-O14",
++        "metadataId": "ev-structure",
++        "x": -1114.8363676618892,
++        "y": 534.4724409448818,
++        "properties": {
++          "shape": "box",
++          "width": 198.0,
++          "height": 19.8,
++          "depth": 140.8,
++          "elevation": 0.0,
++          "rotation": -4.010704565915763,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#20232a",
++          "label": "오른쪽 발판",
++          "evPhotoStructure": {
++            "id": "O14",
++            "label": "오른쪽 발판",
++            "role": "foot",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.517,
++                "y0": 0.72,
++                "x1": 0.775,
++                "y1": 0.877
++              }
++            ],
++            "observation": "검은 발판에 앞쪽 개구부와 둥근 돌출부가 보인다.",
++            "assumptions": [
++              "개구부 윤곽과 원근 왜곡을 단순화한다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.12,
++              0.045,
++              0.47
++            ],
++            "size": [
++              0.9,
++              0.09,
++              0.64
++            ],
++            "rotation": [
++              0.0,
++              0.07,
++              0.0
++            ],
++            "color": "#20232a",
++            "outline": [
++              [
++                -0.5,
++                -0.3
++              ],
++              [
++                -0.1,
++                -0.5
++              ],
++              [
++                0.4,
++                -0.43
++              ],
++              [
++                0.5,
++                -0.2
++              ],
++              [
++                0.43,
++                0.04
++              ],
++              [
++                0.5,
++                0.3
++              ],
++              [
++                0.3,
++                0.5
++              ],
++              [
++                -0.35,
++                0.42
++              ],
++              [
++                -0.5,
++                0.25
++              ]
++            ],
++            "details": [],
++            "holes": [
++              [
++                [
++                  0.12,
++                  -0.27
++                ],
++                [
++                  0.3,
++                  -0.29
++                ],
++                [
++                  0.33,
++                  -0.14
++                ],
++                [
++                  0.14,
++                  -0.12
++                ]
++              ],
++              [
++                [
++                  0.12,
++                  0.2
++                ],
++                [
++                  0.27,
++                  0.14
++                ],
++                [
++                  0.32,
++                  0.26
++                ],
++                [
++                  0.12,
++                  0.32
++                ]
++              ]
++            ]
++          }
++        }
++      },
++      {
++        "id": "photo-cable-O15",
++        "metadataId": "ev-structure",
++        "x": -1069.1040841973224,
++        "y": 613.464566929134,
++        "properties": {
++          "shape": "cylinder",
++          "width": 24.2,
++          "height": 70.4,
++          "depth": 24.2,
++          "elevation": 404.8,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": -5.729577951308233,
++          "color": "#22252a",
++          "label": "상部 케이블 보호관",
++          "evPhotoStructure": {
++            "id": "O15",
++            "label": "상部 케이블 보호관",
++            "role": "cable",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.412,
++                "y0": 0.107,
++                "x1": 0.643,
++                "y1": 0.368
++              }
++            ],
++            "observation": "검은 보호관이 위로 올라갔다가 휘어진다.",
++            "assumptions": [
++              "보이는 경로를 짧은 원통들로 근사한다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "cylinder",
++            "position": [
++              -0.22,
++              2.0,
++              0.3
++            ],
++            "size": [
++              0.11,
++              0.32,
++              0.11
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              -0.1
++            ],
++            "color": "#22252a",
++            "outline": null,
++            "details": [
++              {
++                "shape": "cylinder",
++                "position": [
++                  -0.2,
++                  0.78,
++                  -0.05
++                ],
++                "size": [
++                  1.0,
++                  0.65,
++                  1.0
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  0.15
++                ],
++                "color": "#25282d"
++              },
++              {
++                "shape": "cylinder",
++                "position": [
++                  0.0,
++                  1.29,
++                  -0.52
++                ],
++                "size": [
++                  1.0,
++                  0.55,
++                  1.0
++                ],
++                "rotation": [
++                  0.55,
++                  0.0,
++                  0.0
++                ],
++                "color": "#25282d"
++              },
++              {
++                "shape": "cylinder",
++                "position": [
++                  0.0,
++                  1.25,
++                  -1.7
++                ],
++                "size": [
++                  1.0,
++                  0.65,
++                  1.0
++                ],
++                "rotation": [
++                  1.0,
++                  0.0,
++                  0.0
++                ],
++                "color": "#25282d"
++              },
++              {
++                "shape": "cylinder",
++                "position": [
++                  0.0,
++                  0.87,
++                  -2.0
++                ],
++                "size": [
++                  1.0,
++                  0.57,
++                  1.0
++                ],
++                "rotation": [
++                  0.7,
++                  0.0,
++                  0.0
++                ],
++                "color": "#25282d"
++              }
++            ],
++            "holes": []
++          }
++        }
++      },
++      {
++        "id": "photo-housing-O16",
++        "metadataId": "ev-structure",
++        "x": -657.51353301622,
++        "y": 230.97637795275594,
++        "properties": {
++          "shape": "box",
++          "width": 44.0,
++          "height": 66.0,
++          "depth": 94.6,
++          "elevation": 286.0,
++          "rotation": -0.0,
++          "rotationX": 0.0,
++          "rotationZ": 0.0,
++          "color": "#ed6024",
++          "label": "중앙 흰색·주황색 물체",
++          "evPhotoStructure": {
++            "id": "O16",
++            "label": "중앙 흰색·주황색 물체",
++            "role": "housing",
++            "status": "INFERRED",
++            "confidence": "medium",
++            "regions": [
++              {
++                "asset_id": "image",
++                "x0": 0.393,
++                "y0": 0.453,
++                "x1": 0.54,
++                "y1": 0.545
++              }
++            ],
++            "observation": "흰색 면 둘레에 주황색 테두리가 있다.",
++            "assumptions": [
++              "기능과 후면 깊이는 알 수 없다."
++            ]
++          },
++          "photoSceneOrigin": [
++            -220.77962227720818,
++            110
++          ],
++          "dimensionsStatus": "UNKNOWN",
++          "displayScaleMm": 220,
++          "evPhotoGeometry": {
++            "shape": "box",
++            "position": [
++              0.32,
++              1.45,
++              0.0
++            ],
++            "size": [
++              0.2,
++              0.3,
++              0.43
++            ],
++            "rotation": [
++              0.0,
++              0.0,
++              0.0
++            ],
++            "color": "#ed6024",
++            "outline": null,
++            "details": [
++              {
++                "shape": "box",
++                "position": [
++                  0.53,
++                  0.0,
++                  0.0
++                ],
++                "size": [
++                  0.04,
++                  0.77,
++                  0.8
++                ],
++                "rotation": [
++                  0.0,
++                  0.0,
++                  0.0
++                ],
++                "color": "#eeeeda"
++              }
++            ],
++            "holes": []
++          }
++        }
++      }
++    ],
++    "wires": [
++      {
++        "id": "BUILD_W1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5V",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "VCC",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W2",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W3",
++        "start": {
++          "componentId": "U1",
++          "pinName": "8",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "TRIG",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W4",
++        "start": {
++          "componentId": "S1",
++          "pinName": "ECHO",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "9",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W5",
++        "start": {
++          "componentId": "U1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M1",
++          "pinName": "PWM",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W6",
++        "start": {
++          "componentId": "U1",
++          "pinName": "3",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M2",
++          "pinName": "PWM",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W7",
++        "start": {
++          "componentId": "U1",
++          "pinName": "4",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M3",
++          "pinName": "PWM",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W8",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M4",
++          "pinName": "PWM",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W9",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M1",
++          "pinName": "V+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W10",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M2",
++          "pinName": "V+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W11",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M3",
++          "pinName": "V+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W12",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M4",
++          "pinName": "V+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W13",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W14",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M2",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W15",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M3",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W16",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "M4",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W17",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W18",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "C1",
++          "pinName": "+",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W19",
++        "start": {
++          "componentId": "PS1",
++          "pinName": "-",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "C1",
++          "pinName": "−",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W20",
++        "start": {
++          "componentId": "S1",
++          "pinName": "VCC",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "C2",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W21",
++        "start": {
++          "componentId": "S1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "C2",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      }
++    ],
++    "activeBoardId": "U1",
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "sketch.ino",
++          "content": "const byte jointPins[4] = {2, 3, 4, 5};\nconst byte trigPin = 8, echoPin = 9;\nbool runGait = false;\nunsigned long nextMeasure = 0;\nunsigned long gaitStart = 0;\n\nvoid setup() {\n  for (byte i = 0; i < 4; ++i) {\n    pinMode(jointPins[i], OUTPUT);\n    digitalWrite(jointPins[i], LOW);\n  }\n  pinMode(trigPin, OUTPUT);\n  digitalWrite(trigPin, LOW);\n  pinMode(echoPin, INPUT);\n}\n\nvoid loop() {\n  const unsigned long frameStart = micros();\n  const unsigned long now = millis();\n  int angle[4] = {90, 90, 90, 90};\n\n  if (runGait) {\n    // 새 시험 기본값: 800ms 교대 주기, 작은 관절 진폭.\n    unsigned long phase = (now - gaitStart) % 800UL;\n    int wave = phase < 400UL\n      ? -100 + (int)(phase * 200UL / 400UL)\n      : 100 - (int)((phase - 400UL) * 200UL / 400UL);\n    angle[0] = 90 + wave * 8 / 100;\n    angle[1] = 90 - wave * 8 / 100;\n    angle[2] = 90 - wave * 6 / 100;\n    angle[3] = 90 + wave * 6 / 100;\n  }\n\n  // 각 채널에 1~2ms 펄스를 한 번씩 전송한다.\n  for (byte i = 0; i < 4; ++i) {\n    unsigned int width = 1000U + (unsigned long)angle[i] * 1000UL / 180UL;\n    digitalWrite(jointPins[i], HIGH);\n    delayMicroseconds(width);\n    digitalWrite(jointPins[i], LOW);\n  }\n\n  if ((long)(now - nextMeasure) >= 0) {\n    nextMeasure = now + 100UL;\n    digitalWrite(trigPin, LOW);\n    delayMicroseconds(2);\n    digitalWrite(trigPin, HIGH);\n    delayMicroseconds(10);\n    digitalWrite(trigPin, LOW);\n    unsigned long echo = pulseIn(echoPin, HIGH, 8000UL);\n    // 새 설계 기준: 20cm 이하 또는 무응답이면 정지.\n    bool allow = echo != 0UL && echo > 1160UL;\n    if (allow && !runGait) gaitStart = millis();\n    runGait = allow;\n  }\n\n  while ((unsigned long)(micros() - frameStart) < 20000UL) {\n    delayMicroseconds(20);\n  }\n}\n"
++        }
++      ]
++    },
++    "embeddedVision": {
++      "source_project": "8c79a35f61934203ac442f1c5a7126cc",
++      "recipe": "ai_functional_build",
++      "functional_build_version": "2b4271b3bdfa51e330167cd6336f233af79d7096a7cd4ca6ae56570143693ef1",
++      "photo_appearance_version": 1,
++      "focus_photo_on_open": true
++    }
++  },
++  "hex": ":100000000C9461000C947E000C947E000C947E0095\n:100010000C947E000C947E000C947E000C947E0068\n:100020000C947E000C947E000C947E000C947E0058\n:100030000C947E000C947E000C947E000C947E0048\n:100040000C9445020C947E000C947E000C947E006F\n:100050000C947E000C947E000C947E000C947E0028\n:100060000C947E000C947E00000000080002010049\n:100070000003040700000000000000000102040863\n:100080001020408001020408102001020408102002\n:10009000040404040404040402020202020203032E\n:1000A00003030303000000002300260029000000D2\n:1000B0000000250028002B0000000000240027007D\n:1000C0002A0011241FBECFEFD8E0DEBFCDBF11E064\n:1000D000A0E0B1E0E2E7F8E002C005900D92AC309C\n:1000E000B107D9F721E0ACE0B1E001C01D92AE311B\n:1000F000B207E1F70E9436020C9437040C9400001A\n:10010000CF92DF92EF92FF920F931F93E82FF92F78\n:1001100005C0015011092109310961F1908196232F\n:100120009417B9F305C0015011092109310911F1E2\n:10013000908196239413F7CFC12CD12CE12CF12C74\n:100140000AC08FEFC81AD80AE80AF80A0C151D056C\n:100150002E053F0579F080818623841791F36C2D5D\n:100160007D2D8E2D9F2D1F910F91FF90EF90DF9091\n:10017000CF90089560E070E080E090E01F910F91D3\n:10018000FF90EF90DF90CF9008951F93CF93DF9370\n:10019000C8E0D1E0199161E0812F0E942F0360E057\n:1001A000812F0E946B0381E0CC30D80799F761E082\n:1001B00088E00E942F0360E088E00E946B0360E00B\n:1001C00089E0DF91CF911F910C942F032F923F92E2\n:1001D0004F925F926F927F928F929F92AF92BF9257\n:1001E000CF92DF92EF92FF920F931F93CF93DF9303\n:1001F000CDB7DEB729970FB6F894DEBF0FBECDBFDF\n:100200000E949B022B013C010E948F026B017C012A\n:1002100088E0E0E0F1E0DE01119601900D928A9510\n:10022000E1F780911401882309F46FC080910C01DB\n:1002300090910D01A0910E01B0910F01A7019601BF\n:10024000281B390B4A0B5B0BCA01B90120E233E0D2\n:1002500040E050E00E94E0039B01AC01A8ECB0E05C\n:10026000203961E036074105510558F40E94090420\n:1002700020E931E040E050E00E94E00324563109DB\n:1002800012C00E940904605878438140910920E916\n:1002900031E040E050E00E94E00384E690E0FC01A1\n:1002A000E21BF30B9F01890193E0000F111F9A9548\n:1002B000E1F7E4E6F0E0C801BF010E94CC03665A12\n:1002C0007F4F7A8369834CE9A42EBB24BA94C8017A\n:1002D000B5010E94CC03665A7F4F7C836B8386E016\n:1002E000829F8001839F100D1124C801B5010E94D7\n:1002F000CC03665A7F4F7E836D83C801BF010E9485\n:10030000CC03665A7F4F78876F839E012F5F3F4FE4\n:10031000490188E0282E81E0382E5E0139E0A30EE5\n:10032000B11CF401019111914F01F10121911F01C3\n:10033000298761E0822F0E946B0328EE33E0D80109\n:100340000E94020424EB30E040E050E00E94E00311\n:10035000C90188519C4F0E94C00260E089850E94BB\n:100360006B03A814B904E9F6809110019091110172\n:10037000A0911201B0911301B701A601481B590BBE\n:100380006A0B7B0B77FD46C054E6C50ED11CE11C01\n:10039000F11CC0921001D0921101E0921201F09272\n:1003A000130160E088E00E946B0382E090E00E940D\n:1003B000C00261E088E00E946B038AE090E00E9446\n:1003C000C00260E088E00E946B0320E43FE140E06F\n:1003D00050E061E089E00E949A0311E06938E4E0AE\n:1003E0007E078105910508F410E0693874408105A5\n:1003F000910570F08091140181110AC00E948F0252\n:1004000060930C0170930D0180930E0190930F0186\n:10041000109314010E949B02DC01CB018419950901\n:10042000A609B70980329E44A105B10528F484E1EC\n:1004300090E00E94C002EECF29960FB6F894DEBF7E\n:100440000FBECDBFDF91CF911F910F91FF90EF9025\n:10045000DF90CF90BF90AF909F908F907F906F90E4\n:100460005F904F903F902F90089508950E94CB0287\n:100470000E9435020E94C500C0E0D0E00E94E60064\n:100480002097E1F30E940000F9CF1F920F920FB660\n:100490000F9211242F933F938F939F93AF93BF930A\n:1004A0008091160190911701A0911801B091190146\n:1004B0003091150123E0230F2D3720F40196A11D63\n:1004C000B11D05C026E8230F0296A11DB11D209382\n:1004D00015018093160190931701A0931801B09312\n:1004E000190180911A0190911B01A0911C01B091FA\n:1004F0001D010196A11DB11D80931A0190931B014E\n:10050000A0931C01B0931D01BF91AF919F918F915A\n:100510003F912F910F900FBE0F901F9018952FB7FE\n:10052000F8946091160170911701809118019091D3\n:1005300019012FBF08953FB7F89480911A01909147\n:100540001B01A0911C01B0911D0126B5A89B05C0FF\n:100550002F3F19F00196A11DB11D3FBFBA2FA92F42\n:10056000982F8827820F911DA11DB11DBC01CD01BF\n:1005700042E0660F771F881F991F4A95D1F70895AB\n:100580008230910538F0880F991F880F991F0597C1\n:100590000197F1F70895789484B5826084BD84B59D\n:1005A000816084BD85B5826085BD85B5816085BD6E\n:1005B000EEE6F0E0808181608083E1E8F0E0108287\n:1005C000808182608083808181608083E0E8F0E0C8\n:1005D000808181608083E1EBF0E0808184608083B2\n:1005E000E0EBF0E0808181608083EAE7F0E08081E9\n:1005F0008460808380818260808380818160808349\n:100600008081806880831092C1000895833081F0DA\n:1006100028F4813099F08230A1F008958730A9F054\n:100620008830B9F08430D1F4809180008F7D03C090\n:10063000809180008F7780938000089584B58F77B4\n:1006400002C084B58F7D84BD08958091B0008F77FE\n:1006500003C08091B0008F7D8093B0000895CF9348\n:10066000DF9390E0FC01E458FF4F2491FC01E05738\n:10067000FF4F8491882361F190E0880F991FFC015E\n:10068000E854FF4FC591D491FC01E255FF4FA5916D\n:10069000B491611109C09FB7F89488812095822395\n:1006A0008883EC912E230BC0623061F49FB7F894DD\n:1006B0008881322F309583238883EC912E2B2C93C5\n:1006C0009FBF06C08FB7F894E8812E2B28838FBF79\n:1006D000DF91CF9108951F93CF93DF93282F30E0C0\n:1006E000F901E859FF4F8491F901E458FF4FD49183\n:1006F000F901E057FF4FC491CC23C1F0162F8111AF\n:100700000E940603EC2FF0E0EE0FFF1FE255FF4FB3\n:10071000A591B4919FB7F894111104C08C91D09514\n:10072000D82302C0EC91DE2BDC939FBFDF91CF91E9\n:100730001F9108950F931F9390E0FC01E458FF4F21\n:100740007491FC01E057FF4FE491662311F0672F8D\n:1007500001C060E0F0E0EE0FFF1FEC55FF4F859108\n:10076000949189019A013F70462F672F0E94800063\n:10077000611571058105910549F0DC01CB010196F8\n:10078000A11DB11DBC01CD019F7003C060E070E0F0\n:10079000CB011F910F91089597FB072E16F400943B\n:1007A00007D077FD09D00E94140407FC05D03EF461\n:1007B000909581959F4F0895709561957F4F08950D\n:1007C000A1E21A2EAA1BBB1BFD010DC0AA1FBB1F55\n:1007D000EE1FFF1FA217B307E407F50720F0A21BC7\n:1007E000B30BE40BF50B661F771F881F991F1A9434\n:1007F00069F760957095809590959B01AC01BD015E\n:10080000CF0108950E942804B7FF0895821B930B1F\n:1008100008950E942804A59F900DB49F900DA49F59\n:10082000800D911D11240895AA1BBB1B51E107C027\n:10083000AA1FBB1FA617B70710F0A61BB70B881F70\n:10084000991F5A95A9F780959095BC01CD010895FF\n:10085000A29FB001B39FC001A39F700D811D112401\n:10086000911DB29F700D811D1124911D0895F89462\n:02087000FFCFB8\n:0C0872005A005A005A005A000203040504\n:00000001FF\n"
++}
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/functional-lcd.json
+@@ -0,0 +1,532 @@
++{
++  "project": {
++    "format": "velxio-project",
++    "version": 1,
++    "exportedAt": "2026-11-10T10:59:24.519835+00:00",
++    "name": "새 설계 · Arduino UNO · LCD 고정 문구 표시",
++    "boards": [
++      {
++        "id": "U1",
++        "name": "Arduino UNO · 새 설계",
++        "boardKind": "arduino-uno",
++        "x": 40,
++        "y": 80,
++        "activeFileGroupId": "group-U1",
++        "languageMode": "arduino",
++        "serialBaudRate": 115200
++      }
++    ],
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "sketch.ino",
++          "content": "// New design, NOT recovered firmware. Arduino UNO + parallel 16x2 HD44780 LCD.\n// RS=D12, E=D11, LCD D4..D7 = Arduino D5,D4,D3,D2. RW=GND.\n// Contrast: 10k pot wiper -> VO. Backlight: 5V -> 220 ohm -> A, K -> GND.\n#include <Arduino.h>\nconstexpr uint8_t LCD_RS = 12, LCD_EN = 11;\nconstexpr uint8_t LCD_D4 = 5, LCD_D5 = 4, LCD_D6 = 3, LCD_D7 = 2;\n// Self-contained HD44780 4-bit writer: no external library installation needed.\nclass LCD4Bit : public Print {\n  uint8_t rs, en, data[4];\n  void nibble(uint8_t n) {\n    for (uint8_t i = 0; i < 4; ++i) digitalWrite(data[i], (n >> i) & 1);\n    digitalWrite(en, LOW); delayMicroseconds(1);\n    digitalWrite(en, HIGH); delayMicroseconds(1);\n    digitalWrite(en, LOW); delayMicroseconds(100);\n  }\n  void send(uint8_t b, bool isData) {\n    digitalWrite(rs, isData ? HIGH : LOW);\n    nibble(b >> 4); nibble(b & 15);\n  }\npublic:\n  LCD4Bit(uint8_t r, uint8_t e, uint8_t a, uint8_t b, uint8_t c, uint8_t d)\n    : rs(r), en(e), data{a,b,c,d} {}\n  void begin(uint8_t, uint8_t) {\n    pinMode(rs, OUTPUT); pinMode(en, OUTPUT);\n    for (uint8_t i=0; i<4; ++i) pinMode(data[i], OUTPUT);\n    digitalWrite(rs, LOW); digitalWrite(en, LOW); delay(50);\n    nibble(3); delayMicroseconds(4500); nibble(3); delayMicroseconds(4500);\n    nibble(3); delayMicroseconds(150); nibble(2);\n    send(0x28, false); send(0x0c, false); send(0x01, false); delay(2);\n    send(0x06, false);\n  }\n  void setCursor(uint8_t col, uint8_t row) { send(0x80 | (row ? 0x40 : 0) | col, false); }\n  using Print::write;\n  size_t write(uint8_t b) override { send(b, true); return 1; }\n};\nLCD4Bit lcd(LCD_RS, LCD_EN, LCD_D4, LCD_D5, LCD_D6, LCD_D7);\nvoid setup() {\n  lcd.begin(16, 2);\n  lcd.print(\"Runtime ready\");\n}\nvoid loop() {}\n"
++        }
++      ]
++    },
++    "components": [
++      {
++        "id": "BB1",
++        "metadataId": "breadboard",
++        "x": 400,
++        "y": 115,
++        "properties": {}
++      },
++      {
++        "id": "LCD1",
++        "metadataId": "lcd1602",
++        "properties": {
++          "pins": "full",
++          "background": "blue"
++        },
++        "x": 805,
++        "y": -125
++      },
++      {
++        "id": "RV1",
++        "metadataId": "potentiometer",
++        "properties": {
++          "value": 512
++        },
++        "x": 760,
++        "y": 335
++      },
++      {
++        "id": "R1",
++        "metadataId": "resistor",
++        "properties": {
++          "value": "220"
++        },
++        "x": 625.76,
++        "y": 166.95
++      }
++    ],
++    "wires": [
++      {
++        "id": "J1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5V",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "23t.a",
++          "x": 631.76,
++          "y": 169.0
++        },
++        "color": "#c52f2f",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J2",
++        "start": {
++          "componentId": "LCD1",
++          "pinName": "VDD",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "23t.c",
++          "x": 631.76,
++          "y": 188.2
++        },
++        "color": "#c52f2f",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J3",
++        "start": {
++          "componentId": "RV1",
++          "pinName": "VCC",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "23t.d",
++          "x": 631.76,
++          "y": 197.8
++        },
++        "color": "#c52f2f",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J4",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "40t.a",
++          "x": 794.96,
++          "y": 169.0
++        },
++        "color": "#263238",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J5",
++        "start": {
++          "componentId": "LCD1",
++          "pinName": "VSS",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "40t.b",
++          "x": 794.96,
++          "y": 178.6
++        },
++        "color": "#263238",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J6",
++        "start": {
++          "componentId": "LCD1",
++          "pinName": "RW",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "40t.c",
++          "x": 794.96,
++          "y": 188.2
++        },
++        "color": "#263238",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J7",
++        "start": {
++          "componentId": "LCD1",
++          "pinName": "K",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "40t.d",
++          "x": 794.96,
++          "y": 197.8
++        },
++        "color": "#263238",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J8",
++        "start": {
++          "componentId": "RV1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "40t.e",
++          "x": 794.96,
++          "y": 207.39999999999998
++        },
++        "color": "#263238",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J9",
++        "start": {
++          "componentId": "LCD1",
++          "pinName": "A",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "29t.a",
++          "x": 689.36,
++          "y": 169.0
++        },
++        "color": "#d3a31c",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J10",
++        "start": {
++          "componentId": "RV1",
++          "pinName": "SIG",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "LCD1",
++          "pinName": "V0",
++          "x": 0,
++          "y": 0
++        },
++        "color": "#d3a31c",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J11",
++        "start": {
++          "componentId": "U1",
++          "pinName": "12",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "LCD1",
++          "pinName": "RS",
++          "x": 0,
++          "y": 0
++        },
++        "color": "#159957",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J12",
++        "start": {
++          "componentId": "U1",
++          "pinName": "11",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "LCD1",
++          "pinName": "E",
++          "x": 0,
++          "y": 0
++        },
++        "color": "#159957",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J13",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "LCD1",
++          "pinName": "D4",
++          "x": 0,
++          "y": 0
++        },
++        "color": "#3478c0",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J14",
++        "start": {
++          "componentId": "U1",
++          "pinName": "4",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "LCD1",
++          "pinName": "D5",
++          "x": 0,
++          "y": 0
++        },
++        "color": "#3478c0",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J15",
++        "start": {
++          "componentId": "U1",
++          "pinName": "3",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "LCD1",
++          "pinName": "D6",
++          "x": 0,
++          "y": 0
++        },
++        "color": "#3478c0",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "J16",
++        "start": {
++          "componentId": "U1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "LCD1",
++          "pinName": "D7",
++          "x": 0,
++          "y": 0
++        },
++        "color": "#3478c0",
++        "waypoints": [],
++        "autoRouted": true
++      },
++      {
++        "id": "SEAT_R1_1",
++        "start": {
++          "componentId": "R1",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "23t.b",
++          "x": 631.76,
++          "y": 178.6
++        },
++        "color": "#87988a",
++        "waypoints": [],
++        "bb": true
++      },
++      {
++        "id": "SEAT_R1_2",
++        "start": {
++          "componentId": "R1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BB1",
++          "pinName": "29t.b",
++          "x": 689.36,
++          "y": 178.6
++        },
++        "color": "#87988a",
++        "waypoints": [],
++        "bb": true
++      }
++    ],
++    "activeBoardId": "U1",
++    "embeddedVision": {
++      "basis": "proposed_design_only",
++      "physical_verified": false,
++      "original_wiring_reused": false,
++      "assembly": {
++        "layout_version": "full-breadboard-lcd-v1",
++        "breadboard": "830-point full-size / 63 columns / 4 power rails",
++        "steps": [
++          {
++            "from": "U1.5V",
++            "to": "BB1.23t.a",
++            "kind": "jumper"
++          },
++          {
++            "from": "LCD1.VDD",
++            "to": "BB1.23t.c",
++            "kind": "jumper"
++          },
++          {
++            "from": "RV1.VCC",
++            "to": "BB1.23t.d",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.GND",
++            "to": "BB1.40t.a",
++            "kind": "jumper"
++          },
++          {
++            "from": "LCD1.VSS",
++            "to": "BB1.40t.b",
++            "kind": "jumper"
++          },
++          {
++            "from": "LCD1.RW",
++            "to": "BB1.40t.c",
++            "kind": "jumper"
++          },
++          {
++            "from": "LCD1.K",
++            "to": "BB1.40t.d",
++            "kind": "jumper"
++          },
++          {
++            "from": "RV1.GND",
++            "to": "BB1.40t.e",
++            "kind": "jumper"
++          },
++          {
++            "from": "LCD1.A",
++            "to": "BB1.29t.a",
++            "kind": "jumper"
++          },
++          {
++            "from": "RV1.SIG",
++            "to": "LCD1.V0",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.12",
++            "to": "LCD1.RS",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.11",
++            "to": "LCD1.E",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.5",
++            "to": "LCD1.D4",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.4",
++            "to": "LCD1.D5",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.3",
++            "to": "LCD1.D6",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.2",
++            "to": "LCD1.D7",
++            "kind": "jumper"
++          },
++          {
++            "from": "R1.1",
++            "to": "BB1.23t.b",
++            "kind": "insert"
++          },
++          {
++            "from": "R1.2",
++            "to": "BB1.29t.b",
++            "kind": "insert"
++          }
++        ],
++        "note": "실물 연결 전 LCD와 가변저항의 실제 핀·정격을 확인하세요. 같은 열의 a~e 다섯 구멍이 연결됩니다."
++      },
++      "recipe": "arduino_lcd",
++      "function": {
++        "display_text": "Runtime ready"
++      },
++      "workflow": {
++        "id": "embedded-system-input-to-simulation",
++        "version": 2,
++        "sha256": "fd65bdbac026963b6c500c386f48e2df3c0533164fea17d01a7eed26f80d7a42",
++        "default_destination": "interactive_simulator",
++        "viewer": {
++          "views": [
++            "assembled",
++            "exploded",
++            "circuit"
++          ],
++          "transition_ms": 720,
++          "mounting": "per_structure",
++          "wire_endpoints": "displayed_pins",
++          "reduced_motion": "instant",
++          "manual_camera_input": "cancel_camera_motion"
++        },
++        "stage_order": [
++          "input",
++          "components",
++          "function",
++          "completion",
++          "datasheet",
++          "circuit",
++          "structure",
++          "assembly",
++          "editor",
++          "simulation",
++          "verification"
++        ],
++        "kind": "processing_contract",
++        "notice": "공통 처리 규칙입니다. 모든 단계의 완료나 실행 성공을 뜻하지 않습니다."
++      }
++    }
++  },
++  "hex": ":100000000C945D000C9485000C9485000C94850084\n:100010000C9485000C9485000C9485000C9485004C\n:100020000C9485000C9485000C9485000C9485003C\n:100030000C9485000C9485000C9485000C9485002C\n:100040000C94CC010C9485000C9485000C948500D4\n:100050000C9485000C9485000C9485000C9485000C\n:100060000C9485000C94850000000008000201003B\n:100070000003040700000000000000000102040863\n:100080001020408001020408102001020408102002\n:10009000040404040404040402020202020203032E\n:1000A0000303030300000000250028002B000000CC\n:1000B0000000240027002A00660111241FBECFEF94\n:1000C000D8E0DEBFCDBF11E0A0E0B1E0E4EBF6E0A8\n:1000D00002C005900D92AA31B107D9F721E0AAE13B\n:1000E000B1E001C01D92AD32B207E1F710E0CDE5FD\n:1000F000D0E004C02197FE010E945203CC35D10705\n:10010000C9F70E94BD010C9458030C94000080E0D4\n:1001100090E008950895CF92DF92EF92FF920F93AF\n:100120001F93CF93DF93EC016C0186E0C80ED11CC6\n:1001300000E010E0E62EF12CB701002E02C075950C\n:1001400067950A94E2F76170F60181916F010E9450\n:1001500022030F5F1F4F0430110571F760E08D819E\n:100160000E94220381E090E00E94770261E08D818D\n:100170000E94220381E090E00E94770260E08D817E\n:100180000E94220384E690E0DF91CF911F910F91AE\n:10019000FF90EF90DF90CF900C9477020F931F9316\n:1001A000CF938C01C62F642FFC0184810E9422030F\n:1001B0006C2F70E084E0759567958A95E1F7C8012A\n:1001C0000E948B006C2F6F70C801CF911F910F910F\n:1001D0000C948B0041E00E94CE0081E090E00895F5\n:1001E000EF92FF920F931F93CF93DF93EC0161E0A7\n:1001F0008C810E94E60261E08D810E94E6028E0100\n:100200000A5F1F4F7E018AE0E80EF11C61E0F801F1\n:1002100081918F010E94E6020E151F05B9F760E07B\n:100220008C810E94220360E08D810E94220362E3A0\n:1002300070E080E090E00E943B0263E0CE010E940B\n:100240008B0084E991E10E94770263E0CE010E9475\n:100250008B0084E991E10E94770263E0CE010E9465\n:100260008B0086E990E00E94770262E0CE010E9456\n:100270008B0040E068E2CE010E94CE0040E06CE0DE\n:10028000CE010E94CE0040E061E0CE010E94CE008F\n:1002900062E070E080E090E00E943B0240E066E0B7\n:1002A000CE01DF91CF911F910F91FF90EF900C94B1\n:1002B000CE0042E060E18AE191E00E94F00060E05F\n:1002C00071E08AE191E00C94BA010895EAE1F1E06D\n:1002D0001382128282E191E0918380838CE0848397\n:1002E0008BE0858385E0868384E0878383E0808755\n:1002F00082E081870895CF92DF92EF92FF920F9371\n:100300001F93CF93DF936C017A018B01C0E0D0E0A3\n:10031000CE15DF0581F0D8016D918D01D601ED91EB\n:10032000FC910190F081E02DC6010995892B11F017\n:100330002196EECF7E01C701DF91CF911F910F91E2\n:10034000FF90EF90DF90CF9008956115710579F0DF\n:10035000FB0101900020E9F73197AF01461B570BD5\n:10036000DC01ED91FC910280F381E02D099480E0A5\n:1003700090E008950C94A50108950E9482020E94C5\n:10038000BC010E945901C0E0D0E00E9465012097A5\n:10039000E1F30E940000F9CF1F920F920FB60F9267\n:1003A00011242F933F938F939F93AF93BF9380918B\n:1003B000250190912601A0912701B091280130914B\n:1003C000240123E0230F2D3720F40196A11DB11D38\n:1003D00005C026E8230F0296A11DB11D209324011C\n:1003E0008093250190932601A0932701B0932801C3\n:1003F0008091290190912A01A0912B01B0912C01AB\n:100400000196A11DB11D8093290190932A01A0930B\n:100410002B01B0932C01BF91AF919F918F913F9190\n:100420002F910F900FBE0F901F9018953FB7F89423\n:100430008091290190912A01A0912B01B0912C016A\n:1004400026B5A89B05C02F3F19F00196A11DB11D2F\n:100450003FBFBA2FA92F982F8827820F911DA11D6A\n:10046000B11DBC01CD0142E0660F771F881F991FA7\n:100470004A95D1F708958F929F92AF92BF92CF92F3\n:10048000DF92EF92FF926B017C010E9416024B01FA\n:100490005C01C114D104E104F10401F10E94510393\n:1004A0000E941602DC01CB0188199909AA09BB092F\n:1004B000883E9340A105B10560F321E0C21AD1083E\n:1004C000E108F10888EE880E83E0981EA11CB11C9B\n:1004D000C114D104E104F10419F7DBCFFF90EF90D0\n:1004E000DF90CF90BF90AF909F908F900895823013\n:1004F000910538F0880F991F880F991F059701976C\n:10050000F1F70895789484B5826084BD84B58160E4\n:1005100084BD85B5826085BD85B5816085BDEEE60B\n:10052000F0E0808181608083E1E8F0E010828081EA\n:1005300082608083808181608083E0E8F0E0808158\n:1005400081608083E1EBF0E0808184608083E0EB78\n:10055000F0E0808181608083EAE7F0E08081846060\n:1005600080838081826080838081816080838081BC\n:10057000806880831092C1000895833081F028F450\n:10058000813099F08230A1F008958730A9F0883049\n:10059000B9F08430D1F4809180008F7D03C08091C8\n:1005A00080008F7780938000089584B58F7702C094\n:1005B00084B58F7D84BD08958091B0008F7703C08E\n:1005C0008091B0008F7D8093B0000895CF93DF932A\n:1005D00090E0FC01E458FF4F2491FC01E057FF4FED\n:1005E0008491882361F190E0880F991FFC01E25506\n:1005F000FF4FC591D491FC01EC55FF4FA591B491EB\n:10060000611109C09FB7F89488812095822388835F\n:10061000EC912E230BC0623061F49FB7F89488816F\n:10062000322F309583238883EC912E2B2C939FBF00\n:1006300006C08FB7F894E8812E2B28838FBFDF91F7\n:10064000CF9108951F93CF93DF93282F30E0F901C6\n:10065000E859FF4F8491F901E458FF4FD491F90113\n:10066000E057FF4FC491CC23C1F0162F81110E9497\n:10067000BD02EC2FF0E0EE0FFF1FEC55FF4FA591F0\n:10068000B4919FB7F894111104C08C91D095D823E0\n:1006900002C0EC91DE2BDC939FBFDF91CF911F91C5\n:1006A00008950895EE0FFF1F0590F491E02D099431\n:0406B000F894FFCFEC\n:1006B40052756E74696D652072656164790000001D\n:0A06C4000000EA007B0187008A00B5\n:00000001FF\n"
++}
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/functional-buzzer.json
+@@ -0,0 +1,69 @@
++{
++  "project": {
++    "format": "velxio-project",
++    "version": 1,
++    "name": "Buzzer runtime test",
++    "boards": [
++      {
++        "id": "U1",
++        "boardKind": "arduino-uno",
++        "x": 0,
++        "y": 0,
++        "activeFileGroupId": "group-U1"
++      }
++    ],
++    "components": [
++      {
++        "id": "BZ1",
++        "metadataId": "buzzer",
++        "x": 250,
++        "y": 0,
++        "properties": {}
++      }
++    ],
++    "wires": [
++      {
++        "id": "W1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "8",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BZ1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": []
++      },
++      {
++        "id": "W2",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "BZ1",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": []
++      }
++    ],
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "sketch.ino",
++          "content": "#include <Arduino.h>\nvoid setup(){tone(8,1000);}\nvoid loop(){}\n"
++        }
++      ]
++    },
++    "activeBoardId": "U1"
++  },
++  "hex": ":100000000C945D000C947A000C947A000C947A00A5\n:100010000C947A000C947A000C947A000C943C03B3\n:100020000C947A000C947A000C947A000C947A0068\n:100030000C947A000C947A000C947A000C947A0058\n:100040000C94A8030C947A000C947A000C947A0017\n:100050000C947A000C947A000C947A000C947A0038\n:100060000C947A000C947A0002000000080002014F\n:10007000000003040700000000000000000102046B\n:10008000081020408001020408102001020408101A\n:100090002004040404040404040202020202020311\n:1000A000030303030300000000250028002B0000C9\n:1000B000000000240027002A000011241FBECFEFFB\n:1000C000D8E0DEBFCDBF11E0A0E0B1E0ECE3FAE0A4\n:1000D00002C005900D92A230B107D9F721E0A2E04D\n:1000E000B1E001C01D92A032B207E1F70E9499036E\n:1000F0000C941C050C94000020E030E0A90168EE8F\n:1001000073E088E00C94850008954F925F926F929F\n:100110007F928F929F92AF92BF92CF92DF92EF9297\n:10012000FF920F931F93CF93DF9300D000D01F92C5\n:10013000CDB7DEB78B0129013A01909100018917F3\n:1001400021F09F3F09F04DC205C0E8E6F0E02491A0\n:100150002D8384C080930001E8E6F0E094919D83B4\n:100160009F3F09F43EC2913009F44DC058F19230DE\n:1001700009F074C01092B0001092B1009091B000DC\n:1001800092609093B0009091B10091609093B10013\n:10019000282F30E0F901EF56FF4FE491F0E0EE0F29\n:1001A000FF1FEB55FF4F459154915093040140932D\n:1001B0000301F901E358FF4FE491E093020192E05B\n:1001C0009D830BC214BC15BC94B5926094BD95B5CB\n:1001D000916095BD282F30E0F901EF56FF4FE49173\n:1001E000F0E0EE0FFF1FEB55FF4F459154915093F8\n:1001F000120140931101F901E358FF4FE491E0939C\n:1002000010011D82EAC1109280001092810090912D\n:10021000810098609093810090918100916090930B\n:100220008100282F30E0F901EF56FF4FE491F0E014\n:10023000EE0FFF1FEB55FF4F4591549150930B016B\n:1002400040930A01F901E358FF4FE491E09309015B\n:1002500061E00E94560421E02D8389C02D8127FD95\n:10026000C0C161E00E9456048D818D7F09F07FC07E\n:100270004801A12CB12C60E072E18AE790E0A50171\n:1002800094010E94E30429833A834B835C836901D0\n:100290007A0181E0C81AD108E108F1089FEFC91678\n:1002A000D104E104F10409F008F44EC060E472E402\n:1002B0008FE090E0A50194010E94E30469017A01B6\n:1002C00081E0C81AD108E108F1089D81923009F552\n:1002D0002FEFC216D104E104F10409F008F444C17F\n:1002E00060E970ED83E090E0A50194010E94E304D1\n:1002F00069017A0181E0C81AD108E108F1089FEF8D\n:10030000C916D104E104F10411F008F0BAC083E089\n:1003100027C02FEFC216D104E104F104B9F0B0F008\n:1003200068E478EE81E090E0A50194010E94E30486\n:1003300069017A0181E0C81AD108E108F1089D81BC\n:10034000992309F413C1DCC081E001C082E09D81E2\n:10035000911106C095B5987F892B85BD44C085E075\n:100360009091B100987F892B8093B1003CC04801E7\n:10037000A12CB12C60E072E18AE790E0A501940124\n:100380000E94E30469017A0181E0C81AD108E108FA\n:10039000F108C114D10491E0E906F10488F068E4A1\n:1003A00078EE81E090E0A50194010E94E3046901E8\n:1003B0007A0181E0C81AD108E108F10883E001C0A0\n:1003C00081E09D81913079F490918100987F892B13\n:1003D00080938100411451046104710449F42FEFAA\n:1003E0003FEFA9012CC0411451046104710471F064\n:1003F000D801AA0FBB1FA30192010E94020528EE9B\n:1004000033E040E050E00E94C10403C02FEF3FEF13\n:10041000A9018D81813099F0823019F18111E1C0FB\n:10042000C7BC2093130130931401409315015093DE\n:10043000160180916E00826080936E00D2C0D092CF\n:100440008900C092880020930C0130930D014093E5\n:100450000E0150930F0180916F00826080936F00B6\n:10046000C0C0C092B30020930501309306014093B1\n:1004700007015093080180917000826080937000A2\n:10048000B0C068E478EE81E090E0A50194010E949C\n:10049000E30469017A0191E0C91AD108E108F10881\n:1004A0002FEFC216D104E104F10441F138F164E206\n:1004B00074EF80E090E0A50194010E94E3046901DB\n:1004C0007A0181E0C81AD108E108F1089FEFC91646\n:1004D000D104E104F10409F008F441CF62E17AE7C4\n:1004E00080E090E0A50194010E94E30469017A0193\n:1004F00081E0C81AD108E108F10819C084E030CFC2\n:100500002FEFC216D104E104F10409F008F463C02E\n:1005100062E17AE780E090E0A50194010E94E304A3\n:1005200069017A0191E0C91AD108E108F1088FEF59\n:10053000C816D104E104F104A9F0A0F089819A81E0\n:10054000AB81BC812AE0B595A795979587952A95AB\n:10055000D1F76C017D0121E0C21AD108E108F10850\n:1005600087E0FECE86E0FCCE82E0FACE8FEFC816A2\n:10057000D104E104F10469F160F162E17AE780E01D\n:1005800090E0A50194010E94E30469017A0191E0E1\n:10059000C91AD108E108F1082FEFC216D104E1040D\n:1005A000F104A9F0A0F089819A81AB81BC813AE085\n:1005B000B595A795979587953A95D1F76C017D01EB\n:1005C00021E0C21AD108E108F10885E0C3CE84E039\n:1005D000C1CE83E0BFCE84E0BACE61E00E94560473\n:1005E00047CE0F900F900F900F900F90DF91CF910B\n:1005F0001F910F91FF90EF90DF90CF90BF90AF9041\n:100600009F908F907F906F905F904F900895813072\n:1006100039F018F0823051F0089510926E0008956C\n:1006200080916F008D7F80936F000895809170009E\n:100630008D7F8093700081E08093B0008091B10045\n:10064000887F84608093B1001092B3000895CF93A7\n:10065000C82F80910001C81307C0E8E6F0E084913C\n:100660009FEF9093000101C08FEF0E94070360E0AD\n:100670008C2FCF910C9492041F920F920FB60F9271\n:1006800011242F933F934F935F936F937F938F9397\n:100690009F93AF93BF93EF93FF9380910501909148\n:1006A0000601A0910701B0910801892B8A2B8B2BA1\n:1006B00051F190910201E0910301F09104018081D8\n:1006C000892780838091050190910601A0910701FF\n:1006D000B0910801181619061A061B06C4F4809179\n:1006E000050190910601A0910701B09108010197C1\n:1006F000A109B1098093050190930601A093070118\n:10070000B093080104C0809100010E942703FF916B\n:10071000EF91BF91AF919F918F917F916F915F9179\n:100720004F913F912F910F900FBE0F901F901895F2\n:1007300008950E94F2030E9498030E947C00C0E08A\n:10074000D0E00E9484002097E1F30E940000F9CFDE\n:100750001F920F920FB60F9211242F933F938F93F6\n:100760009F93AF93BF938091180190911901A0912D\n:100770001A01B0911B013091170123E0230F2D378F\n:1007800020F40196A11DB11D05C026E8230F029695\n:10079000A11DB11D20931701809318019093190199\n:1007A000A0931A01B0931B0180911C0190911D012F\n:1007B000A0911E01B0911F010196A11DB11D809352\n:1007C0001C0190931D01A0931E01B0931F01BF91C6\n:1007D000AF919F918F913F912F910F900FBE0F90EE\n:1007E0001F901895789484B5826084BD84B581602B\n:1007F00084BD85B5826085BD85B5816085BDEEE629\n:10080000F0E0808181608083E1E8F0E01082808107\n:1008100082608083808181608083E0E8F0E0808175\n:1008200081608083E1EBF0E0808184608083E0EB95\n:10083000F0E0808181608083EAE7F0E0808184607D\n:1008400080838081826080838081816080838081D9\n:10085000806880831092C1000895833081F028F46D\n:10086000813099F08230A1F008958730A9F0883066\n:10087000B9F08430D1F4809180008F7D03C08091E5\n:1008800080008F7780938000089584B58F7702C0B1\n:1008900084B58F7D84BD08958091B0008F7703C0AB\n:1008A0008091B0008F7D8093B0000895CF93DF9347\n:1008B00090E0FC01E358FF4F2491FC01EF56FF4FFD\n:1008C0008491882361F190E0880F991FFC01E15524\n:1008D000FF4FC591D491FC01EB55FF4FA591B49109\n:1008E000611109C09FB7F89488812095822388837D\n:1008F000EC912E230BC0623061F49FB7F89488818D\n:10090000322F309583238883EC912E2B2C939FBF1D\n:1009100006C08FB7F894E8812E2B28838FBFDF9114\n:10092000CF9108951F93CF93DF93282F30E0F901E3\n:10093000E759FF4F8491F901E358FF4FD491F90132\n:10094000EF56FF4FC491CC23C1F0162F81110E94A6\n:100950002D04EC2FF0E0EE0FFF1FEB55FF4FA5919C\n:10096000B4919FB7F894111104C08C91D095D823FD\n:1009700002C0EC91DE2BDC939FBFDF91CF911F91E2\n:100980000895A1E21A2EAA1BBB1BFD010DC0AA1FD0\n:10099000BB1FEE1FFF1FA217B307E407F50720F0E8\n:1009A000A21BB30BE40BF50B661F771F881F991F63\n:1009B0001A9469F760957095809590959B01AC01AC\n:1009C000BD01CF010895052E97FB1EF400940E94EF\n:1009D000FA0457FD07D00E94C10407FC03D04EF46F\n:1009E0000C94FA0450954095309521953F4F4F4F08\n:1009F0005F4F089590958095709561957F4F8F4FCB\n:100A00009F4F08950E940D05A59F900DB49F900DD6\n:100A1000A49F800D911D11240895A29FB001B39F42\n:100A2000C001A39F700D811D1124911DB29F700DF7\n:0C0A3000811D1124911D0895F894FFCF42\n:020A3C00FF00B9\n:00000001FF\n"
++}

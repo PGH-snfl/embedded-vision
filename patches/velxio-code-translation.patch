@@ -1,0 +1,207 @@
+diff --git a/frontend/src/__tests__/embedded-code-translation.test.ts b/frontend/src/__tests__/embedded-code-translation.test.ts
+new file mode 100644
+index 0000000..e4ca410
+--- /dev/null
++++ b/frontend/src/__tests__/embedded-code-translation.test.ts
+@@ -0,0 +1,37 @@
++// @vitest-environment jsdom
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import {afterEach,describe,expect,it,vi} from 'vitest';
++import {EmbeddedCodeTranslation} from '../components/EmbeddedCodeTranslation';
++import {setMotionSource} from '../components/embeddedMotionBridge';
++
++(globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
++const channel='a'.repeat(48),origin='http://127.0.0.1:8897';
++const parent={postMessage:vi.fn()}, originalParent=Object.getOwnPropertyDescriptor(window,'parent');
++const originalReferrer=Object.getOwnPropertyDescriptor(document,'referrer');
++const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
++history.replaceState(null,'',`/?embedded=1&motion=1&channel=${channel}`);
++Object.defineProperty(window,'parent',{configurable:true,value:parent});
++Object.defineProperty(document,'referrer',{configurable:true,value:origin+'/'});
++setMotionSource({analysis_origin:origin});
++afterEach(()=>{act(()=>root.unmount());host.remove();if(originalParent)Object.defineProperty(window,'parent',originalParent);if(originalReferrer)Object.defineProperty(document,'referrer',originalReferrer);setMotionSource(undefined);});
++
++describe('code translation UI',()=>{
++ it('rejects stale results after source edits and keeps translated code separate',async()=>{
++  await act(async()=>root.render(createElement(EmbeddedCodeTranslation,{source:'original Python'})));
++  const button=[...host.querySelectorAll('button')].find(b=>b.textContent==='코드 번역')!;
++  act(()=>button.click());
++  const request=parent.postMessage.mock.calls[0][0];
++  expect(request.source).toBe('original Python');
++  await act(async()=>root.render(createElement(EmbeddedCodeTranslation,{source:'edited Python'})));
++  const result={type:'ev:translate-result',channel,requestId:request.requestId,result:{filename:'test.c',code:'int main(){}',notice:'확인 필요',details:[]}};
++  act(()=>window.dispatchEvent(new MessageEvent('message',{origin,source:parent as unknown as Window,data:result})));
++  expect(host.querySelector('textarea')).toBeNull();
++  expect(host.textContent).toContain('다시 번역');
++  act(()=>button.click());
++  const second=parent.postMessage.mock.calls[1][0];
++  expect(second.source).toBe('edited Python');
++  act(()=>window.dispatchEvent(new MessageEvent('message',{origin,source:parent as unknown as Window,data:{...result,requestId:second.requestId}})));
++  expect(host.querySelector('textarea')?.value).toBe('int main(){}');
++ });
++});
+diff --git a/frontend/src/__tests__/embedded-translation-bridge.test.ts b/frontend/src/__tests__/embedded-translation-bridge.test.ts
+new file mode 100644
+index 0000000..76a845e
+--- /dev/null
++++ b/frontend/src/__tests__/embedded-translation-bridge.test.ts
+@@ -0,0 +1,30 @@
++import {describe,it,expect} from 'vitest';
++import {acceptedTranslationResult,makeTranslationRequest,translationContext} from '../components/embeddedTranslationBridge';
++
++const channel='a'.repeat(48),id='b'.repeat(48),origin='http://localhost:8898';
++const query=`?embedded=1&motion=1&channel=${channel}`;
++const source={analysis_origin:origin},ctx={origin,channel};
++const result={code:'int main(){}',filename:'robot.c',notice:'미검증',details:['하드웨어 확인']};
++const message={type:'ev:translate-result',channel,requestId:id,result};
++describe('embedded translation bridge',()=>{
++ it('requires the exact parent, referrer and a strong channel',()=>{
++  expect(translationContext(query,origin+'/',source,true)).toEqual(ctx);
++  expect(translationContext(query,'https://other.example/',source,true)).toBeUndefined();
++  expect(translationContext('?embedded=1&motion=1&channel=bad',origin,source,true)).toBeUndefined();
++  expect(translationContext(query,origin,source,false)).toBeUndefined();
++ });
++ it('sends the actual bounded source with a specific target',()=>{
++  expect(makeTranslationRequest(ctx,id,'my code','raspberry_pi_c')).toEqual({type:'ev:translate-request',channel,requestId:id,source:'my code',target:'raspberry_pi_c'});
++  expect(()=>makeTranslationRequest(ctx,id,'x'.repeat(50001),'arduino_cpp')).toThrow();
++  expect(()=>makeTranslationRequest(ctx,'bad','x','arduino_cpp')).toThrow();
++ });
++ it('ignores other origins, frames, requests and channels',()=>{
++  const parent={};
++  expect(acceptedTranslationResult({origin,source:parent,data:message},parent,ctx,id)).toEqual({result});
++  expect(acceptedTranslationResult({origin:'https://other.example',source:parent,data:message},parent,ctx,id)).toBeUndefined();
++  expect(acceptedTranslationResult({origin,source:{},data:message},parent,ctx,id)).toBeUndefined();
++  expect(acceptedTranslationResult({origin,source:parent,data:{...message,requestId:'c'.repeat(48)}},parent,ctx,id)).toBeUndefined();
++  expect(acceptedTranslationResult({origin,source:parent,data:{...message,channel:'c'.repeat(48)}},parent,ctx,id)).toBeUndefined();
++  expect(acceptedTranslationResult({origin,source:parent,data:{...message,result:{code:'x'}}},parent,ctx,id)?.error).toBeTruthy();
++ });
++});
+diff --git a/frontend/src/components/EmbeddedCodeTranslation.tsx b/frontend/src/components/EmbeddedCodeTranslation.tsx
+new file mode 100644
+index 0000000..1ad7781
+--- /dev/null
++++ b/frontend/src/components/EmbeddedCodeTranslation.tsx
+@@ -0,0 +1,57 @@
++import {useEffect,useRef,useState} from 'react';
++import {getMotionSource} from './embeddedMotionBridge';
++import {acceptedTranslationResult,makeTranslationRequest,translationContext,type TranslationResult,type TranslationTarget} from './embeddedTranslationBridge';
++
++type Pending={id:string;source:string;target:TranslationTarget;timer:ReturnType<typeof setTimeout>};
++export function EmbeddedCodeTranslation({source}:{source:string|undefined}){
++ const [target,setTarget]=useState<TranslationTarget>('raspberry_pi_c');
++ const [result,setResult]=useState<{value:TranslationResult;source:string;target:TranslationTarget}|null>(null);
++ const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
++ const pending=useRef<Pending|null>(null),latestSource=useRef(source),latestTarget=useRef(target);
++ latestSource.current=source;latestTarget.current=target;
++ useEffect(()=>{
++  const receive=(event:MessageEvent)=>{
++   const job=pending.current,ctx=translationContext(location.search,document.referrer,getMotionSource(),window.parent!==window);
++   if(!job||!ctx)return;
++   const response=acceptedTranslationResult(event,window.parent,ctx,job.id);
++   if(!response)return;
++   clearTimeout(job.timer);pending.current=null;setBusy(false);
++   if(job.source!==latestSource.current||job.target!==latestTarget.current){setMessage('원본 코드 또는 대상이 바뀌어 결과를 표시하지 않았습니다. 다시 번역하세요.');return;}
++   if(response.error){setMessage(response.error);return;}
++   if(response.result){setResult({value:response.result,source:job.source,target:job.target});setMessage('번역 결과를 확인하세요.');}
++  };
++  window.addEventListener('message',receive);
++  return()=>{window.removeEventListener('message',receive);if(pending.current)clearTimeout(pending.current.timer);pending.current=null;};
++ },[]);
++ useEffect(()=>{
++  if(pending.current&&(pending.current.source!==source||pending.current.target!==target)){
++   clearTimeout(pending.current.timer);pending.current=null;setBusy(false);setMessage('원본 코드 또는 대상이 바뀌었습니다. 다시 번역하세요.');
++  }
++  setResult(old=>old&&(old.source!==source||old.target!==target)?null:old);
++ },[source,target]);
++ const translate=()=>{
++  try{
++   if(pending.current)return;
++   const ctx=translationContext(location.search,document.referrer,getMotionSource(),window.parent!==window);
++   if(!ctx)throw new Error('사진 분석 화면과의 연결을 확인하세요.');
++   const bytes=new Uint8Array(24);crypto.getRandomValues(bytes);
++   const id=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
++   const text=source||'',message=makeTranslationRequest(ctx,id,text,target);
++   setResult(null);setBusy(true);setMessage('현재 코드를 분석하고 있습니다…');
++   const timer=setTimeout(()=>{if(pending.current?.id===id){pending.current=null;setBusy(false);setMessage('번역 요청 시간이 초과되었습니다. 다시 시도하세요.');}},30000);
++   pending.current={id,source:text,target,timer};
++   window.parent.postMessage(message,ctx.origin);
++  }catch(e){if(pending.current)clearTimeout(pending.current.timer);pending.current=null;setBusy(false);setMessage(e instanceof Error?e.message:'번역을 요청할 수 없습니다.');}
++ };
++ const copy=async()=>{
++  if(!result||result.source!==latestSource.current||result.target!==latestTarget.current)return;
++  try{await navigator.clipboard.writeText(result.value.code);setMessage('번역 코드를 복사했습니다.');}
++  catch{setMessage('자동 복사를 사용할 수 없습니다. 결과를 선택하고 Ctrl+C를 누르세요.');}
++ };
++ return <details className="ev-code-translation"><summary>다른 보드·언어로 코드 번역</summary>
++  <p>현재 2륜 로봇 예제에서 주석·서식과 명령별 모터 출력값 변경을 지원합니다. 다른 동작 변경은 자동 번역하지 않습니다. 원본 코드는 바뀌지 않습니다.</p>
++  <div className="ev-robot-code-row"><label>대상 <select value={target} onChange={e=>setTarget(e.target.value as TranslationTarget)}><option value="raspberry_pi_c">Raspberry Pi · C</option><option value="arduino_cpp">Arduino · C++</option></select></label><button type="button" onClick={translate} disabled={busy||!source}>{busy?'번역 중…':'코드 번역'}</button></div>
++  {result&&result.source===source&&result.target===target&&<div><p><strong>{result.value.filename}</strong> · {result.value.notice}</p>{target==='arduino_cpp'&&<p>Arduino Uno와 별도의 Motor Shield V2, 새로운 전원·배선이 필요합니다.</p>}<button type="button" onClick={()=>void copy()}>번역 코드 복사</button><textarea aria-label="번역된 코드" readOnly value={result.value.code}/><details><summary>부품·배선과 실행 방법 자세히</summary>{result.value.details.map((item,i)=><p key={i}>{item}</p>)}</details></div>}
++  <span role="status">{message}</span>
++ </details>;
++}
+diff --git a/frontend/src/components/EmbeddedRobotCode.tsx b/frontend/src/components/EmbeddedRobotCode.tsx
+index 86f611d..ab05d50 100644
+--- a/frontend/src/components/EmbeddedRobotCode.tsx
++++ b/frontend/src/components/EmbeddedRobotCode.tsx
+@@ -2,6 +2,7 @@ import {useState} from 'react';
+ import {useEditorStore} from '../store/useEditorStore';
+ import {getMotionSource} from './embeddedMotionBridge';
+ import {findRobotCode} from './embeddedRobotCode';
++import {EmbeddedCodeTranslation} from './EmbeddedCodeTranslation';
+ 
+ /** The Python is a file in the existing editor, not executed by the 3D model. */
+ export function EmbeddedRobotCode(){
+@@ -24,6 +25,6 @@ export function EmbeddedRobotCode(){
+   <p>기본 배선 기준입니다. 배선을 바꿨다면 코드와 연결을 대조하세요. 3D 운동은 이 코드를 실행하지 않습니다.</p>
+   <details><summary>복사·실행 방법</summary><p>Raspberry Pi에서 I²C를 켜고 터미널에서 아래 설치 명령을 실행하세요. 코드를 복사해 <code>pi_rover.py</code> 파일에 붙여넣은 뒤 실행합니다.</p>
+    <p>{info?.dependencies}</p><pre>{info?.install}</pre><pre>{info?.run}</pre><p>{info?.commands}</p>
+-  </details><span role="status">{status}</span>
++  </details><EmbeddedCodeTranslation source={found?.file.content}/><span role="status">{status}</span>
+  </div>;
+ }
+diff --git a/frontend/src/components/EmbeddedWorkbench.css b/frontend/src/components/EmbeddedWorkbench.css
+index 76a2923..a29ba89 100644
+--- a/frontend/src/components/EmbeddedWorkbench.css
++++ b/frontend/src/components/EmbeddedWorkbench.css
+@@ -54,6 +54,7 @@
+ .ev-robot-code-help{flex-shrink:0;padding:8px 12px;background:#fff;border-bottom:1px solid #dce7df;font-size:11px;color:#405949}
+ .ev-robot-code-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.ev-robot-code-row strong{margin-right:auto}.ev-robot-code-row button{padding:5px 8px;border:1px solid #a8c8b4;border-radius:6px;background:#fff;color:#22533a;cursor:pointer}
+ .ev-robot-code-help p{margin:5px 0;line-height:1.4}.ev-robot-code-help details{max-height:130px;overflow:auto}.ev-robot-code-help summary{cursor:pointer}.ev-robot-code-help pre{margin:4px 0;padding:5px;background:#f4f8f5;white-space:pre-wrap;overflow-wrap:anywhere}.ev-robot-code-help [role=status]{display:block;color:#22533a}
++.ev-robot-code-help .ev-code-translation{max-height:320px;overflow:auto;margin-top:5px;border-top:1px solid #dce7df;padding-top:5px}.ev-code-translation select{max-width:100%;font:inherit;padding:4px}.ev-code-translation textarea{display:block;width:100%;height:130px;box-sizing:border-box;resize:vertical;margin-top:6px;font:11px monospace;white-space:pre}.ev-code-translation button{padding:5px 8px;border:1px solid #a8c8b4;border-radius:6px;background:#fff;color:#22533a;cursor:pointer}.ev-code-translation button:disabled{opacity:.6}
+ .embedded-workbench .canvas-content {background-color:#f8faf7;background-image:radial-gradient(#dce5dd .8px,transparent .8px);background-size:20px 20px;}
+ .embedded-workbench .zoom-controls--floating {background:#fff;border:1px solid #dde7df;box-shadow:0 2px 12px #193b1910;border-radius:9px;}
+ .embedded-workbench .zoom-btn,.embedded-workbench .zoom-level {color:#395c42;}
+diff --git a/frontend/src/components/embeddedTranslationBridge.ts b/frontend/src/components/embeddedTranslationBridge.ts
+new file mode 100644
+index 0000000..583d61c
+--- /dev/null
++++ b/frontend/src/components/embeddedTranslationBridge.ts
+@@ -0,0 +1,27 @@
++export type TranslationTarget = 'raspberry_pi_c' | 'arduino_cpp';
++export type TranslationResult = {code:string;filename:string;notice:string;details:string[]};
++
++/** Only the analysis page that embedded this editor receives code or replies. */
++export function translationContext(search:string,referrer:string,source:Record<string,unknown>|undefined,isFramed:boolean){
++ try {
++  const query=new URLSearchParams(search),channel=query.get('channel')||'',origin=source?.analysis_origin;
++  if(query.get('embedded')!=='1'||query.get('motion')!=='1'||!isFramed||!/^[a-f0-9]{32,128}$/i.test(channel)||typeof origin!=='string')return undefined;
++  const url=new URL(origin);
++  if(!['http:','https:'].includes(url.protocol)||url.origin!==origin||url.username||url.password||new URL(referrer).origin!==origin)return undefined;
++  return {channel,origin};
++ }catch{return undefined;}
++}
++
++export function acceptedTranslationResult(event:{origin:string;source:unknown;data:any},parent:unknown,ctx:{channel:string;origin:string},requestId:string):{result?:TranslationResult;error?:string}|undefined{
++ const data=event.data;
++ if(event.source!==parent||event.origin!==ctx.origin||data?.type!=='ev:translate-result'||data?.channel!==ctx.channel||data?.requestId!==requestId)return undefined;
++ if(typeof data.error==='string'&&data.error.length<=2000)return {error:data.error};
++ const r=data.result;
++ if(!r||typeof r.code!=='string'||r.code.length>100000||typeof r.filename!=='string'||r.filename.length>200||typeof r.notice!=='string'||r.notice.length>3000||!Array.isArray(r.details)||r.details.length>30||r.details.some((x:unknown)=>typeof x!=='string'||x.length>2000))return {error:'번역 결과 형식이 올바르지 않습니다.'};
++ return {result:{code:r.code,filename:r.filename,notice:r.notice,details:r.details}};
++}
++
++export function makeTranslationRequest(ctx:{channel:string},requestId:string,source:string,target:TranslationTarget){
++ if(!/^[a-f0-9]{32,128}$/i.test(requestId)||!source||source.length>50000||!['raspberry_pi_c','arduino_cpp'].includes(target))throw new Error('번역할 코드와 대상 보드를 확인하세요.');
++ return {type:'ev:translate-request',channel:ctx.channel,requestId,source,target};
++}

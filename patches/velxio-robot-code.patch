@@ -1,0 +1,178 @@
+diff --git a/frontend/src/__tests__/embedded-robot-code.test.ts b/frontend/src/__tests__/embedded-robot-code.test.ts
+new file mode 100644
+index 0000000..d0e9799
+--- /dev/null
++++ b/frontend/src/__tests__/embedded-robot-code.test.ts
+@@ -0,0 +1,32 @@
++// @vitest-environment jsdom
++import {describe,expect,it} from 'vitest';
++import {ensureRobotCode,findRobotCode} from '../components/embeddedRobotCode';
++import {useEditorStore} from '../store/useEditorStore';
++import {useSimulatorStore} from '../store/useSimulatorStore';
++import {buildVlxPayload} from '../utils/vlxFile';
++
++const source={robot_code:{source:'print("generated")'},robot_code_group:'group-chip-U1'};
++const chip={id:'U1',metadataId:'custom-chip',x:0,y:0,properties:{}};
++describe('editable robot Python',()=>{
++ it('migrates old drafts only when the code is missing',()=>{
++  const draft={components:[chip],fileGroups:{'group-chip-U1':[{name:'chip.c',content:'visual'}]}};
++  const updated=ensureRobotCode(draft,source);
++  expect(updated.fileGroups['group-chip-U1']).toEqual([{name:'chip.c',content:'visual'},{name:'pi_rover.py',content:'print("generated")'}]);
++  const changed={...updated,fileGroups:{'group-chip-U1':[{name:'pi_rover.py',content:'print("my edit")'}]}};
++  expect(ensureRobotCode(changed,source)).toBe(changed);
++  expect(findRobotCode(changed.fileGroups)?.file.content).toBe('print("my edit")');
++ });
++ it('preserves edited Python in actual VLX snapshots and restores it',()=>{
++  useSimulatorStore.setState({boards:[],components:[chip],wires:[],activeBoardId:null} as never);
++  const editor=useEditorStore.getState();
++  editor.replaceFileGroups({'group-chip-U1':[{name:'pi_rover.py',content:'print("generated")'},{name:'chip.c',content:'visual'}]});
++  editor.setActiveGroup('group-chip-U1');
++  const file=findRobotCode(useEditorStore.getState().fileGroups)!.file;
++  useEditorStore.getState().openFile(file.id);
++  useEditorStore.getState().setFileContent(file.id,'print("my edit")');
++  const snapshot=buildVlxPayload();
++  expect(snapshot.fileGroups['group-chip-U1'][0].content).toBe('print("my edit")');
++  useEditorStore.getState().replaceFileGroups(snapshot.fileGroups);
++  expect(findRobotCode(useEditorStore.getState().fileGroups)?.file.content).toBe('print("my edit")');
++ });
++});
+diff --git a/frontend/src/components/EmbeddedRobotCode.tsx b/frontend/src/components/EmbeddedRobotCode.tsx
+new file mode 100644
+index 0000000..86f611d
+--- /dev/null
++++ b/frontend/src/components/EmbeddedRobotCode.tsx
+@@ -0,0 +1,29 @@
++import {useState} from 'react';
++import {useEditorStore} from '../store/useEditorStore';
++import {getMotionSource} from './embeddedMotionBridge';
++import {findRobotCode} from './embeddedRobotCode';
++
++/** The Python is a file in the existing editor, not executed by the 3D model. */
++export function EmbeddedRobotCode(){
++ const groups=useEditorStore(s=>s.fileGroups);
++ const [status,setStatus]=useState('');
++ const found=findRobotCode(groups);
++ const source=getMotionSource() as {robot_code?:{dependencies?:string;install?:string;run?:string;commands?:string}}|undefined;
++ const info=source?.robot_code;
++ const showCode=()=>{
++  if(!found){setStatus('코드 파일을 찾지 못했습니다.');return;}
++  const store=useEditorStore.getState();store.setActiveGroup(found.group);store.openFile(found.file.id);
++ };
++ const copy=async()=>{
++  if(!found){setStatus('코드 파일을 찾지 못했습니다.');return;}
++  try{await navigator.clipboard.writeText(found.file.content);setStatus('현재 코드를 복사했습니다. Raspberry Pi 파일에 붙여넣으세요.');}
++  catch{showCode();setStatus('자동 복사를 사용할 수 없습니다. 코드 영역에서 Ctrl+A, Ctrl+C를 누르세요.');}
++ };
++ return <div className="ev-robot-code-help">
++  <div className="ev-robot-code-row"><strong>Raspberry Pi 코드 · pi_rover.py</strong><button type="button" onClick={showCode}>코드 열기</button><button type="button" onClick={()=>void copy()} disabled={!found}>코드 복사</button></div>
++  <p>기본 배선 기준입니다. 배선을 바꿨다면 코드와 연결을 대조하세요. 3D 운동은 이 코드를 실행하지 않습니다.</p>
++  <details><summary>복사·실행 방법</summary><p>Raspberry Pi에서 I²C를 켜고 터미널에서 아래 설치 명령을 실행하세요. 코드를 복사해 <code>pi_rover.py</code> 파일에 붙여넣은 뒤 실행합니다.</p>
++   <p>{info?.dependencies}</p><pre>{info?.install}</pre><pre>{info?.run}</pre><p>{info?.commands}</p>
++  </details><span role="status">{status}</span>
++ </div>;
++}
+diff --git a/frontend/src/components/EmbeddedVisionBridge.tsx b/frontend/src/components/EmbeddedVisionBridge.tsx
+index 46eb8f5..3f657f9 100644
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -7,6 +7,7 @@ import {hostedWorkspace,openCloudDraft} from './embeddedCloud';
+ import {initialSimulationBehavior,INITIAL_BEHAVIOR_NOTE} from './embeddedInitialBehavior';
+ import {analysisReturnUrl} from './embeddedAnalysisReturn';
+ import {acceptedMotionRevision,getMotionSource,matchingCircuitRevision,setMotionSource} from './embeddedMotionBridge';
++import {ensureRobotCode,findRobotCode} from './embeddedRobotCode';
+ 
+ export function EmbeddedVisionBridge({onReady}:{onReady?:(ready:boolean)=>void}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+@@ -49,8 +50,10 @@ export function EmbeddedVisionBridge({onReady}:{onReady?:(ready:boolean)=>void})
+     payload=cloud.current.payload;restored=true;setCloudStatus('서버 저장본 r'+cloud.current.revision()+' · 브라우저 임시 저장과 별도');}}
+    else if(cloud.current)setCloudStatus('아직 서버 저장본 없음 · 편집 후 작업공간에 저장하세요.');
+    if(cancelled)return;
++   if(motion)payload=ensureRobotCode(payload,source);
+    await importVlxFile(new File([JSON.stringify(payload)],'embedded.vlx',{type:'application/json'}));
+    if(cancelled)return;
++   if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+    setKey(storageKey);
+    if(motion)setMotionSource(source);
+    onReady?.(true);
+diff --git a/frontend/src/components/EmbeddedWorkbench.css b/frontend/src/components/EmbeddedWorkbench.css
+index d388abc..76a2923 100644
+--- a/frontend/src/components/EmbeddedWorkbench.css
++++ b/frontend/src/components/EmbeddedWorkbench.css
+@@ -51,6 +51,9 @@
+ .embedded-workbench .app-container {margin:0 24px 20px;border:1px solid #d7e2d9;border-radius:14px;overflow:hidden;background:#fff;min-height:200px;}
+ .ev-pane-heading {height:45px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 18px;background:#fff;border-bottom:1px solid #e4ece6;font-size:12px;}
+ .ev-pane-heading span {font-size:10px;color:#92a095;}
++.ev-robot-code-help{flex-shrink:0;padding:8px 12px;background:#fff;border-bottom:1px solid #dce7df;font-size:11px;color:#405949}
++.ev-robot-code-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.ev-robot-code-row strong{margin-right:auto}.ev-robot-code-row button{padding:5px 8px;border:1px solid #a8c8b4;border-radius:6px;background:#fff;color:#22533a;cursor:pointer}
++.ev-robot-code-help p{margin:5px 0;line-height:1.4}.ev-robot-code-help details{max-height:130px;overflow:auto}.ev-robot-code-help summary{cursor:pointer}.ev-robot-code-help pre{margin:4px 0;padding:5px;background:#f4f8f5;white-space:pre-wrap;overflow-wrap:anywhere}.ev-robot-code-help [role=status]{display:block;color:#22533a}
+ .embedded-workbench .canvas-content {background-color:#f8faf7;background-image:radial-gradient(#dce5dd .8px,transparent .8px);background-size:20px 20px;}
+ .embedded-workbench .zoom-controls--floating {background:#fff;border:1px solid #dde7df;box-shadow:0 2px 12px #193b1910;border-radius:9px;}
+ .embedded-workbench .zoom-btn,.embedded-workbench .zoom-level {color:#395c42;}
+diff --git a/frontend/src/components/embeddedRobotCode.ts b/frontend/src/components/embeddedRobotCode.ts
+new file mode 100644
+index 0000000..2f7cc38
+--- /dev/null
++++ b/frontend/src/components/embeddedRobotCode.ts
+@@ -0,0 +1,22 @@
++/** Keep the generated Python in a real chip file group, so VLX exports,
++ * browser drafts and cloud drafts retain edits just like other editor files. */
++export const ROBOT_CODE_NAME = 'pi_rover.py';
++type File = {name:string;content:string};
++type Project = {fileGroups?:Record<string,File[]>;components?:Array<{id:string;metadataId:string}>};
++type Source = {robot_code?:{source?:string};robot_code_group?:string|null};
++
++export function findRobotCode<T extends File>(groups:Record<string,T[]>) {
++ const ordered=Object.keys(groups).sort((a,b)=>Number(b==='group-chip-U1')-Number(a==='group-chip-U1'));
++ for(const group of ordered){const file=groups[group]?.find(f=>f.name===ROBOT_CODE_NAME);if(file)return {group,file};}
++ return undefined;
++}
++
++export function ensureRobotCode<T extends Project>(payload:T,source:Source):T {
++ const groups=payload.fileGroups||{};
++ if(findRobotCode(groups)||typeof source.robot_code?.source!=='string')return payload;
++ const chips=(payload.components||[]).filter(c=>c.metadataId==='custom-chip');
++ const preferred=source.robot_code_group;
++ const group=chips.find(c=>'group-chip-'+c.id===preferred)?preferred:chips.length?'group-chip-'+chips[0].id:null;
++ if(!group)return payload;
++ return {...payload,fileGroups:{...groups,[group]:[...(groups[group]||[]),{name:ROBOT_CODE_NAME,content:source.robot_code.source}]}};
++}
+diff --git a/frontend/src/pages/EditorPage.tsx b/frontend/src/pages/EditorPage.tsx
+index f669e4d..df58f6e 100644
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -1,6 +1,7 @@
+ import { sharedTool } from '../components/circuitiny/sharedTools';
+ import { useStore as useCircuitinyStore } from '../components/circuitiny/store';
+ import { EmbeddedVisionBridge } from '../components/EmbeddedVisionBridge';
++import { EmbeddedRobotCode } from '../components/EmbeddedRobotCode';
+ /**
+  * Editor Page — main editor + simulator with resizable panels
+  */
+@@ -79,6 +80,7 @@ const resizeHandleStyle: React.CSSProperties = {
+ export const EditorPage: React.FC = () => {
+   const { t } = useTranslation();
+   const embedded = new URLSearchParams(window.location.search).get('embedded') === '1';
++  const motion = embedded && new URLSearchParams(window.location.search).get('motion') === '1';
+   const [assembly3D,setAssembly3D]=useState(embedded);
+   const assemblyView = useCircuitinyStore(s => s.viewMode);
+   const cameraLocked = useCircuitinyStore(s => s.cameraLocked);
+@@ -87,8 +89,8 @@ export const EditorPage: React.FC = () => {
+   const [resultsOpen, setResultsOpen] = useState(false);
+   const [toolsOpen, setToolsOpen] = useState(false);
+   useEffect(() => {
+-    if (embedded) {useEditorStore.getState().setViewMode('circuit');useEditorStore.getState().setExplorerOpen(false);}
+-  }, [embedded]);
++    if (embedded) {useEditorStore.getState().setViewMode(motion?'both':'circuit');useEditorStore.getState().setExplorerOpen(false);}
++  }, [embedded,motion]);
+   useSEO({
+     title: 'Multi-Board Simulator Editor — Arduino, ESP32, RP2040, RISC-V | Velxio',
+     description:
+@@ -768,7 +770,7 @@ export const EditorPage: React.FC = () => {
+               </div>
+             )}
+ 
+-            {embedded&&<div className="ev-pane-heading"><strong>코드 편집</strong><span>수정 → 정지 → 다시 실행</span></div>}
++            {embedded&&(motion?<EmbeddedRobotCode/>:<div className="ev-pane-heading"><strong>코드 편집</strong><span>수정 → 정지 → 다시 실행</span></div>)}
+             {/* Editor area — Monaco for every board, QEMU-Linux included.
+                 Pi boards edit script.py here like any other board edits its
+                 sketch; their interactive terminal lives in the bottom serial

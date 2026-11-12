@@ -1,0 +1,360 @@
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -12,6 +12,7 @@
+ import {translatedSimulationNotice} from './translatedSimulationNotice';
+ import {withLegacyPhysicalModels} from './circuitiny/physicalModels';
+ import {withPhotoStructures} from './circuitiny/photoStructures';
++import {useStore as useCircuitinyStore} from './circuitiny/store';
+ import {withFunctionalEnvironment,previousWateringDraft} from './circuitiny/environmentObjects';
+ import {requestAssembly} from './circuitiny/assemblyClient';
+ import {assemblyRoutingCache} from './circuitiny/assemblyRoutingCache';
+@@ -43,7 +44,7 @@
+   (async()=>{
+    const original=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded),c=>c.charCodeAt(0))));
+    const source=original.embeddedVision;
+-   const isInspection=source?.recipe==='enclosure_hypothesis_view';setInspection(isInspection);
++   const isInspection=['enclosure_hypothesis_view','photo_appearance_view'].includes(source?.recipe);setInspection(isInspection);
+    loadOrigin=source?.analysis_origin||'';progress('저장된 회로를 확인하고 있습니다…');
+    const motion=new URLSearchParams(location.search).get('motion')==='1';
+    if(original.format!=='velxio-project'||!source?.source_graph_sha256)throw new Error('사진 분석에서 내보낸 회로 파일이 아닙니다.');
+@@ -82,6 +83,7 @@
+    await importVlxFile(new File([JSON.stringify(payload)],'embedded.vlx',{type:'application/json'}));
+    if(cancelled)return;
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
++   if(source.focus_photo_on_open)useCircuitinyStore.setState(s=>({photoFocus:true,viewMode:'iso',cameraLocked:false,fitRevision:s.fitRevision+1}));
+    setKey(storageKey);
+    setMotionSource(source);
+    onReady?.(true,restored,translatedSimulationNotice(source.recipe),isInspection);
+@@ -89,7 +91,7 @@
+    setBehavior(isInspection?'':initialSimulationBehavior(source));
+    setReturnUrl(analysisReturnUrl(hostedWorkspace(),source.analysis_origin));
+    setNotice(source.simulation_notice||'');
+-   progress(restored?'저장한 편집 내용을 복원했습니다.':isInspection?'외장과 내부 추정 구성을 준비했습니다.':'사진에서 확인한 부품으로 새로 구성한 회로를 가져왔습니다.','ready');
++   progress(restored?'저장한 편집 내용을 복원했습니다.':isInspection?'사진 기반 3D 구조를 준비했습니다.':'사진에서 확인한 부품으로 새로 구성한 회로를 가져왔습니다.','ready');
+    flush=()=>{if(resetting.current)return;try{
+      const data=buildVlxPayload({name:original.name});
+      localStorage.setItem(storageKey,JSON.stringify({...data,embeddedVision:source}));
+@@ -110,13 +112,13 @@
+  },[]);
+  return <header className="ev-topbar">
+   <div className="ev-project">
+-   <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">← 사진 분석</a><span>EMBEDDED VISION / {inspection?'INTERNAL HYPOTHESES':'SIMULATOR'}</span></div>
++   <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">← 사진 분석</a><span>EMBEDDED VISION / {inspection?'STRUCTURE':'SIMULATOR'}</span></div>
+    <h1>{title}</h1>{behavior&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
+   </div>
+   <div className="ev-project-actions">
+    {hostedWorkspace()&&<button className="ev-cloud-save" disabled={!key||!cloud.current||cloudSaving} onClick={async()=>{if(!cloud.current)return;setCloudSaving(true);try{const payload={...buildVlxPayload({name:'embedded-circuit'}),embeddedVision:getMotionSource()};const revision=await cloud.current.save(payload);setCloudStatus('서버에 저장됨 · r'+revision);}catch(e){setCloudStatus(String(e));}finally{setCloudSaving(false);}}}>{cloudSaving?'저장 중…':'작업공간에 저장'}</button>}
+    {cloudStatus&&<span className="ev-cloud-status" role="status">{cloudStatus}</span>}
+-   <span className="ev-badge">{inspection?'내부 구성 추정 · 실물 내부 미확인':'가상 회로 · 실물 미검증'}</span>
++   <span className="ev-badge">{inspection?'사진 기반 구조 · 형상 근사':'가상 회로 · 실물 미검증'}</span>
+    <button className="ev-download" disabled={!key} onClick={()=>triggerDownloadVlx({name:'embedded-circuit'})}>↓ 프로젝트 저장</button>
+    <details className="ev-info"><summary>설계 정보·저장 안내</summary><div>
+     <strong>사진 분석에서 만든 새 설계</strong><p>{notice||'원본 배선을 복원한 결과가 아닙니다. 실제 부품과 핀을 대조하세요.'}</p>
+--- a/frontend/src/components/translatedSimulationNotice.ts
++++ b/frontend/src/components/translatedSimulationNotice.ts
+@@ -1,5 +1,6 @@
+ /** Converted rover boards expose their wiring, but custom chips are drawings. */
+ export function translatedSimulationNotice(recipe: unknown): string | undefined {
++ if(recipe==='photo_appearance_view')return '사진의 외형을 근사한 편집용 3D 모형입니다. 실행 회로·코드가 없는 구조 보기에서는 전기 시뮬레이션을 시작하지 않습니다.';
+  if(recipe==='enclosure_hypothesis_view')return '내부 구성 추론을 확인하는 분해 모형입니다. 실제 내부 관측·전기 회로가 아니며 사용자가 최종 확인합니다.';
+  if(recipe==='translated_uno_motor_shield_rover')return '이 회로의 모터 실드·모터·전원은 시각 전용입니다. 모터 주행과 코드 실행을 시뮬레이션할 수 없습니다. 회로와 코드는 편집할 수 있습니다.';
+  if(recipe==='translated_pi_rover_c')return '이 회로의 Raspberry Pi·모터 HAT·모터는 시각 전용입니다. C 코드와 모터 주행은 시뮬레이션할 수 없습니다. 회로와 코드는 편집할 수 있습니다.';
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -86,6 +86,7 @@
+     wireMode = useStore((s) => s.wireMode);
+   const selectedObject = useStore(s => s.selected);
+   const enclosureView=useStore(s=>s.enclosureView);
++  const photoFocus=useStore(s=>s.photoFocus&&s.project.components.some(c=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure));
+   const concealed=(ref:string)=>{
+     const id=ref.split('.')[0],part=[...project.components,...(project.boards||[])].find(p=>p.instance===id||(id==='board'&&p.config?.isBoard));
+     return part?.config?.evDesignMount==='internal'&&project.components.some(c=>c.instance===part.config?.evDesignEnclosure);
+@@ -93,7 +94,7 @@
+   return (
+     <>
+       {project.nets
+-        .filter((n) => !n.hidden&&(enclosureView!=='assembled'||!n.endpoints.some(concealed)))
++        .filter((n) => !photoFocus&&!n.hidden&&(enclosureView!=='assembled'||!n.endpoints.some(concealed)))
+         .map((net) => {
+           const a = resolvePin(project, net.endpoints[0]),
+             b = resolvePin(project, net.endpoints[1]);
+--- a/frontend/src/components/circuitiny/store.ts
++++ b/frontend/src/components/circuitiny/store.ts
+@@ -3,6 +3,7 @@
+ import type { LedOutputSample } from '../../simulation/ledOutput';
+ import type { Project } from './project/schema';
+ export type ViewerState = {
++  photoFocus:boolean;
+   enclosureView:'assembled'|'inside'|'exploded';
+   interiorView:boolean;
+   assemblyRouting:{wireLengthMm:number;unresolved:Array<{id:string;reason?:string}>}|null;
+@@ -50,6 +51,7 @@
+   releaseButton: (p: string) => void;
+ };
+ export const useStore = create<ViewerState>((set) => ({
++  photoFocus:false,
+   enclosureView:'inside',
+   interiorView:true,
+   assemblyRouting:null,
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -125,6 +125,7 @@
+     hasScene = useStore((s) => !!(s.project.components.length || s.project.boards?.length)),
+     fitRevision = useStore((s) => s.fitRevision);
+   const enclosureView=useStore(s=>s.enclosureView);
++  const photoFocus=useStore(s=>s.photoFocus);
+   useEffect(() => {
+     const timer = setTimeout(() => {
+       const root = scene.getObjectByName('circuitiny-design');
+@@ -132,8 +133,13 @@
+       root.updateWorldMatrix(true, true);
+       const project = useStore.getState().project,
+         points: T.Vector3[] = [];
+-      for (const c of [...project.components, ...(project.boards || [])])
++      const photos=project.components.filter(c=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure);
++      for (const c of photoFocus&&photos.length?photos:[...project.components, ...(project.boards || [])])
+       {
++        if(photoFocus&&photos.length){
++          const body=root.getObjectByName('ev-body:'+c.instance);
++          if(body){const bounds=new T.Box3().setFromObject(body,true);if(!bounds.isEmpty()){points.push(bounds.min,bounds.max);continue;}}
++        }
+         definitions
+           .get(c.componentId)
+           ?.pins.forEach((p) =>
+@@ -158,7 +164,7 @@
+       if (camera instanceof T.OrthographicCamera) {
+         camera.up.set(0, 1, 0);
+         camera.position.copy(center).addScaledVector(
+-          (viewMode === 'front' ? new T.Vector3(0.05, 0.4, 1) : new T.Vector3(0.55, 0.9, 1)).normalize(),
++          (viewMode === 'front' ? new T.Vector3(0.05, 0.4, 1) : photoFocus ? new T.Vector3(1, .55, 1) : new T.Vector3(0.55, 0.9, 1)).normalize(),
+           distance,
+         );
+         if (viewMode === 'top') alignTopView(camera, center);
+@@ -167,7 +173,7 @@
+       } else {
+         camera.up.set(0, 1, 0);
+         camera.position.copy(center).addScaledVector(
+-          (viewMode === 'front' ? new T.Vector3(0.05, 0.4, 1) : new T.Vector3(0.55, 0.9, 1)).normalize(),
++          (viewMode === 'front' ? new T.Vector3(0.05, 0.4, 1) : photoFocus ? new T.Vector3(1, .55, 1) : new T.Vector3(0.55, 0.9, 1)).normalize(),
+           distance,
+         );
+       }
+@@ -178,6 +184,6 @@
+       }
+     }, 120);
+     return () => clearTimeout(timer);
+-  }, [sceneKey, hasScene, fitRevision, enclosureView, size.width, size.height, camera, scene, controls]);
++  }, [sceneKey, hasScene, fitRevision, enclosureView, photoFocus, size.width, size.height, camera, scene, controls]);
+   return null;
+ }
+--- a/frontend/src/components/circuitiny/MechanicalShape.tsx
++++ b/frontend/src/components/circuitiny/MechanicalShape.tsx
+@@ -1,5 +1,13 @@
+ import {mechanicalDetails,type MechanicalPrimitive} from './mechanicalDetails';
+-export function MechanicalShape({id,role,shape,color,ghost,selected}:{id:string;role:string;shape:string;color:string;ghost:boolean;selected:boolean}){
++import {useMemo,useEffect} from 'react';
++import {photoGeometryMesh,type PhotoGeometry} from './photoGeometry';
++import {disposeEnvironmentMesh} from './environmentMeshes';
++function PhotoShape({geometry,color,ghost,selected}:{geometry:PhotoGeometry;color:string;ghost:boolean;selected:boolean}){
++ const mesh=useMemo(()=>photoGeometryMesh(geometry,color,ghost,selected),[geometry,color,ghost,selected]);
++ useEffect(()=>()=>disposeEnvironmentMesh(mesh),[mesh]);return <primitive object={mesh}/>;
++}
++export function MechanicalShape({id,role,shape,color,ghost,selected,photoGeometry}:{id:string;role:string;shape:string;color:string;ghost:boolean;selected:boolean;photoGeometry?:PhotoGeometry}){
++ if(photoGeometry)return <PhotoShape geometry={photoGeometry} color={color} ghost={ghost} selected={selected}/>;
+  const pieces=mechanicalDetails(id,role)||[{shape,size:[1,1,1],position:[0,0,0]} as MechanicalPrimitive];
+  return <>{pieces.map((p,i)=><mesh key={i} position={p.position} rotation={p.rotation} scale={p.scale} castShadow={!ghost} receiveShadow raycast={ghost&&!selected?()=>{}:undefined}>
+   {p.shape==='sphere'?<sphereGeometry args={[.5,28,20]}/>:p.shape==='torus'?<torusGeometry args={[p.radius!,p.tube!,12,56]}/>:p.shape==='cylinder'?<cylinderGeometry args={[p.radius??.5,p.radius??.5,p.size?.[1]??1,p.segments??40]}/>:<boxGeometry args={p.size||[1,1,1]}/>}
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -381,7 +381,7 @@
+   isButton?: boolean;
+   simActive?: boolean;
+ }) {
+-  const interior=useStore(s=>s.interiorView&&s.project.components.some(c=>!!c.config?.evAssembly));
++  const interior=useStore(s=>!s.photoFocus&&s.interiorView&&s.project.components.some(c=>!!c.config?.evAssembly));
+   const enclosureView=useStore(s=>s.enclosureView);
+   if (config?.metadataId === STRUCTURE_ID) {
+     const p = structureParameters(config.structure as Record<string,unknown> | undefined), w=p.width/1000, h=p.height/1000, d=p.depth/1000;
+@@ -395,7 +395,7 @@
+     const role=(props?.evPhotoStructure as {role?:string}|undefined)?.role||(props?.evDesignedStructure as {role?:string}|undefined)?.role||'other';
+     const ghost=interior&&['housing','chassis','platform','frame'].includes(role||'');
+     return <group><group position={[0, (p.elevation+p.height/2)/1000, 0]} quaternion={orientation} scale={[w,h,d]}>
+-      {props?.evEnclosure?<EnclosureShell view={enclosureView} color={p.color}/>:<MechanicalShape id={String(config.nativeId||'')} role={role} shape={p.shape} color={p.color} ghost={ghost} selected={selected}/>}
++      {props?.evEnclosure?<EnclosureShell view={enclosureView} color={p.color}/>:<MechanicalShape id={String(config.nativeId||'')} role={role} shape={p.shape} color={p.color} ghost={ghost} selected={selected} photoGeometry={props?.evPhotoGeometry as import('./photoGeometry').PhotoGeometry|undefined}/>}
+     </group>{typeof props?.label==='string'&&selected&&<Html center position={[0,(p.elevation+p.height+8)/1000,0]} style={{pointerEvents:'none',whiteSpace:'nowrap',background:'#ffffffd9',borderRadius:3,padding:'2px 4px',fontSize:10,color:'#435b6e'}}>{props.label} · {props.evInternalHypothesis?'내부 구성 추정':props.evEnclosure?'외장 모형':props.evDesignedStructure?'설계 보완':'사진 추정'}</Html>}</group>;
+   }
+   if (config?.metadataId)
+@@ -631,6 +631,7 @@
+   const simulating = useStore((s) => s.simulating);
+   const simLog = useStore((s) => s.simLog);
+   const pixels = useStore((s) => s.simStrips[c.instance]);
++  const photoFocus=useStore(s=>s.photoFocus&&s.project.components.some(p=>!!(p.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure));
+   const enclosureView=useStore(s=>s.enclosureView);
+   const enclosed=useStore(s=>s.project.components.some(p=>p.instance===c.config?.evDesignEnclosure&&!!p.config?.structure));
+   const wireMode = useStore((s) => s.wireMode);
+@@ -788,7 +789,8 @@
+     </group>
+   );
+ 
+-  return enclosed&&enclosureView==='assembled'&&c.config?.evSelectedDesign&&c.config?.evDesignMount==='internal'?null:content;
++  if(enclosed&&enclosureView==='assembled'&&c.config?.evSelectedDesign&&c.config?.evDesignMount==='internal')return null;
++  return <group visible={!photoFocus||!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure}>{content}</group>;
+ }
+ 
+ /** Draw the hovered hole's own internal strip, not the whole connected net. */
+@@ -992,6 +994,7 @@
+ 
+   const simStates = { lit: new Set(externalLit), active: new Set<string>() };
+   const guidePins = guideConnections.flatMap(c => [c.from, c.to]);
++  useEffect(()=>{if(guidePins.length)useStore.setState({photoFocus:false});},[guideFocusRevision,guidePins.join('|')]);
+   const insertion = guideConnections[0]?.kind === 'insert';
+   const markers = insertion
+     ? guideConnections.map((c, i) => ({ref:c.to, label:`${guideConnectionNumber(i)} ${readableRef(c.from)} → ${readableRef(c.to)}`, color:guideConnectionColor(i)}))
+--- a/frontend/src/components/circuitiny/photoStructures.ts
++++ b/frontend/src/components/circuitiny/photoStructures.ts
+@@ -5,5 +5,7 @@
+  const additions=(original.components||[]).filter((p:any)=>p.metadataId==='ev-structure'&&p.properties?.evPhotoStructure);
+  const ids=new Set((project.components||[]).map((p:any)=>p.id));
+  return {...project,components:[...(project.components||[]),...additions.filter((p:any)=>!ids.has(p.id))],
+-  embeddedVision:{...project.embeddedVision,photo_structure_version:version}};
++  embeddedVision:{...project.embeddedVision,photo_structure_version:version,
++   photo_appearance_version:original.embeddedVision?.photo_appearance_version,
++   photo_structure:original.embeddedVision?.photo_structure,motion_structure:original.embeddedVision?.motion_structure}};
+ }
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -2,6 +2,7 @@
+ import Viewer3D from './Viewer3D';
+ import {SelectionCard} from './SelectionCard';
+ import {EnclosureControls,EnclosureDetails} from './EnclosureView';
++import {PhotoAppearanceControls} from './PhotoAppearanceControls';
+ import {EnvironmentPalette,EnvironmentActions,EnvironmentDetails} from './EnvironmentControls';
+ import {environmentKind} from './environmentObjects';
+ import {createPortal} from 'react-dom';
+@@ -227,6 +228,7 @@
+   const toolbar=(
+       <div className="ev-c3d-tools">
+         <strong>회로 편집</strong>
++        <PhotoAppearanceControls/>
+         <EnclosureControls/>
+         <EnvironmentPalette running={running}/>
+         {photoObjects.length>0&&<button onClick={()=>useStore.setState(s=>({viewMode:'iso',reverseViewRevision:s.reverseViewRevision+1}))}>반대쪽 보기</button>}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/photoGeometry.ts
+@@ -0,0 +1,43 @@
++import * as T from 'three';
++type V=[number,number,number];
++export type PhotoPiece={shape:'box'|'cylinder'|'sphere';position:V;size:V;rotation:V;color:string};
++export type PhotoGeometry={shape?:string;size?:V;outline?:number[][]|null;holes?:number[][][];details?:PhotoPiece[]};
++const vector=(a:unknown,f:V):V=>Array.isArray(a)&&a.length===3&&a.every(n=>typeof n==='number'&&Number.isFinite(n)&&Math.abs(n)<=7)?a as V:f;
++function profile(raw:unknown):T.Vector2[]|null{
++ if(!Array.isArray(raw)||raw.length<3||raw.length>24)return null;
++ if(raw.some(p=>!Array.isArray(p)||p.length!==2||p.some(n=>typeof n!=='number'||!Number.isFinite(n)||Math.abs(n)>.5)))return null;
++ return raw.map(p=>new T.Vector2(p[0],-p[1]));
++}
++/** Shared actual mesh factory; no role-based wheel, leg or robot replacement. */
++export function photoGeometryMesh(raw:PhotoGeometry,color:string,ghost=false,selected=false){
++ const group=new T.Group();group.name='photo-derived-geometry';
++ const material=(c:string)=>new T.MeshStandardMaterial({color:/^#[0-9a-f]{6}$/i.test(c)?c:color,
++  metalness:.12,roughness:.58,transparent:ghost,opacity:ghost?.18:1,depthWrite:!ghost,
++  emissive:selected?'#9bd1ff':'#000000',emissiveIntensity:selected?.3:0});
++ const points=profile(raw.outline);let geometry:T.BufferGeometry;
++ if(points){const shape=new T.Shape(points);for(const hole of (Array.isArray(raw.holes)?raw.holes:[]).slice(0,6)){const p=profile(hole);if(p)shape.holes.push(new T.Path(p));}
++  geometry=new T.ExtrudeGeometry(shape,{depth:1,bevelEnabled:false,curveSegments:8,steps:1});
++  geometry.translate(0,0,-.5);geometry.rotateX(-Math.PI/2);
++ }else geometry=raw.shape==='sphere'?new T.SphereGeometry(.5,24,16):raw.shape==='cylinder'?new T.CylinderGeometry(.5,.5,1,40):new T.BoxGeometry(1,1,1);
++ const base=new T.Mesh(geometry,material(color));base.name='photo-base';base.castShadow=!ghost;base.receiveShadow=true;group.add(base);
++ for(const [i,p] of (Array.isArray(raw.details)?raw.details:[]).slice(0,12).entries()){
++  if(!p||!['box','cylinder','sphere'].includes(p.shape))continue;
++  const g=p.shape==='sphere'?new T.SphereGeometry(.5,20,12):p.shape==='cylinder'?new T.CylinderGeometry(.5,.5,1,28):new T.BoxGeometry(1,1,1);
++  const mesh=new T.Mesh(g,material(p.color));mesh.name='photo-detail-'+i;
++  const dims=vector(raw.size,[1,1,1]).map(n=>Math.max(.002,n)) as V,
++   position=vector(p.position,[0,0,0]),size=vector(p.size,[1,1,1]),
++   rotation=new T.Quaternion().setFromEuler(new T.Euler(...vector(p.rotation,[0,0,0])));
++  // Compensate the parent's nonuniform scale before rotating a detail. A
++  // thin sensor plate must not squash its round transducers into ellipses.
++  let physical=size.map((n,j)=>n*dims[j]) as V;
++  if(p.shape==='cylinder'){
++   const basis=[new T.Vector3(1,0,0),new T.Vector3(0,1,0),new T.Vector3(0,0,1)].map(v=>v.applyQuaternion(rotation).multiply(new T.Vector3(...dims)).length());
++   const radiusScale=Math.min(basis[0],basis[2]);physical=[size[0]*radiusScale,size[1]*basis[1],size[2]*radiusScale];
++  }else if(p.shape==='sphere')physical=size.map(n=>n*Math.min(...dims)) as V;
++  mesh.matrixAutoUpdate=false;
++  mesh.matrix.makeScale(...dims.map(n=>1/n) as V).multiply(new T.Matrix4().compose(
++   new T.Vector3(...position.map((n,j)=>n*dims[j]) as V),rotation,new T.Vector3(...physical)));
++  mesh.castShadow=!ghost;mesh.receiveShadow=true;group.add(mesh);
++ }
++ return group;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/PhotoAppearanceControls.tsx
+@@ -0,0 +1,12 @@
++import {useEffect} from 'react';
++import {useStore} from './store';
++export function PhotoAppearanceControls(){
++ const project=useStore(s=>s.project),focus=useStore(s=>s.photoFocus),selected=useStore(s=>s.selected);
++ const photos=project.components.filter(c=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure);
++ const selectedIsPhoto=photos.some(c=>c.instance===selected);
++ useEffect(()=>{if(selected&&focus&&!selectedIsPhoto)useStore.setState(s=>({photoFocus:false,fitRevision:s.fitRevision+1}));},[selected,focus,selectedIsPhoto]);
++ if(!photos.length)return null;
++ const change=(photoFocus:boolean)=>useStore.setState(s=>({photoFocus,viewMode:photoFocus?'iso':s.viewMode,
++  cameraLocked:photoFocus?false:s.cameraLocked,selected:null,selectedNet:null,moveTarget:null,fitRevision:s.fitRevision+1}));
++ return <span role="group" aria-label="사진 구조와 회로 보기"><button aria-pressed={focus} onClick={()=>change(true)}>사진 구조</button><button aria-pressed={!focus} onClick={()=>change(false)}>회로·배선</button></span>;
++}
+--- /dev/null
++++ b/frontend/src/__tests__/photo-appearance.test.ts
+@@ -0,0 +1,55 @@
++// @vitest-environment jsdom
++import {describe,it,expect} from 'vitest';
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import * as T from 'three';
++import {photoGeometryMesh,type PhotoGeometry} from '../components/circuitiny/photoGeometry';
++import {PhotoAppearanceControls} from '../components/circuitiny/PhotoAppearanceControls';
++import {disposeEnvironmentMesh} from '../components/circuitiny/environmentMeshes';
++import {useStore} from '../components/circuitiny/store';
++import {useSimulatorStore} from '../store/useSimulatorStore';
++import {importVlxFile,buildVlxPayload} from '../utils/vlxFile';
++import {registerProject} from '../components/circuitiny/bridge';
++
++const geometry:PhotoGeometry={shape:'box',outline:[[-.5,-.5],[.5,-.5],[.4,.5],[-.4,.5]],
++ holes:[[[-.1,-.3],[-.1,.3],[.1,.3],[.1,-.3]]],details:[{shape:'cylinder',position:[0,.6,0],size:[.1,.05,.1],rotation:[0,0,0],color:'#ffffff'}]};
++describe('photo appearance in the native editor',()=>{
++ it('extrudes the photographed outline and real hole without role templates',()=>{
++  const mesh=photoGeometryMesh(geometry,'#181818'),base=mesh.getObjectByName('photo-base') as T.Mesh<T.ExtrudeGeometry>;
++  const shape=base.geometry.parameters.shapes as T.Shape;
++  expect(shape.holes).toHaveLength(1);
++  const box=new T.Box3().setFromObject(base);expect(box.min.toArray()).toEqual([-.5,-.5,-.5]);expect(box.max.toArray()).toEqual([.5,.5,.5]);
++  expect(mesh.children).toHaveLength(2);
++  expect(((mesh.children[1] as T.Mesh).material as T.MeshStandardMaterial).color.getHexString()).toBe('ffffff');
++  expect(photoGeometryMesh({shape:'cylinder',details:[]},'#111111').children).toHaveLength(1);
++  disposeEnvironmentMesh(mesh);
++ });
++ it('preserves photo details through native save/import and changes only the view',async()=>{
++  const part={id:'photo-foot-left',metadataId:'ev-structure',x:0,y:0,properties:{shape:'box',width:120,height:3,depth:70,color:'#181818',evPhotoStructure:{role:'foot'},evPhotoGeometry:geometry}};
++  const project={format:'velxio-project',version:1,name:'Photo',boards:[],components:[part],wires:[],fileGroups:{}};
++  await importVlxFile({text:async()=>JSON.stringify(project)} as File);
++  const native=useSimulatorStore.getState();useStore.setState({project:registerProject(native)});
++  expect(buildVlxPayload().components[0].properties.evPhotoGeometry).toEqual(geometry);
++  expect((useStore.getState().project.components[0].config?.structure as Record<string,unknown>).evPhotoGeometry).toEqual(geometry);
++  const before=JSON.stringify([native.components,native.wires]);
++  useStore.setState({photoFocus:false,selected:null,moveTarget:null});
++  const host=document.createElement('div'),root=createRoot(host);
++  (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
++  await act(async()=>root.render(createElement(PhotoAppearanceControls)));
++  const buttons=host.querySelectorAll('button');expect(buttons).toHaveLength(2);
++  await act(async()=>buttons[0].click());expect(useStore.getState().photoFocus).toBe(true);
++  expect(useStore.getState().selected).toBeNull();expect(useStore.getState().moveTarget).toBeNull();
++  await act(async()=>buttons[1].click());expect(useStore.getState().photoFocus).toBe(false);
++  expect(JSON.stringify([useSimulatorStore.getState().components,useSimulatorStore.getState().wires])).toBe(before);
++  await act(async()=>root.unmount());
++ });
++ it('keeps sensor eyes circular on a thin, wide backing plate',()=>{
++  const mesh=photoGeometryMesh({shape:'box',size:[.06,.36,.87],details:[{
++   shape:'cylinder',position:[1.2,0,0],size:[.63,2,.63],rotation:[0,0,-Math.PI/2],color:'#cccccc'}]},'#111111');
++  mesh.scale.set(.06,.36,.87);mesh.updateMatrixWorld(true);
++  const eye=mesh.getObjectByName('photo-detail-0')!;
++  const size=new T.Box3().setFromObject(eye).getSize(new T.Vector3());
++  expect(size.y).toBeCloseTo(.36*.63);expect(size.z).toBeCloseTo(size.y);expect(size.x).toBeCloseTo(.06*2);
++  disposeEnvironmentMesh(mesh);
++ });
++});

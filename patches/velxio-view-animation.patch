@@ -1,0 +1,517 @@
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -8,8 +8,8 @@
+ import { PX } from './catalog';
+ import { useSimulatorStore as native } from '../../store/useSimulatorStore';
+ import {photoAssemblyLayout} from './photoAssemblyLayout';
+-import {connectedWirePath} from './connectedWiring';
+ import {wireGeometry,cableConnectorPositions} from './wireGeometry';
++import {motionWire} from './photoViewMotion';
+ 
+ function JumperCable({
+   points,
+@@ -18,6 +18,7 @@
+   onClick,
+   inspection=false,
+   warning=false,
++  opacity=1,
+ }: {
+   points: [number, number, number][];
+   color: string;
+@@ -25,6 +26,7 @@
+   onClick: (e: any) => void;
+   inspection?:boolean;
+   warning?:boolean;
++  opacity?:number;
+ }) {
+   const geometry = useMemo(() => {
+     // Keep the tube on the native route. A spline can overshoot a bend and
+@@ -35,13 +37,13 @@
+   return (
+     <group name="ev-cable">
+       <mesh geometry={geometry} onClick={onClick} onContextMenu={onClick} castShadow>
+-        <meshStandardMaterial color={selected||warning ? '#df923c' : color} roughness={0.4} transparent={warning} opacity={warning?.4:1}/>
++        <meshStandardMaterial color={selected||warning ? '#df923c' : color} roughness={0.4} transparent={warning||opacity<1} opacity={(warning?.4:1)*opacity}/>
+       </mesh>
+-      {(inspection||warning)&&<Line userData={{evInspectionOverlay:true}} points={points} color={selected||warning?'#df923c':color} lineWidth={selected?2.6:1.6} dashed={warning} dashSize={.004} gapSize={.003} transparent opacity={.95} onClick={onClick}/>}
++      {(inspection||warning)&&<Line userData={{evInspectionOverlay:true}} points={points} color={selected||warning?'#df923c':color} lineWidth={selected?2.6:1.6} dashed={warning} dashSize={.004} gapSize={.003} transparent opacity={.95*opacity} onClick={onClick}/>}
+       {cableConnectorPositions(points).map((p, i) => (
+         <mesh key={i} position={p} castShadow>
+           <boxGeometry args={[0.0021, 0.003, 0.0021]} />
+-          <meshStandardMaterial color="#262c2d" roughness={0.5} />
++          <meshStandardMaterial color="#262c2d" roughness={0.5} transparent={opacity<1} opacity={opacity}/>
+         </mesh>
+       ))}
+     </group>
+@@ -89,6 +91,8 @@
+   const photoFocus=useStore(s=>s.photoFocus&&s.project.components.some(c=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure));
+   const photoExploded=useStore(s=>s.photoExploded);
+   const photoDrag=useStore(s=>s.photoDrag);
++  const photoMotion=useStore(s=>s.photoMotion);
++  const animating=photoMotion?.project===project;
+   const photoLayout=useMemo(()=>photoAssemblyLayout(project),[project]);
+   const concealed=(ref:string)=>{
+     const id=ref.split('.')[0],part=[...project.components,...(project.boards||[])].find(p=>p.instance===id||(id==='board'&&p.config?.isBoard));
+@@ -97,17 +101,17 @@
+   return (
+     <group name="ev-wiring">
+       {project.nets
+-        .filter((n) => (!photoFocus||photoExploded)&&!n.hidden&&(photoLayout.photos.length>0||enclosureView!=='assembled'||!n.endpoints.some(concealed)))
++        .filter((n) => (animating||!photoFocus||photoExploded)&&!n.hidden&&(photoLayout.photos.length>0||enclosureView!=='assembled'||!n.endpoints.some(concealed)))
+         .map((net) => {
+-          const connection=connectedWirePath(project,net,drag,{focus:photoFocus,exploded:photoExploded,preview:photoDrag});
+-          if(!connection)return null;
++          const connection=motionWire(project,net,{focus:photoFocus,exploded:photoExploded,preview:photoDrag,motion:photoMotion},drag);
++          if(!connection||connection.visibility<.001)return null;
+           const {a,b,points,warning}=connection;
+           // This net represents the whole mating header, never one jumper wire.
+           const gpioHeader=net.endpoints.length===2&&net.endpoints.every(p=>p.endsWith('.GPIO40'));
+           const headerAssembly = net.connectorBinding||gpioHeader;
+           const pick = (e: any) => {
+             e.stopPropagation();
+-            if (useStore.getState().endpointDrag || e.delta > 3) return;
++            if (animating||useStore.getState().endpointDrag || e.delta > 3) return;
+             e.nativeEvent?.preventDefault();
+             useStore.setState({
+               selected: null,
+@@ -119,7 +123,7 @@
+           return (
+             <group key={net.id}>
+               {headerAssembly ? <>
+-                <Line points={points} color={selected === net.id ? '#df923c' : '#59718e'} lineWidth={3} dashed dashSize={0.003} gapSize={0.002} onClick={pick} />
++                <Line points={points} color={selected === net.id ? '#df923c' : '#59718e'} lineWidth={3} dashed dashSize={0.003} gapSize={0.002} transparent opacity={connection.visibility} onClick={pick} />
+                 {(selected === net.id || net.endpoints.some(pin => pin.split('.')[0] === selectedObject)) && (gpioHeader||net.endpoints[0]?.endsWith('.A4'))&&<Html center position={[(a.position[0]+b.position[0])/2,Math.max(a.position[1],b.position[1])+.008,(a.position[2]+b.position[2])/2]} style={{pointerEvents:'none',whiteSpace:'nowrap',fontSize:10,background:'#edf2f8e8',color:'#354d67',border:'1px solid #a9b9ca',borderRadius:4,padding:'3px 6px'}}>{gpioHeader?(net.physicalRoute?'40핀 적층 결합':'40핀 헤더 결합 · 분리 표시'):'실드 적층 헤더 결합'}</Html>}
+               </> : <JumperCable
+                 points={points}
+@@ -128,11 +132,12 @@
+                 onClick={pick}
+                 inspection={photoLayout.photos.length>0||selected===net.id}
+                 warning={warning}
++                opacity={connection.visibility}
+               />}
+               {selected===net.id&&!headerAssembly&&<Html center position={points[Math.floor(points.length/2)]} style={{pointerEvents:'none',fontSize:11,whiteSpace:'nowrap',background:'#ffffffeb',border:'1px solid #a9b9ca',borderRadius:4,padding:'4px 7px',color:'#263e4d'}}>
+                 <strong>{a.ownerLabel}.{a.pinLabel} → {b.ownerLabel}.{b.pinLabel}</strong><br/>{warning?'기구 경로 검토 필요':connection.kind==='hardware'?'단자 연결·기구 경로':'실제 핀 기준 연결'}
+               </Html>}
+-              {selected === net.id && !photoFocus && !headerAssembly && !running && !wireMode && (
++              {selected === net.id && !animating && !photoFocus && !headerAssembly && !running && !wireMode && (
+                 <>
+                   <EndpointHandle
+                     wireId={net.id}
+@@ -149,6 +154,7 @@
+                 </>
+               )}
+               {selected === net.id &&
++                !animating &&
+                 !photoFocus &&
+                 !running &&
+                 !wireMode &&
+--- a/frontend/src/components/circuitiny/store.ts
++++ b/frontend/src/components/circuitiny/store.ts
+@@ -3,7 +3,9 @@
+ import type { LedOutputSample } from '../../simulation/ledOutput';
+ import type { Project } from './project/schema';
+ import type {PhotoDrag} from './photoAssemblyLayout';
++import type {PhotoViewMotion} from './photoViewMotion';
+ export type ViewerState = {
++  photoMotion:PhotoViewMotion|null;
+   photoDrag:PhotoDrag|null;
+   photoExploded:boolean;
+   photoFocus:boolean;
+@@ -54,6 +56,7 @@
+   releaseButton: (p: string) => void;
+ };
+ export const useStore = create<ViewerState>((set) => ({
++  photoMotion:null,
+   photoDrag:null,
+   photoExploded:false,
+   photoFocus:false,
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -1,9 +1,9 @@
+ // Visual models use the same native pin positions as the electrical editor.
+-import { memo, useEffect } from 'react';
+-import { useThree } from '@react-three/fiber';
++import { memo, useEffect, useRef } from 'react';
++import { useThree,useFrame } from '@react-three/fiber';
+ import { Html, RoundedBox } from '@react-three/drei';
+ import * as T from 'three';
+-import { alignTopView, topViewFitZoom } from './sceneCamera';
++import { topViewFitZoom } from './sceneCamera';
+ import { catalog, definitions, PX, UNO_W, UNO_H } from './catalog';
+ import { useStore } from './store';
+ import { NativeFace } from './NativeFace';
+@@ -11,8 +11,9 @@
+ import {EnvironmentBody} from './EnvironmentBody';
+ import {inverseRotate,type V} from './assemblyMath';
+ import {registerAssemblyScene} from './assemblyScene';
+-import {photoAssemblyLayout,photoPartVisible,photoViewFitZoom} from './photoAssemblyLayout';
++import {photoAssemblyLayout,photoPartTransform,photoPartVisible,photoViewFitZoom} from './photoAssemblyLayout';
+ import {connectedWirePath} from './connectedWiring';
++import {advanceCameraMotion,startCameraMotion,cancelCameraMotion} from './viewCameraMotion';
+ import {
+   UnoModel,
+   LedModel,
+@@ -121,7 +122,20 @@
+   );
+ });
+ export function FitScene() {
+-  const { camera, scene, size, controls } = useThree();
++  const { camera, scene, size, controls,gl } = useThree();
++  const fitted=useRef(false);
++  const fitCancelled=useRef(false);
++  useFrame(()=>{
++    const now=performance.now(),s=useStore.getState(),motion=s.photoMotion;
++    if(motion){const progress=Math.min(1,Math.max(0,(now-motion.started)/motion.duration));
++      useStore.setState({photoMotion:motion.project!==s.project||progress>=1?null:{...motion,progress}});}
++    advanceCameraMotion(camera,controls,now);
++  });
++  useEffect(()=>{
++    const cancel=()=>{fitCancelled.current=true;cancelCameraMotion(camera);};
++    gl.domElement.addEventListener('pointerdown',cancel);gl.domElement.addEventListener('wheel',cancel,{passive:true});
++    return()=>{cancel();gl.domElement.removeEventListener('pointerdown',cancel);gl.domElement.removeEventListener('wheel',cancel);};
++  },[camera,gl]);
+   useEffect(()=>registerAssemblyScene(()=>scene.getObjectByName('circuitiny-design')),[scene]);
+   const sceneKey = useStore((s) => s.sceneKey),
+     hasScene = useStore((s) => !!(s.project.components.length || s.project.boards?.length)),
+@@ -130,7 +144,9 @@
+   const photoFocus=useStore(s=>s.photoFocus);
+   const photoExploded=useStore(s=>s.photoExploded);
+   useEffect(() => {
++    fitCancelled.current=false;
+     const timer = setTimeout(() => {
++      if(fitCancelled.current)return;
+       const root = scene.getObjectByName('circuitiny-design');
+       if (!root) return;
+       root.updateWorldMatrix(true, true);
+@@ -141,7 +157,11 @@
+       {
+         if(layout.photos.length){
+           const body=root.getObjectByName('ev-body:'+c.instance);
+-          if(body){const bounds=new T.Box3().setFromObject(body,true);if(!bounds.isEmpty()){points.push(bounds.min,bounds.max);continue;}}
++          if(body){
++            // Measure the destination pose, rather than an intermediate animation frame.
++            const frame=new T.Group(),pose=photoPartTransform(c,layout,photoFocus,photoExploded);
++            frame.position.set(...pose.position);frame.quaternion.set(...pose.quaternion);frame.scale.setScalar(pose.scale);frame.add(body.clone(true));frame.updateWorldMatrix(true,true);
++            const bounds=new T.Box3().setFromObject(frame,true);if(!bounds.isEmpty()){points.push(bounds.min,bounds.max);continue;}}
+         }
+         definitions
+           .get(c.componentId)
+@@ -168,28 +188,11 @@
+       const aspect = size.width / Math.max(1, size.height),
+         distance = Math.max(0.09, (extent * 1.16) / Math.min(1, aspect));
+       const viewMode = useStore.getState().viewMode;
+-      if (camera instanceof T.OrthographicCamera) {
+-        camera.up.set(0, 1, 0);
+-        camera.position.copy(center).addScaledVector(
+-          (viewMode === 'front' ? new T.Vector3(0.05, 0.4, 1) : photoFocus ? new T.Vector3(1, .55, 1) : new T.Vector3(0.55, 0.9, 1)).normalize(),
+-          distance,
+-        );
+-        if (viewMode === 'top') alignTopView(camera, center);
+-        camera.zoom = layout.photos.length&&viewMode!=='top'?photoViewFitZoom(box.getSize(new T.Vector3()),size,camera.position.clone().sub(center)):
+-          topViewFitZoom(box.getSize(new T.Vector3()), size) / (viewMode === 'top' ? 1 : 1.5);
+-        camera.updateProjectionMatrix();
+-      } else {
+-        camera.up.set(0, 1, 0);
+-        camera.position.copy(center).addScaledVector(
+-          (viewMode === 'front' ? new T.Vector3(0.05, 0.4, 1) : photoFocus ? new T.Vector3(1, .55, 1) : new T.Vector3(0.55, 0.9, 1)).normalize(),
+-          distance,
+-        );
+-      }
+-      camera.lookAt(center);
+-      if (controls && 'target' in controls) {
+-        (controls as unknown as { target: T.Vector3; update: () => void }).target.copy(center);
+-        (controls as unknown as { update: () => void }).update();
+-      }
++      const direction=(viewMode==='top'?new T.Vector3(0,1,1e-6):viewMode==='front'?new T.Vector3(.05,.4,1):photoFocus?new T.Vector3(1,.55,1):new T.Vector3(.55,.9,1)).normalize();
++      const zoom=layout.photos.length&&viewMode!=='top'?photoViewFitZoom(box.getSize(new T.Vector3()),size,direction):topViewFitZoom(box.getSize(new T.Vector3()),size)/(viewMode==='top'?1:1.5);
++      const motion=useStore.getState().photoMotion,now=performance.now();
++      const duration=fitted.current?motion?Math.max(0,motion.started+motion.duration-now):420:0;
++      startCameraMotion(camera,controls,{position:center.clone().addScaledVector(direction,distance),target:center,zoom},now,duration);fitted.current=true;
+     }, 120);
+     return () => clearTimeout(timer);
+   }, [sceneKey, hasScene, fitRevision, enclosureView, photoFocus, photoExploded, size.width, size.height, camera, scene, controls]);
+--- a/frontend/src/components/circuitiny/PhotoAppearanceControls.tsx
++++ b/frontend/src/components/circuitiny/PhotoAppearanceControls.tsx
+@@ -2,16 +2,16 @@
+ import {useStore} from './store';
+ import {connectedWirePath} from './connectedWiring';
+ import {photoAssemblyLayout} from './photoAssemblyLayout';
++import {changePhotoView} from './changePhotoView';
+ export function PhotoAppearanceControls(){
+  const project=useStore(s=>s.project),focus=useStore(s=>s.photoFocus),exploded=useStore(s=>s.photoExploded),selected=useStore(s=>s.selected),wireMode=useStore(s=>s.wireMode),moveTarget=useStore(s=>s.moveTarget),preview=useStore(s=>s.photoDrag);
+  const photos=project.components.filter(c=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure);
+  const selectedIsPhoto=photos.some(c=>c.instance===selected);
+  const selectedIsMounted=!!selected&&!!photoAssemblyLayout(project).mounts[selected];
+  useStore(s=>s.catalogVersion);
+- useEffect(()=>{if(focus&&(wireMode||moveTarget&&!selectedIsPhoto&&!selectedIsMounted||selected&&!selectedIsPhoto&&!exploded))useStore.setState(s=>({photoFocus:false,photoDrag:null,fitRevision:s.fitRevision+1}));},[selected,focus,exploded,selectedIsPhoto,selectedIsMounted,wireMode,moveTarget]);
++ useEffect(()=>{if(focus&&(wireMode||moveTarget&&!selectedIsPhoto&&!selectedIsMounted||selected&&!selectedIsPhoto&&!exploded))changePhotoView(false,false,false);},[selected,focus,exploded,selectedIsPhoto,selectedIsMounted,wireMode,moveTarget]);
+  if(!photos.length)return null;
+- const change=(photoFocus:boolean,photoExploded=false)=>useStore.setState(s=>({photoFocus,photoExploded,viewMode:photoFocus?'iso':s.viewMode,
+-  cameraLocked:photoFocus?false:s.cameraLocked,selected:null,selectedNet:null,moveTarget:null,photoDrag:null,fitRevision:s.fitRevision+1}));
++ const change=changePhotoView;
+  const connections=project.nets.filter(n=>!n.hidden).map(net=>({net,path:connectedWirePath(project,net,null,{focus,exploded,preview})})),visible=connections.filter(c=>c.path).length;
+  return <><span role="group" aria-label="사진 구조 조립과 분해"><button aria-pressed={focus&&!exploded} onClick={()=>change(true)}>조립 보기</button><button aria-pressed={focus&&exploded} onClick={()=>change(true,true)}>분해 보기</button><button aria-pressed={!focus} onClick={()=>change(false)}>회로·배선</button>{focus&&exploded&&<small>독립 구조물 {photos.length}개 · 내부 회로 표시 · 설명용 배치</small>}</span>
+  {(!focus||exploded)&&connections.length>0&&<details className="ev-c3d-more"><summary data-wiring-status>배선 {visible}/{connections.length}</summary><div>
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -38,8 +38,10 @@
+ import {EnclosureShell} from './EnclosureView';
+ import {environmentKind} from './environmentObjects';
+ import {EnvironmentBody,EnvironmentHose} from './EnvironmentBody';
+-import {photoAssemblyLayout,photoPartTransform,photoPartVisible,nativePhotoPosition,photoMountOffset,photoSurfaceNormal} from './photoAssemblyLayout';
++import {photoAssemblyLayout,photoPartTransform,nativePhotoPosition,photoMountOffset,photoSurfaceNormal} from './photoAssemblyLayout';
+ import {commitPhotoMount} from './PhotoMountControls';
++import {motionPart} from './photoViewMotion';
++import {startCameraMotion,cancelCameraMotion} from './viewCameraMotion';
+ type Violation = { severity: 'error' | 'warning'; involves: string[] };
+ const STRIP_LED_N = 8;
+ 
+@@ -636,10 +638,13 @@
+   const photoFocus=useStore(s=>s.photoFocus&&s.project.components.some(p=>!!(p.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure));
+   const photoExploded=useStore(s=>s.photoExploded);
+   const photoDrag=useStore(s=>s.photoDrag);
++  const photoMotion=useStore(s=>s.photoMotion);
+   const photoProject=useStore(s=>s.project);
+   const photoLayout=useMemo(()=>photoAssemblyLayout(photoProject),[photoProject]);
+-  const photoTransform=photoPartTransform(c,photoLayout,photoFocus,photoExploded,photoDrag);
+-  const photoVisible=photoPartVisible(c,photoLayout,photoFocus,photoExploded);
++  const photoPose=motionPart(photoProject,c,{focus:photoFocus,exploded:photoExploded,preview:photoDrag,motion:photoMotion});
++  const photoTransform=photoPose.transform;
++  const photoVisible=photoPose.visibility>.001;
++  const photoInteractive=photoVisible&&!(photoMotion?.project===photoProject);
+   const enclosureView=useStore(s=>s.enclosureView);
+   const enclosed=useStore(s=>s.project.components.some(p=>p.instance===c.config?.evDesignEnclosure&&!!p.config?.structure));
+   const wireMode = useStore((s) => s.wireMode);
+@@ -653,7 +658,7 @@
+     model: ReturnType<typeof createComponentDrag>; pointerId: number;
+     capture: {releasePointerCapture:(id:number)=>void}; enabled: boolean;
+   }>(null);
+-  const canMove = canDragComponent({selected,armed:moveTarget===c.instance,simulating,wireMode});
++  const canMove = photoInteractive&&canDragComponent({selected,armed:moveTarget===c.instance,simulating,wireMode});
+   const dragNormal=photoFocus?photoSurfaceNormal(c,photoLayout):undefined;
+ 
+   const projectPointer = (x:number, y:number) => {
+@@ -737,12 +742,12 @@
+       <group
+         name={'ev-body:'+c.instance}
+         rotation={[0, (-Number(c.config?.rotation || 0) * Math.PI) / 180, 0]}
+-        raycast={photoVisible?undefined:()=>false}
+-        onPointerDown={photoVisible?handlePointerDown:undefined}
+-        onClick={photoVisible?(e) => e.stopPropagation():undefined}
+-        onPointerUp={photoVisible?handlePointerUp:undefined}
+-        onPointerCancel={photoVisible?handlePointerUp:undefined}
+-        onContextMenu={photoVisible?(e) => {
++        raycast={photoInteractive?undefined:()=>false}
++        onPointerDown={photoInteractive?handlePointerDown:undefined}
++        onClick={photoInteractive?(e) => e.stopPropagation():undefined}
++        onPointerUp={photoInteractive?handlePointerUp:undefined}
++        onPointerCancel={photoInteractive?handlePointerUp:undefined}
++        onContextMenu={photoInteractive?(e) => {
+           e.stopPropagation();
+           e.nativeEvent.preventDefault();
+           if (e.delta <= 3) select(c.instance);
+@@ -934,16 +939,17 @@
+       const orbit=controls as unknown as {target:THREE.Vector3;update:()=>void};
+       const offset=camera.position.clone().sub(orbit.target);
+       if(Math.hypot(offset.x,offset.z)<.01){offset.set(.6,.45,.6).setLength(Math.max(.2,offset.length()));}
+-      camera.position.set(orbit.target.x-offset.x,orbit.target.y+offset.y,orbit.target.z-offset.z);orbit.update();
++      startCameraMotion(camera,controls,{position:new THREE.Vector3(orbit.target.x-offset.x,orbit.target.y+offset.y,orbit.target.z-offset.z),target:orbit.target.clone(),zoom:camera instanceof THREE.OrthographicCamera?camera.zoom:1},performance.now(),420);
+     }
+     previousReverse.current=reverse;
+   },[reverse,camera,controls]);
+   useLayoutEffect(() => {
+     if (previous.current !== viewMode && viewMode === 'top' && controls && 'target' in controls) {
+       const orbit = controls as unknown as {target: THREE.Vector3; update: () => void};
+-      alignTopView(camera, orbit.target);
+-      orbit.update();
++      const destination=camera.clone();alignTopView(destination,orbit.target);
++      startCameraMotion(camera,controls,{position:destination.position.clone(),target:orbit.target.clone(),zoom:camera instanceof THREE.OrthographicCamera?camera.zoom:1},performance.now(),420);
+     }
++    if(previous.current==='top'&&viewMode==='iso')cancelCameraMotion(camera);
+     // The 3D button only enables orbit: do not move, zoom, or re-fit the camera.
+     previous.current = viewMode;
+   }, [viewMode, camera, controls]);
+@@ -992,12 +998,13 @@
+ function PhotoAssemblyGuides(){
+  const project=useStore(s=>s.project),enabled=useStore(s=>s.photoFocus&&s.photoExploded);
+  const preview=useStore(s=>s.photoDrag);
++ const motion=useStore(s=>s.photoMotion);
+  const layout=useMemo(()=>photoAssemblyLayout(project),[project]);
+  if(!enabled)return null;
+  return <group name="photo-assembly-guides">{layout.photos.map(p=>{
+   const transform=photoPartTransform(p.part,layout,true,false),props=p.part.config?.structure as Record<string,unknown>;
+   const start:[number,number,number]=[...transform.position];start[1]+=(Number(props.elevation||0)+Number(props.height||20)/2)/1000*transform.scale;
+-  const target=photoPartTransform(p.part,layout,true,true,preview),end=[...target.position] as [number,number,number];end[1]+=(Number(props.elevation||0)+Number(props.height||20)/2)/1000*target.scale;
++  const target=motionPart(project,p.part,{focus:true,exploded:true,preview,motion}).transform,end=[...target.position] as [number,number,number];end[1]+=(Number(props.elevation||0)+Number(props.height||20)/2)/1000*target.scale;
+   return <Line key={p.part.instance} points={[start,end]} color="#7f8e9a" transparent opacity={.32} lineWidth={.7} dashed dashSize={.005} gapSize={.004} raycast={()=>{}}/>;
+  })}</group>;
+ }
+--- /dev/null
++++ b/frontend/src/components/circuitiny/photoViewMotion.ts
+@@ -0,0 +1,48 @@
++/** View-only animation; never writes native circuit positions or connections. */
++import * as T from 'three';
++import type {ComponentInstance,Project,Net} from './project/schema';
++import {photoAssemblyLayout,photoPartTransform,photoPartVisible,photoPinPart,photoPointMatrix,type PhotoTransform,type PhotoDrag,type V} from './photoAssemblyLayout';
++import {connectedWirePath} from './connectedWiring';
++import {resolvePin} from './project/pins';
++export const VIEW_MOTION_MS=720;
++export const easeView=(t:number)=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
++type Pose={transform:PhotoTransform;visibility:number};
++type Cable={points:V[];visibility:number};
++export type PhotoViewMotion={project:Project;started:number;duration:number;progress:number;parts:Record<string,Pose>;wires:Record<string,Cable>};
++export type PhotoViewState={focus:boolean;exploded:boolean;preview?:PhotoDrag|null;motion?:PhotoViewMotion|null};
++export function reducedViewMotion(){return typeof window!=='undefined'&&!!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}
++export function motionPart(project:Project,c:ComponentInstance,view:PhotoViewState):Pose{
++ const layout=photoAssemblyLayout(project),target=photoPartTransform(c,layout,view.focus,view.exploded,view.preview),visible=Number(photoPartVisible(c,layout,view.focus,view.exploded));
++ target.scale*=visible;
++ const motion=view.motion?.project===project?view.motion:null,from=motion?.parts[c.instance];
++ if(!from||!motion)return {transform:target,visibility:visible};
++ const t=easeView(motion.progress),position=new T.Vector3(...from.transform.position).lerp(new T.Vector3(...target.position),t).toArray() as V;
++ const quaternion=new T.Quaternion(...from.transform.quaternion).slerp(new T.Quaternion(...target.quaternion),t).toArray();
++ return {transform:{...target,position,quaternion,scale:T.MathUtils.lerp(from.transform.scale,target.scale,t)},visibility:T.MathUtils.lerp(from.visibility,visible,t)};
++}
++/** Resample each saved bend with the same point count before blending routes. */
++export function sampleCable(points:V[],t:number):V{
++ if(!points.length)return [0,0,0];if(points.length===1)return [...points[0]];
++ const at=Math.max(0,Math.min(1,t))*(points.length-1),i=Math.min(points.length-2,Math.floor(at));
++ return points[i].map((n,j)=>T.MathUtils.lerp(n,points[i+1][j],at-i)) as V;
++}
++export function motionWire(project:Project,net:Net,view:PhotoViewState,drag?:Parameters<typeof connectedWirePath>[2]){
++ const target=connectedWirePath(project,net,drag,view);if(!target)return null;
++ const visible=Number(!view.focus||view.exploded),motion=view.motion?.project===project?view.motion:null,from=motion?.wires[net.id];
++ if(!motion||!from)return {...target,visibility:visible};
++ const t=easeView(motion.progress),points:V[]=[];
++ const knots=[...new Set([...from.points.map((_,i)=>i/Math.max(1,from.points.length-1)),...target.points.map((_,i)=>i/Math.max(1,target.points.length-1))])].sort((a,b)=>a-b);
++ for(const at of knots){const a=sampleCable(from.points,at),b=sampleCable(target.points,at);points.push(a.map((n,j)=>T.MathUtils.lerp(n,b[j],t)) as V);}
++ // Quaternion interpolation is not linear: anchor both ends to the displayed pins.
++ for(const [i,ref] of net.endpoints.slice(0,2).entries()){
++  const part=photoPinPart(project,ref),pin=resolvePin(project,ref);if(!part||!pin)continue;
++  points[i===0?0:points.length-1]=new T.Vector3(...pin.position).applyMatrix4(photoPointMatrix(part,motionPart(project,part,view).transform)).toArray();
++ }
++ return {...target,points,a:{...target.a,position:points[0]},b:{...target.b,position:points[points.length-1]},visibility:T.MathUtils.lerp(from.visibility,visible,t)};
++}
++export function beginViewMotion(project:Project,view:PhotoViewState,started:number,duration=VIEW_MOTION_MS):PhotoViewMotion|null{
++ if(!photoAssemblyLayout(project).photos.length||duration<=0)return null;
++ const parts=Object.fromEntries([...project.components,...(project.boards||[])].map(c=>[c.instance,motionPart(project,c,view)]));
++ const wires:Record<string,Cable>={};for(const net of project.nets){const path=motionWire(project,net,view);if(path)wires[net.id]={points:path.points,visibility:path.visibility};}
++ return {project,started,duration,progress:0,parts,wires};
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/changePhotoView.ts
+@@ -0,0 +1,9 @@
++import {useStore} from './store';
++import {beginViewMotion,reducedViewMotion} from './photoViewMotion';
++export function changePhotoView(photoFocus:boolean,photoExploded=false,clearSelection=true){
++ const s=useStore.getState();if(s.photoFocus===photoFocus&&s.photoExploded===photoExploded)return;
++ const photoMotion=reducedViewMotion()?null:beginViewMotion(s.project,{focus:s.photoFocus,exploded:s.photoExploded,preview:s.photoDrag,motion:s.photoMotion},performance.now());
++ useStore.setState({photoFocus,photoExploded,photoMotion,viewMode:photoFocus?'iso':s.viewMode,
++  cameraLocked:photoFocus?false:s.cameraLocked,photoDrag:null,fitRevision:s.fitRevision+1,
++  ...(clearSelection?{selected:null,selectedNet:null,moveTarget:null}:{})});
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/viewCameraMotion.ts
+@@ -0,0 +1,29 @@
++import * as T from 'three';
++import {easeView,reducedViewMotion} from './photoViewMotion';
++export type CameraPose={position:T.Vector3;target:T.Vector3;zoom:number};
++type Orbit={target:T.Vector3;update:()=>void};
++type CameraMotion={from:CameraPose;to:CameraPose;started:number;duration:number};
++const motions=new WeakMap<T.Camera,CameraMotion>();
++const orbit=(controls:unknown)=>controls&&typeof controls==='object'&&'target' in controls?controls as Orbit:null;
++export function sampleCameraPose(from:CameraPose,to:CameraPose,t:number):CameraPose{
++ t=easeView(t);const target=from.target.clone().lerp(to.target,t),a=from.position.clone().sub(from.target),b=to.position.clone().sub(to.target);
++ const length=T.MathUtils.lerp(a.length(),b.length(),t),turn=new T.Quaternion().setFromUnitVectors(a.clone().normalize(),b.clone().normalize());
++ const position=a.normalize().applyQuaternion(new T.Quaternion().slerp(turn,t)).multiplyScalar(length).add(target);
++ return {position,target,zoom:Math.exp(T.MathUtils.lerp(Math.log(Math.max(.001,from.zoom)),Math.log(Math.max(.001,to.zoom)),t))};
++}
++function apply(camera:T.Camera,controls:unknown,pose:CameraPose){
++ camera.up.set(0,1,0);camera.position.copy(pose.position);camera.lookAt(pose.target);
++ if(camera instanceof T.OrthographicCamera){camera.zoom=pose.zoom;camera.updateProjectionMatrix();}
++ const control=orbit(controls);if(control){control.target.copy(pose.target);control.update();}
++}
++export function startCameraMotion(camera:T.Camera,controls:unknown,to:CameraPose,started:number,duration:number){
++ const from={position:camera.position.clone(),target:orbit(controls)?.target.clone()||to.target.clone(),zoom:camera instanceof T.OrthographicCamera?camera.zoom:1};
++ if(duration<=0||reducedViewMotion()){motions.delete(camera);apply(camera,controls,to);return;}
++ motions.set(camera,{from,to,started,duration});
++}
++export function advanceCameraMotion(camera:T.Camera,controls:unknown,now:number){
++ const motion=motions.get(camera);if(!motion)return;
++ const t=Math.min(1,Math.max(0,(now-motion.started)/motion.duration));apply(camera,controls,sampleCameraPose(motion.from,motion.to,t));
++ if(t>=1)motions.delete(camera);
++}
++export function cancelCameraMotion(camera:T.Camera){motions.delete(camera);}
+--- /dev/null
++++ b/frontend/src/__tests__/photo-view-motion.test.ts
+@@ -0,0 +1,71 @@
++// @vitest-environment jsdom
++import {it,expect,beforeEach,vi} from 'vitest';
++import * as T from 'three';
++import {useStore} from '../components/circuitiny/store';
++import {definitions,pin} from '../components/circuitiny/catalog';
++import type {Project,ComponentInstance} from '../components/circuitiny/project/schema';
++import {beginViewMotion,motionPart,motionWire,easeView} from '../components/circuitiny/photoViewMotion';
++import {changePhotoView} from '../components/circuitiny/changePhotoView';
++import {photoAssemblyLayout,photoPartTransform,photoPinPart,photoPointMatrix} from '../components/circuitiny/photoAssemblyLayout';
++import {resolvePin} from '../components/circuitiny/project/pins';
++import {sampleCameraPose,startCameraMotion,advanceCameraMotion,cancelCameraMotion} from '../components/circuitiny/viewCameraMotion';
++function fixture():Project{
++ const photo=(id:string,y:number):ComponentInstance=>({instance:id,componentId:'structure',position:[-.3,0,0],pinAssignments:{},config:{metadataId:'ev-structure',structure:{label:id,evPhotoStructure:{role:'platform'},width:120,height:4,depth:100,elevation:y*1000-2}}});
++ const electronic=(id:string,x:number):ComponentInstance=>({instance:id,componentId:id,position:[x,.012,0],pinAssignments:{},config:{metadataId:'led',width:.02,depth:.02}});
++ for(const id of ['A','B'])definitions.set(id,{id,name:id,version:'1',category:'misc',model:'',pins:[pin('1','1','digital_io',[.009,.006,.001])],schematic:{symbol:'generic-rect'}});
++ return {...useStore.getState().project,boards:[],components:[photo('base',.04),photo('upper',.15),electronic('A',0),electronic('B',.15)],nets:[{id:'wire',endpoints:['A.1','B.1'],route:[[.01,.03,0],[.1,.03,0]]}]};
++}
++beforeEach(()=>{useStore.setState({photoMotion:null,photoFocus:true,photoExploded:false,photoDrag:null,selected:null,moveTarget:null,wireMode:false});Object.defineProperty(window,'matchMedia',{configurable:true,value:vi.fn(()=>({matches:false}))});});
++const close=(a:number[],b:number[])=>a.forEach((n,i)=>expect(n).toBeCloseTo(b[i],8));
++it('moves structures and their mounted parts together and finishes at the exact target',()=>{
++ const project=fixture(),layout=photoAssemblyLayout(project),motion=beginViewMotion(project,{focus:true,exploded:false},0)!;
++ for(const progress of [0,.2,.5,.8,1]){
++  const view={focus:true,exploded:true,motion:{...motion,progress}},child=project.components.find(c=>c.instance==='A')!,parent=project.components.find(c=>c.instance===layout.mounts.A.hostId)!;
++  const a=motionPart(project,child,view),b=motionPart(project,parent,view),ca=photoPartTransform(child,layout,true,false),pa=photoPartTransform(parent,layout,true,false);
++  close(a.transform.position.map((n,i)=>n-b.transform.position[i]),ca.position.map((n,i)=>n-pa.position[i]));
++  close(b.transform.position,pa.position.map((n,i)=>n+layout.offsets[parent.instance][i]*easeView(progress)));
++ }
++ const child=project.components[2];expect(motionPart(project,child,{focus:true,exploded:true,motion:{...motion,progress:1}}).transform).toEqual(photoPartTransform(child,layout,true,true));
++});
++it('keeps both cable ends on rotating displayed pins throughout all six view transitions',()=>{
++ const project=fixture(),before=JSON.stringify(project),modes=[[true,false],[true,true],[false,false]];
++ for(const [focus,exploded] of modes)for(const [nextFocus,nextExploded] of modes){
++  if(focus===nextFocus&&exploded===nextExploded)continue;
++  const motion=beginViewMotion(project,{focus,exploded},0)!;
++  for(const progress of [0,.1,.5,.9,1]){
++   const view={focus:nextFocus,exploded:nextExploded,motion:{...motion,progress}},wire=motionWire(project,project.nets[0],view)!;
++   expect(wire.points.flat().every(Number.isFinite)).toBe(true);
++   for(const [i,ref] of project.nets[0].endpoints.entries()){
++    const expected=new T.Vector3(...resolvePin(project,ref)!.position).applyMatrix4(photoPointMatrix(photoPinPart(project,ref)!,motionPart(project,photoPinPart(project,ref)!,view).transform)).toArray();
++    close(wire.points[i===0?0:wire.points.length-1],expected);
++   }
++  }
++ }
++ expect(JSON.stringify(project)).toBe(before);
++});
++it('continues an interrupted transition without a component pose or cable endpoint jump',()=>{
++ const project=fixture(),first=beginViewMotion(project,{focus:true,exploded:false},100)!;
++ const mid={focus:false,exploded:false,motion:{...first,progress:.37}},second=beginViewMotion(project,mid,300)!;
++ for(const c of project.components){const before=motionPart(project,c,mid),after=motionPart(project,c,{focus:true,exploded:true,motion:second});close(before.transform.position,after.transform.position);close(before.transform.quaternion,after.transform.quaternion);expect(after.transform.scale).toBe(before.transform.scale);expect(after.visibility).toBe(before.visibility);}
++ const a=motionWire(project,project.nets[0],mid)!,b=motionWire(project,project.nets[0],{focus:true,exploded:true,motion:second})!;close(a.points[0],b.points[0]);close(a.points.at(-1)!,b.points.at(-1)!);
++});
++it('clears editing state, ignores repeat view clicks, and respects reduced motion',()=>{
++ const project=fixture();useStore.setState({project,selected:'A',selectedNet:'wire',moveTarget:'A'});changePhotoView(true,true);
++ const s=useStore.getState();expect(s.photoMotion).not.toBeNull();expect(s.selected).toBeNull();expect(s.moveTarget).toBeNull();expect(s.project).toBe(project);
++ changePhotoView(true,true);expect(useStore.getState().photoMotion).toBe(s.photoMotion);expect(useStore.getState().fitRevision).toBe(s.fitRevision);
++ Object.defineProperty(window,'matchMedia',{value:()=>({matches:true})});changePhotoView(false);expect(useStore.getState().photoMotion).toBeNull();expect(useStore.getState().photoFocus).toBe(false);
++});
++it('ignores a transition from a different project and supports legacy circuits',()=>{
++ const project=fixture(),motion=beginViewMotion(project,{focus:true,exploded:false},0)!;
++ const other={...project};expect(motionPart(other,other.components[2],{focus:false,exploded:false,motion})).toEqual(motionPart(other,other.components[2],{focus:false,exploded:false}));
++ const legacy={...project,components:project.components.slice(2)};expect(beginViewMotion(legacy,{focus:false,exploded:false},0)).toBeNull();
++});
++it('animates camera rotation, framing and zoom, with exact completion and immediate cancellation',()=>{
++ const camera=new T.OrthographicCamera(-1,1,1,-1,.001,30),controls={target:new T.Vector3(),update:vi.fn()};camera.position.set(1,1,1);camera.zoom=100;
++ const from={position:camera.position.clone(),target:controls.target.clone(),zoom:100},to={position:new T.Vector3(-2,1,-2),target:new T.Vector3(.1,.2,0),zoom:200};
++ startCameraMotion(camera,controls,to,0,720);advanceCameraMotion(camera,controls,360);
++ const middle=sampleCameraPose(from,to,.5);close(camera.position.toArray(),middle.position.toArray());expect(camera.zoom).toBeCloseTo(Math.sqrt(20000));
++ expect(camera.position.distanceTo(controls.target)).toBeGreaterThan(1);
++ cancelCameraMotion(camera);const held=camera.position.clone();advanceCameraMotion(camera,controls,700);expect(camera.position).toEqual(held);
++ startCameraMotion(camera,controls,to,800,420);advanceCameraMotion(camera,controls,1220);close(camera.position.toArray(),to.position.toArray());expect(camera.zoom).toBeCloseTo(200);close(controls.target.toArray(),to.target.toArray());
++});

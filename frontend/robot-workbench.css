@@ -1,0 +1,5 @@
+.robot-workbench{padding:18px;margin:0 0 22px;border:1px solid #b9d3c3;border-radius:14px;background:#f7fbf8}
+.robot-workbench h3{margin:0}.robot-workbench p{line-height:1.5}
+.robot-workbench-notice{border-left:3px solid #dda63c;padding:9px 12px;background:#fff9e8;font-size:12px}
+.robot-workbench iframe{display:block;width:100%;height: min(82vh,850px);min-height:600px;border:1px solid #d2dfd6;border-radius:10px;background:#fff}
+.robot-workbench [role=status]{font-size:13px;min-height:1.5em}

@@ -1,0 +1,376 @@
+--- a/frontend/src/components/editor/EditorToolbar.tsx
++++ b/frontend/src/components/editor/EditorToolbar.tsx
+@@ -25,7 +25,8 @@
+ import { requestElectricalResolve } from '../../simulation/spice/electricalResolveHook';
+ import { reportRunEvent } from '../../services/metricsService';
+ import { useProjectStore } from '../../store/useProjectStore';
+-import { triggerDownloadVlx } from '../../utils/vlxFile';
++import { buildVlxPayload, triggerDownloadVlx } from '../../utils/vlxFile';
++import { getMotionSource, requestMotionPreview } from '../embeddedMotionBridge';
+ import {
+   compileProgress,
+   MULTI_BOARD_PROGRESS_ID,
+@@ -764,7 +765,25 @@
+     [runVerification, setCompileLogs, setConsoleOpen],
+   );
+ 
++  const motionMode = new URLSearchParams(window.location.search).get('motion') === '1';
++  const requestMotion = () => {
++    const result = requestMotionPreview({
++      search: window.location.search,
++      hash: window.location.hash,
++      referrer: document.referrer,
++      isFramed: window.parent !== window,
++      snapshot: () => buildVlxPayload({ name: 'embedded-circuit' }),
++      sourceOverride: getMotionSource(),
++      send: (message, origin) => window.parent.postMessage(message, origin),
++    });
++    if (result.handled) setMessage(result.error
++      ? { type: 'error', text: result.error }
++      : { type: 'success', text: '운동 미리보기를 요청했습니다. 회로 실행 검증은 별도입니다.' });
++    return result.handled;
++  };
++
+   const handleRun = async (skipVerify = false) => {
++    if (requestMotion()) return;
+     console.log('[handleRun] click', { activeBoardId, running, codeChangedSinceLastCompile });
+ 
+     // Pro gate, first thing: a run the gate refuses must not compile first.
+@@ -1275,6 +1294,7 @@
+    * Mirrors single Run, generalised across all targets.
+    */
+   const handleRunAll = async (skipVerify = false) => {
++    if (requestMotion()) return;
+     const sim = useSimulatorStore.getState();
+     const boardsList = sim.boards;
+     const chips = sim.components.filter((c) => c.metadataId === 'custom-chip');
+@@ -1726,11 +1746,11 @@
+     <>
+       {compact && <div className="ev-run-controls">
+         <button className="ev-run" onClick={() => isMultiBoard ? handleRunAll() : handleRun()}
+-          disabled={!ready || compiling || verifying || (isBoardless ? digitalRunning : isMultiBoard ? compileAllRunning || anyBoardRunning : running || !activeBoard)}>
+-          {!ready ? '회로 불러오는 중…' : verifying ? '회로 확인 중…' : compiling ? '코드 준비 중…' : running || anyBoardRunning ? '● 실행 중' : '▶ 시뮬레이션 실행'}
++          disabled={!ready || compiling || verifying || (!motionMode && (isBoardless ? digitalRunning : isMultiBoard ? compileAllRunning || anyBoardRunning : running || !activeBoard))}>
++          {!ready ? '회로 불러오는 중…' : motionMode ? '▶ 운동 미리보기' : verifying ? '회로 확인 중…' : compiling ? '코드 준비 중…' : running || anyBoardRunning ? '● 실행 중' : '▶ 시뮬레이션 실행'}
+         </button>
+         <button onClick={handleStop} disabled={isBoardless ? !digitalRunning : !anyBoardRunning}>■ 정지</button>
+-        <span className="ev-runtime" role="status">{message?.type==='error' ? '실행 오류 · 아래 로그를 확인하세요' : verifying ? '배선 검사 중' : compiling ? '코드를 보드 실행 파일로 변환합니다' : running || anyBoardRunning ? '가상 보드가 동작하고 있습니다' : '실행하면 코드를 자동으로 준비합니다'}</span>
++        <span className="ev-runtime" role="status">{message?.type==='error' ? message.text : motionMode ? '회로와 코드를 편집한 뒤 운동 모델을 확인하세요 · 전기 동작 검증은 별도' : verifying ? '배선 검사 중' : compiling ? '코드를 보드 실행 파일로 변환합니다' : running || anyBoardRunning ? '가상 보드가 동작하고 있습니다' : '실행하면 코드를 자동으로 준비합니다'}</span>
+       </div>}
+       {!compact && <div className="editor-toolbar-wrapper" style={{ position: 'relative' }}>
+         <div className="editor-toolbar" ref={toolbarRef}>
+--- a/frontend/src/components/circuitiny/bridge.ts
++++ b/frontend/src/components/circuitiny/bridge.ts
+@@ -28,6 +28,9 @@
+       isBoard = g.board;
+     const metadataId = g.kind,
+       metadata = registry.getById(metadataId);
++    const displayName = metadataId === 'custom-chip' && 'properties' in item && typeof item.properties?.chipName === 'string'
++      ? item.properties.chipName
++      : metadata?.name || metadataId;
+     const cid = metadataId + '@' + item.id;
+     offsets.set(item.id, g.offset);
+     const pins = g.pins.map((p) =>
+@@ -46,7 +49,7 @@
+     );
+     definitions.set(cid, {
+       id: cid,
+-      name: metadata?.name || metadataId,
++      name: displayName,
+       version: '1',
+       category: 'misc',
+       model: '',
+@@ -86,7 +89,7 @@
+         depth: g.size.h * PX,
+         rotation: g.rotation,
+         bodyCenter: g.bodyCenter,
+-        name: metadata?.name || (isBoard ? ('name' in item ? item.name : metadataId) : metadataId),
++        name: metadataId === 'custom-chip' ? displayName : metadata?.name || (isBoard ? ('name' in item ? item.name : metadataId) : metadataId),
+         pinReady: g.pinReady,
+         pinOwner: primary?.id === item.id ? 'board' : item.id,
+         generic: ![
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -6,6 +6,7 @@
+ import {hostedWorkspace,openCloudDraft} from './embeddedCloud';
+ import {initialSimulationBehavior,INITIAL_BEHAVIOR_NOTE} from './embeddedInitialBehavior';
+ import {analysisReturnUrl} from './embeddedAnalysisReturn';
++import {acceptedMotionRevision,getMotionSource,matchingCircuitRevision,setMotionSource} from './embeddedMotionBridge';
+ 
+ export function EmbeddedVisionBridge({onReady}:{onReady?:(ready:boolean)=>void}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+@@ -24,25 +25,34 @@
+  useEffect(()=>{
+   const encoded=new URLSearchParams(location.hash.slice(1)).get('project');
+   if(!encoded)return;
+-  let cancelled=false,unsub1=()=>{},unsub2=()=>{},flush=()=>{},timer:ReturnType<typeof setTimeout>;
++  let cancelled=false,unsub1=()=>{},unsub2=()=>{},flush=()=>{},timer:ReturnType<typeof setTimeout>,receiveRevision=(_e:MessageEvent)=>{};
+   (async()=>{
+    const original=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded),c=>c.charCodeAt(0))));
+    const source=original.embeddedVision;
++   const motion=new URLSearchParams(location.search).get('motion')==='1';
+    if(original.format!=='velxio-project'||!source?.source_graph_sha256)throw new Error('사진 분석에서 내보낸 회로 파일이 아닙니다.');
+    const storageKey='embedded-velxio:'+(hostedWorkspace()?'workspace:'+hostedWorkspace()+':':'')+source.source_graph_sha256+':'+source.inventory_plan+':'+(source.recipe||'legacy')+':'+(source.function_version||'legacy')+':'+(source.assembly?.layout_version||'legacy');
++   if(motion)try{const backups=Object.keys(localStorage).filter(k=>k.startsWith(storageKey+':recovery:')).sort();if(backups.length)setRecoveryKey(backups[backups.length-1]);}catch{/* unavailable */}
+    let payload=original,restored=false;
+-   try{const saved=localStorage.getItem(storageKey);if(saved){payload=JSON.parse(saved);restored=true;}}catch{/* unavailable */}
++   const preserve=(draft:any)=>{try{let n=Date.now();let recovery=storageKey+':recovery:'+n;while(localStorage.getItem(recovery))recovery=storageKey+':recovery:'+(++n);localStorage.setItem(recovery,JSON.stringify(draft));setRecoveryKey(recovery);}catch{throw new Error('이전 초안 백업에 실패했습니다. 브라우저 저장 공간을 확인하세요.');}};
++   let draft:any=null;
++   try{const saved=localStorage.getItem(storageKey);if(saved)draft=JSON.parse(saved);}catch{/* unavailable */}
++   if(draft){if(motion&&!matchingCircuitRevision(original,draft))preserve(draft);else{payload=draft;restored=true;}}
+    cloud.current=await openCloudDraft(source);
+    if(cloud.current?.payload){
++    if(motion&&!matchingCircuitRevision(original,cloud.current.payload)){
++     preserve(cloud.current.payload);setCloudStatus('이전 서버 초안을 백업했습니다. 최신 회로로 시작합니다.');
++    }else{
+     const content=(p:any)=>JSON.stringify([p.boards,p.components,p.wires,p.fileGroups]);
+-    if(restored&&content(payload)!==content(cloud.current.payload)){localStorage.setItem(storageKey+':recovery',JSON.stringify(payload));setRecoveryKey(storageKey+':recovery');}
++    if(restored&&content(payload)!==content(cloud.current.payload)){if(motion)preserve(payload);else{localStorage.setItem(storageKey+':recovery',JSON.stringify(payload));setRecoveryKey(storageKey+':recovery');}}
+     else if(localStorage.getItem(storageKey+':recovery'))setRecoveryKey(storageKey+':recovery');
+-    payload=cloud.current.payload;restored=true;setCloudStatus('서버 저장본 r'+cloud.current.revision()+' · 브라우저 임시 저장과 별도');}
++    payload=cloud.current.payload;restored=true;setCloudStatus('서버 저장본 r'+cloud.current.revision()+' · 브라우저 임시 저장과 별도');}}
+    else if(cloud.current)setCloudStatus('아직 서버 저장본 없음 · 편집 후 작업공간에 저장하세요.');
+    if(cancelled)return;
+    await importVlxFile(new File([JSON.stringify(payload)],'embedded.vlx',{type:'application/json'}));
+    if(cancelled)return;
+    setKey(storageKey);
++   if(motion)setMotionSource(source);
+    onReady?.(true);
+    setTitle(source.function?.summary||original.name||'새 회로');
+    setBehavior(initialSimulationBehavior(source));
+@@ -54,11 +64,17 @@
+      localStorage.setItem(storageKey,JSON.stringify({...data,embeddedVision:source}));
+     }catch{setFailed(true);setMessage('자동 저장에 실패했습니다. 파일 → Export .vlx로 저장하세요.');}};
+    const save=()=>{clearTimeout(timer);timer=setTimeout(flush,200);};
++   if(motion){receiveRevision=(event:MessageEvent)=>{
++    const revision=acceptedMotionRevision({search:location.search,referrer:document.referrer,eventOrigin:event.origin,fromParent:event.source===window.parent,data:event.data,source});
++    if(revision!==undefined){source.circuit_revision=revision;setMotionSource(source);flush();
++     const updated=btoa(Array.from(new TextEncoder().encode(JSON.stringify({...buildVlxPayload({name:original.name}),embeddedVision:source})),b=>String.fromCharCode(b)).join(''));
++     history.replaceState(null,'',location.pathname+location.search+'#project='+encodeURIComponent(updated));}
++   };window.addEventListener('message',receiveRevision);}
+    window.addEventListener('pagehide',flush);
+    unsub1=useSimulatorStore.subscribe((s,p)=>{if(s.components!==p.components||s.wires!==p.wires||JSON.stringify(s.boards.map(b=>[b.id,b.x,b.y,b.rotation,b.boardKind,b.name,b.activeFileGroupId]))!==JSON.stringify(p.boards.map(b=>[b.id,b.x,b.y,b.rotation,b.boardKind,b.name,b.activeFileGroupId])))save();});
+    unsub2=useEditorStore.subscribe((s,p)=>{if(s.fileGroups!==p.fileGroups)save();});
+   })().catch(e=>{setFailed(true);setMessage('가져오기 실패: '+String(e));});
+-  return()=>{cancelled=true;unsub1();unsub2();clearTimeout(timer);window.removeEventListener('pagehide',flush);};
++  return()=>{cancelled=true;unsub1();unsub2();clearTimeout(timer);window.removeEventListener('pagehide',flush);window.removeEventListener('message',receiveRevision);setMotionSource(undefined);};
+  },[]);
+  return <header className="ev-topbar">
+   <div className="ev-project">
+@@ -66,7 +82,7 @@
+    <h1>{title}</h1>{behavior&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
+   </div>
+   <div className="ev-project-actions">
+-   {hostedWorkspace()&&<button className="ev-cloud-save" disabled={!key||!cloud.current||cloudSaving} onClick={async()=>{if(!cloud.current)return;setCloudSaving(true);try{const payload=buildVlxPayload({name:'embedded-circuit'});const revision=await cloud.current.save(payload);setCloudStatus('서버에 저장됨 · r'+revision);}catch(e){setCloudStatus(String(e));}finally{setCloudSaving(false);}}}>{cloudSaving?'저장 중…':'작업공간에 저장'}</button>}
++   {hostedWorkspace()&&<button className="ev-cloud-save" disabled={!key||!cloud.current||cloudSaving} onClick={async()=>{if(!cloud.current)return;setCloudSaving(true);try{const payload={...buildVlxPayload({name:'embedded-circuit'}),embeddedVision:getMotionSource()};const revision=await cloud.current.save(payload);setCloudStatus('서버에 저장됨 · r'+revision);}catch(e){setCloudStatus(String(e));}finally{setCloudSaving(false);}}}>{cloudSaving?'저장 중…':'작업공간에 저장'}</button>}
+    {cloudStatus&&<span className="ev-cloud-status" role="status">{cloudStatus}</span>}
+    <span className="ev-badge">가상 회로 · 실물 미검증</span>
+    <button className="ev-download" disabled={!key} onClick={()=>triggerDownloadVlx({name:'embedded-circuit'})}>↓ 프로젝트 저장</button>
+@@ -74,7 +90,7 @@
+     <strong>사진 분석에서 만든 새 설계</strong><p>{notice||'원본 배선을 복원한 결과가 아닙니다. 실제 부품과 핀을 대조하세요.'}</p>
+     <p>{message}</p><p role="status">{cloudStatus}</p><p>편집 내용은 이 브라우저에 자동 저장됩니다. 프로젝트 파일(.vlx)로도 저장할 수 있습니다. SaaS에서는 ‘작업공간에 저장’을 눌러 서버에도 보관하세요. 서버 저장본은 다시 열 때 먼저 불러옵니다. KiCad에는 자동 반영되지 않습니다.</p>
+     <p>로컬 컴파일은 Arduino UNO를 지원합니다. 다른 보드와 외부 라이브러리는 현재 지원하지 않습니다.</p>
+-    {recoveryKey&&<button disabled={running} onClick={async()=>{const saved=localStorage.getItem(recoveryKey);if(saved){try{await importVlxFile(new File([saved],'browser-draft.vlx',{type:'application/json'}));setCloudStatus('브라우저 초안 복원됨 · 서버에 반영하려면 작업공간에 저장하세요.');}catch{setCloudStatus('브라우저 초안을 불러오지 못했습니다.');}}}}>브라우저 초안 복원</button>}
++    {recoveryKey&&(new URLSearchParams(location.search).get('motion')==='1'?<button onClick={()=>{const saved=localStorage.getItem(recoveryKey);if(saved){const url=URL.createObjectURL(new Blob([saved],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='previous-draft.vlx';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}}>이전 초안 다운로드</button>:<button disabled={running} onClick={async()=>{const saved=localStorage.getItem(recoveryKey);if(saved){try{await importVlxFile(new File([saved],'browser-draft.vlx',{type:'application/json'}));setCloudStatus('브라우저 초안 복원됨 · 서버에 반영하려면 작업공간에 저장하세요.');}catch{setCloudStatus('브라우저 초안을 불러오지 못했습니다.');}}}}>브라우저 초안 복원</button>)}
+     {key&&<button onClick={()=>{if(confirm('이 편집 내용을 버리고 최초 제안으로 되돌릴까요?')){resetting.current=true;localStorage.removeItem(key);location.reload();}}}>최초 제안으로 복원</button>}
+     <a href="https://github.com/davidmonterocrespo24/velxio" target="_blank" rel="noreferrer">Powered by Velxio · AGPL-3.0</a>
+    </div></details>
+--- /dev/null
++++ b/frontend/src/components/embeddedMotionBridge.ts
+@@ -0,0 +1,71 @@
++/** Bridge from the real editor to the host's separate motion preview. */
++export type MotionBridgeResult =
++  | { handled: false }
++  | { handled: true; error?: string };
++
++let motionSource: Record<string, unknown> | undefined;
++export function setMotionSource(source: Record<string, unknown> | undefined) { motionSource = source; }
++export function getMotionSource() { return motionSource; }
++
++/** Legacy drafts have no comparable revision and must not replace a robot circuit. */
++export function matchingCircuitRevision(original: any, saved: any): boolean {
++  const revision = original?.embeddedVision?.circuit_revision;
++  return Number.isSafeInteger(revision) && revision >= 0 &&
++    saved?.embeddedVision?.circuit_revision === revision;
++}
++
++export function acceptedMotionRevision(options: {
++  search: string; referrer: string; eventOrigin: string; fromParent: boolean;
++  data: any; source: Record<string, any>;
++}): number | undefined {
++  try {
++    const query = new URLSearchParams(options.search);
++    const channel = query.get('channel') || '';
++    const origin = options.source.analysis_origin;
++    const revision = options.data?.revision;
++    if (query.get('embedded') !== '1' || query.get('motion') !== '1' ||
++        !/^[a-f0-9]{32,128}$/i.test(channel) || !options.fromParent ||
++        options.data?.type !== 'ev:revision-saved' || options.data?.channel !== channel ||
++        typeof origin !== 'string' || new URL(origin).origin !== origin ||
++        !['http:', 'https:'].includes(new URL(origin).protocol) ||
++        new URL(options.referrer).origin !== origin || options.eventOrigin !== origin ||
++        !Number.isSafeInteger(revision) || revision < 0 ||
++        !Number.isSafeInteger(options.source.circuit_revision) ||
++        revision !== options.source.circuit_revision + 1) return undefined;
++    return revision;
++  } catch { return undefined; }
++}
++
++export function requestMotionPreview(options: {
++  search: string;
++  hash: string;
++  referrer: string;
++  isFramed: boolean;
++  snapshot: () => unknown;
++  send: (message: unknown, origin: string) => void;
++  sourceOverride?: Record<string, unknown>;
++}): MotionBridgeResult {
++  const query = new URLSearchParams(options.search);
++  if (query.get('motion') !== '1') return { handled: false };
++  try {
++    const channel = query.get('channel') || '';
++    if (query.get('embedded') !== '1' || !options.isFramed || !/^[a-f0-9]{32,128}$/i.test(channel)) throw new Error('연결 설정이 올바르지 않습니다.');
++    const encoded = new URLSearchParams(options.hash.slice(1)).get('project');
++    if (!encoded || encoded.length > 2_000_000) throw new Error('원본 프로젝트가 없습니다.');
++    const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
++    const original = JSON.parse(new TextDecoder().decode(bytes));
++    const source = original?.embeddedVision;
++    if (original?.format !== 'velxio-project' || typeof source?.source_graph_sha256 !== 'string' || !source.source_graph_sha256) throw new Error('원본 프로젝트를 확인할 수 없습니다.');
++    const origin = source.analysis_origin;
++    if (typeof origin !== 'string') throw new Error('상위 화면 주소가 없습니다.');
++    const parsed = new URL(origin);
++    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin || parsed.username || parsed.password || new URL(options.referrer).origin !== origin) throw new Error('상위 화면 주소가 일치하지 않습니다.');
++    const payload = { ...(options.snapshot() as object), embeddedVision: options.sourceOverride || source };
++    const serialized = JSON.stringify(payload);
++    if (serialized.length > 1_000_000) throw new Error('프로젝트가 너무 큽니다.');
++    options.send({ type: 'ev:motion-request', channel, payload: JSON.parse(serialized) }, origin);
++    return { handled: true };
++  } catch (error) {
++    return { handled: true, error: error instanceof Error ? error.message : '운동 미리보기 요청에 실패했습니다.' };
++  }
++}
+--- /dev/null
++++ b/frontend/src/__tests__/embedded-motion-bridge.test.ts
+@@ -0,0 +1,75 @@
++import { describe, expect, it, vi } from 'vitest';
++import { acceptedMotionRevision, matchingCircuitRevision, requestMotionPreview } from '../components/embeddedMotionBridge';
++
++const channel = 'a'.repeat(32);
++const source = { source_graph_sha256: 'abc', analysis_origin: 'http://localhost:8897' };
++const original = { format: 'velxio-project', embeddedVision: source };
++const encoded = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(original))));
++const base = () => ({
++  search: `?embedded=1&motion=1&channel=${channel}`,
++  hash: `#project=${encodeURIComponent(encoded)}`,
++  referrer: 'http://localhost:8897/workspace',
++  isFramed: true,
++  snapshot: () => ({ format: 'velxio-project', components: [{ id: 'edited' }], wires: [], boards: [], fileGroups: {} }),
++  send: vi.fn(),
++});
++
++describe('embedded motion preview bridge', () => {
++  it('sends the edited snapshot and provenance only to the matching parent origin', () => {
++    const options = base();
++    expect(requestMotionPreview(options)).toEqual({ handled: true });
++    expect(options.send).toHaveBeenCalledWith({
++      type: 'ev:motion-request', channel,
++      payload: { ...options.snapshot(), embeddedVision: source },
++    }, source.analysis_origin);
++  });
++  it('leaves ordinary editor simulation alone', () => {
++    const options = { ...base(), search: '?embedded=1' };
++    expect(requestMotionPreview(options)).toEqual({ handled: false });
++    expect(options.send).not.toHaveBeenCalled();
++  });
++  it.each([
++    { isFramed: false },
++    { referrer: 'https://example.com/' },
++    { referrer: '' },
++    { search: '?embedded=1&motion=1&channel=short' },
++    { search: `?motion=1&channel=${channel}` },
++    { hash: '#project=invalid' },
++  ])('fails closed for an invalid host or project: %o', mutation => {
++    const options = { ...base(), ...mutation };
++    expect(requestMotionPreview(options)).toMatchObject({ handled: true, error: expect.any(String) });
++    expect(options.send).not.toHaveBeenCalled();
++  });
++  it('rejects snapshots too large to transfer', () => {
++    const options = { ...base(), snapshot: () => ({ data: 'x'.repeat(1_000_001) }) };
++    expect(requestMotionPreview(options)).toMatchObject({ handled: true, error: expect.any(String) });
++    expect(options.send).not.toHaveBeenCalled();
++  });
++  it('restores only a draft from the same circuit revision', () => {
++    const current = { embeddedVision: { circuit_revision: 4 } };
++    expect(matchingCircuitRevision(current, { embeddedVision: { circuit_revision: 4 } })).toBe(true);
++    expect(matchingCircuitRevision(current, { embeddedVision: { circuit_revision: 3 } })).toBe(false);
++    expect(matchingCircuitRevision(current, {})).toBe(false);
++    expect(matchingCircuitRevision({}, {})).toBe(false);
++  });
++  it('sends the current source revision after a save', () => {
++    const options = { ...base(), sourceOverride: { ...source, circuit_revision: 2 } };
++    requestMotionPreview(options);
++    expect(options.send.mock.calls[0][0].payload.embeddedVision.circuit_revision).toBe(2);
++  });
++  it('accepts only the next revision from the matching parent and channel', () => {
++    const valid = { search: base().search, referrer: base().referrer,
++      eventOrigin: source.analysis_origin, fromParent: true,
++      data: { type: 'ev:revision-saved', channel, revision: 5 },
++      source: { ...source, circuit_revision: 4 } };
++    expect(acceptedMotionRevision(valid)).toBe(5);
++    for (const bad of [
++      { fromParent: false }, { eventOrigin: 'https://attacker.example' },
++      { data: { ...valid.data, channel: 'b'.repeat(32) } },
++      { data: { ...valid.data, revision: 4 } },
++      { data: { ...valid.data, revision: 9 } },
++      { data: { ...valid.data, revision: 5.5 } },
++      { referrer: '' },
++    ]) expect(acceptedMotionRevision({ ...valid, ...bad })).toBeUndefined();
++  });
++});
+--- /dev/null
++++ b/frontend/src/__tests__/rover-visual-pins.test.ts
+@@ -0,0 +1,44 @@
++// @vitest-environment jsdom
++import { afterEach, expect, it } from 'vitest';
++import '../velxio-elements/custom-chip-element';
++import { useSimulatorStore as native } from '../store/useSimulatorStore';
++import { connectCircuitiny } from '../components/circuitiny/bridge';
++import { useStore } from '../components/circuitiny/store';
++import { reconnectWireEnd } from '../utils/wireReconnect';
++
++let dispose = () => {};
++afterEach(() => { dispose(); document.body.innerHTML = ''; });
++
++it('edits a visual Pi and motor HAT through the native editor pins, without a fake board', () => {
++  const part = (id: string, name: string, x: number, pins: string[]) => ({
++    id, metadataId: 'custom-chip', x, y: 50,
++    properties: { chipName: name, chipJson: JSON.stringify({
++      name, pins: pins.map((pin, i) => ({ name: pin, x: i ? 160 : 0, y: 20 + i * 20 })),
++    }) },
++  });
++  const pi = part('U1', 'Pi 4B (visual only)', 50, ['USB_C', 'GPIO40']);
++  const hat = part('HAT1', 'Motor HAT (visual only)', 300, ['GPIO40', 'M1.left', 'M1.right']);
++  for (const p of [pi, hat]) {
++    const element = document.createElement('velxio-custom-chip') as any;
++    element.id = p.id;
++    element.chipName = p.properties.chipName;
++    element.chipJson = p.properties.chipJson;
++    document.body.appendChild(element);
++  }
++  native.getState().loadProjectState({
++    boards: [], fileGroups: {}, components: [pi, hat], activeBoardId: null,
++    wires: [{ id: 'C1', start: { componentId: 'U1', pinName: 'GPIO40', x: 216, y: 96 },
++      end: { componentId: 'HAT1', pinName: 'GPIO40', x: 306, y: 76 },
++      color: '#24946a', waypoints: [], autoRouted: true }],
++  } as any);
++  native.setState({ running: false });
++  dispose = connectCircuitiny();
++  const project = useStore.getState().project;
++  expect(project.board).toBe('none');
++  expect(project.components.map(c => c.instance)).toEqual(['U1', 'HAT1']);
++  expect(project.nets[0].endpoints).toEqual(['U1.GPIO40', 'HAT1.GPIO40']);
++  expect(project.components[0].config?.name).toBe('Pi 4B (visual only)');
++  expect(reconnectWireEnd('C1', 'end', { componentId: 'HAT1', pinName: 'M1.left', x: 0, y: 0 })).toBe(true);
++  expect(native.getState().wires[0].end.pinName).toBe('M1.left');
++  expect(useStore.getState().project.nets[0].endpoints).toEqual(['U1.GPIO40', 'HAT1.M1__left']);
++});

@@ -1,0 +1,174 @@
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -2,6 +2,7 @@
+ import {useEffect,useState,useRef} from 'react';
+ import {withPhotoMounts} from './circuitiny/photoMounts';
+ import type {ReactNode} from 'react';
++import {EmbeddedToolCard} from './EmbeddedToolCard';
+ import {importVlxFile,buildVlxPayload,triggerDownloadVlx} from '../utils/vlxFile';
+ import {useSimulatorStore} from '../store/useSimulatorStore';
+ import {useEditorStore} from '../store/useEditorStore';
+@@ -118,7 +119,7 @@
+    <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">← 사진 분석</a><span>EMBEDDED VISION / {inspection?'STRUCTURE':'SIMULATOR'}</span></div>
+    <h1>{title}</h1>{behavior&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
+   </div>
+-  <div className="ev-project-actions">
++  <EmbeddedToolCard title="프로젝트 저장" className="ev-project-actions">
+    {hostedWorkspace()&&<button className="ev-cloud-save" disabled={!key||!cloud.current||cloudSaving} onClick={async()=>{if(!cloud.current)return;setCloudSaving(true);try{const payload={...buildVlxPayload({name:'embedded-circuit'}),embeddedVision:getMotionSource()};const revision=await cloud.current.save(payload);setCloudStatus('서버에 저장됨 · r'+revision);}catch(e){setCloudStatus(String(e));}finally{setCloudSaving(false);}}}>{cloudSaving?'저장 중…':'작업공간에 저장'}</button>}
+    {cloudStatus&&<span className="ev-cloud-status" role="status">{cloudStatus}</span>}
+    <span className="ev-badge">{inspection?'사진 기반 구조 · 형상 근사':'가상 회로 · 실물 미검증'}</span>
+@@ -131,7 +132,7 @@
+     {key&&<button onClick={()=>{if(confirm('이 편집 내용을 버리고 최초 제안으로 되돌릴까요?')){resetting.current=true;localStorage.removeItem(key);location.reload();}}}>최초 제안으로 복원</button>}
+     <a href="https://github.com/davidmonterocrespo24/velxio" target="_blank" rel="noreferrer">Powered by Velxio · AGPL-3.0</a>
+    </div></details>
+-  </div>
++  </EmbeddedToolCard>
+   {actions&&<div className="ev-project-toolbar" role="group" aria-label="회로·코드 공통 도구" data-action-scope="project">{actions}</div>}
+   {failed&&<p className="ev-import-error" role="alert">{message}</p>}
+   {!key&&!failed&&<p role="status" aria-live="polite">{message}</p>}
+--- a/frontend/src/components/EmbeddedWorkbench.css
++++ b/frontend/src/components/EmbeddedWorkbench.css
+@@ -230,3 +230,88 @@
+ .ev-side-tools .ev-scoped-menu .emb-menu{position:fixed;top:70px;left:132px;right:auto;max-height:calc(100dvh - 90px);overflow:auto;}
+ .ev-side-tools .ev-code-actions .emb-menu,.ev-side-tools .ev-circuit-help .emb-menu{left:auto;right:116px;}
+ @media(max-width:767px){.app.embedded-workbench.ev-side-tools{grid-template-columns:104px minmax(0,1fr);}.ev-side-tools .ev-code-workspace{grid-template-columns:minmax(0,1fr) 82px;}.ev-side-tools .ev-circuit-layout{grid-template-columns:minmax(0,1fr) 94px;}.ev-side-tools .ev-project h1{font-size:10px;}.ev-side-tools .ev-scoped-menu .emb-menu{left:108px;max-width:calc(100vw - 116px);min-width:180px;}.ev-side-tools .ev-code-actions .emb-menu,.ev-side-tools .ev-circuit-help .emb-menu{left:auto;right:98px;}}
++
++/* Readable functional cards. The canvas and simulator stay mounted. */
++.app.embedded-workbench.ev-card-tools{
++ grid-template-columns:minmax(0,1fr);
++ grid-template-rows:auto auto minmax(0,1fr);
++ grid-template-areas:"header" "notice" "canvas";
++}
++.ev-card-tools>.ev-topbar{
++ display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;
++ gap:12px 20px;padding:14px 20px;border-right:0;overflow:visible;
++}
++.ev-card-tools .ev-project{min-width:0;align-self:center;}
++.ev-card-tools .ev-eyebrow{margin-bottom:6px;gap:12px;}
++.ev-card-tools .ev-project h1{font-size:18px;line-height:1.5;margin:0;overflow-wrap:anywhere;}
++.ev-card-tools .ev-project>p,.ev-card-tools .ev-project>small,.ev-card-tools .ev-badge{display:none;}
++.ev-card-tools .ev-tool-card{
++ display:block;min-width:0;margin:0;padding:12px 14px;background:#f8fbf9;
++ border:1px solid #dbe6df;border-radius:12px;
++}
++.ev-tool-card-title{margin:0 0 9px;font-size:12px;font-weight:700;line-height:1.4;color:#536f60;letter-spacing:.02em;}
++.ev-tool-card-body{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;}
++.ev-card-tools .ev-project-actions{max-width:min(520px,46vw);}
++.ev-card-tools .ev-project-toolbar{
++ grid-column:1/-1;display:grid;grid-template-columns:minmax(210px,1fr) minmax(300px,1.4fr) minmax(230px,1fr);
++ align-items:stretch;gap:12px;width:100%;min-width:0;border:0;padding:0;
++}
++.ev-card-tools .ev-project-toolbar button,.ev-card-tools .ev-project-actions button,
++.ev-card-tools .ev-scoped-menu .emb-trigger,.ev-card-tools .ev-pane-heading button,
++.ev-card-tools .ev-circuit-help summary,.ev-card-tools .ev-circuit-edit-tools button,
++.ev-card-tools .ev-circuit-edit-tools summary{
++ min-height:40px;max-width:100%;height:auto;padding:9px 13px;font-size:13px;line-height:1.5;
++ white-space:normal;overflow-wrap:anywhere;flex-shrink:0;
++}
++.ev-card-tools .ev-project-toolbar .ev-run-controls{flex:1 1 100%;flex-wrap:wrap;gap:8px;min-width:0;}
++.ev-card-tools .ev-project-toolbar .ev-run-controls .ev-run{min-width:0;flex:1 1 170px;padding:10px 16px;}
++.ev-card-tools .ev-project-toolbar .ev-runtime{flex-basis:100%;max-width:none;line-height:1.6;font-size:12px;}
++.ev-card-tools .ev-project-toolbar .ev-view-switch{display:flex;flex-wrap:wrap;gap:4px;min-width:0;}
++.ev-card-tools .ev-project-toolbar .ev-view-switch button{flex:1 1 100px;}
++.ev-card-tools .ev-progress-summary{flex-basis:100%;font-size:12px;}
++.ev-card-tools .ev-progress-summary p{font-size:12px;line-height:1.6;margin:5px 0;}
++.ev-card-tools .ev-progress-summary summary{padding:6px 0;}
++.ev-card-tools .ev-info{text-align:left;font-size:12px;}
++.ev-card-tools .ev-info summary{min-height:40px;display:flex;align-items:center;white-space:normal;}
++.ev-card-tools .ev-info>div{top:calc(100% + 8px);}
++.ev-card-tools .ev-cloud-status{flex-basis:100%;max-width:none;overflow-wrap:anywhere;}
++.ev-card-tools>.app-container{margin:0 8px 8px;min-height:0;border-radius:12px;}
++.ev-card-tools .ev-code-pane-tools,.ev-card-tools .ev-circuit-pane-tools{
++ margin:8px;padding:10px 12px;border:1px solid #dbe6df;border-radius:10px;background:#f8fbf9;
++}
++.ev-card-tools .ev-code-pane-tools .ev-pane-heading,.ev-card-tools .ev-circuit-pane-tools .ev-pane-heading{
++ padding:0;border:0;background:transparent;min-height:40px;height:auto;gap:10px;flex-wrap:wrap;
++}
++.ev-card-tools .ev-code-actions,.ev-card-tools .ev-canvas-actions{gap:8px;flex-wrap:wrap;}
++.ev-card-tools .ev-pane-heading strong{font-size:13px;}
++.ev-card-tools .ev-circuit-help{padding:8px 0 0;margin-top:8px;background:transparent;}
++.ev-card-tools .ev-circuit-edit-tools .ev-c3d-tools{
++ position:static;inset:auto;display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0;
++ padding:8px 0 0;border:0;border-top:1px solid #dbe6df;box-shadow:none;background:transparent;
++}
++.ev-card-tools .ev-circuit-edit-tools .ev-c3d-tools button,
++.ev-card-tools .ev-circuit-edit-tools .ev-c3d-tools summary{
++ font-family:inherit;border:1px solid #ceded2;border-radius:8px;background:#fff;color:#305d40;
++}
++.ev-card-tools .ev-native-circuit-tools>div{max-height:200px;overflow:auto;}
++.ev-card-tools .ev-circuit-edit-tools button[aria-pressed=true]{background:#e1f2e7;border-color:#79ac8b;color:#1e6240;}
++.ev-card-tools .ev-circuit-edit-tools .ev-c3d-more[open]{flex-basis:100%;}
++.ev-card-tools .ev-circuit-edit-tools .ev-c3d-more>div{position:static;min-width:0;max-width:100%;max-height:200px;overflow:auto;margin-top:8px;box-shadow:none;}
++@media(max-width:1000px){
++ .ev-card-tools .ev-project-toolbar{grid-template-columns:repeat(2,minmax(0,1fr));}
++ .ev-card-tools .ev-shared-execution{grid-column:span 2;grid-row:2;}
++}
++@media(max-width:600px){
++ .app.embedded-workbench.ev-card-tools{grid-template-rows:auto auto minmax(320px,1fr);overflow-y:auto;}
++ .ev-card-tools>.ev-topbar{grid-template-columns:minmax(0,1fr);padding:12px;gap:10px;}
++ .ev-card-tools .ev-project h1{font-size:16px;}
++ .ev-card-tools .ev-project-actions{max-width:none;}
++ .ev-card-tools .ev-project-toolbar{grid-template-columns:minmax(0,1fr);gap:10px;}
++ .ev-card-tools .ev-shared-execution{grid-column:auto;grid-row:auto;}
++ .ev-card-tools .ev-tool-card{padding:10px 12px;}
++ .ev-card-tools .ev-tool-card-body>button{flex:1 1 120px;}
++ .ev-card-tools .ev-pane-heading .ev-dimension-switch{gap:6px;}
++ .ev-card-tools .ev-scoped-menu .emb-menu{max-width:calc(100vw - 32px);}
++ .ev-card-tools .ev-info>div{position:fixed;left:16px;right:16px;top:84px;width:auto;max-height:calc(100dvh - 108px);}
++ .ev-card-tools .ev-project-toolbar button,.ev-card-tools .ev-pane-heading button,.ev-card-tools .ev-scoped-menu .emb-trigger{min-height:44px;}
++}
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -1,6 +1,7 @@
+ import { sharedTool } from '../components/circuitiny/sharedTools';
+ import { useStore as useCircuitinyStore } from '../components/circuitiny/store';
+ import { EmbeddedVisionBridge } from '../components/EmbeddedVisionBridge';
++import { EmbeddedToolCard } from '../components/EmbeddedToolCard';
+ import {EnvironmentRuntime} from '../components/circuitiny/EnvironmentRuntime';
+ import {FunctionalRuntime} from '../components/circuitiny/FunctionalRuntime';
+ import {FunctionalControls} from '../components/circuitiny/FunctionalControls';
+@@ -605,25 +606,27 @@
+   ) : undefined;
+ 
+   return (
+-    <div className={embedded ? `app embedded-workbench ev-side-tools${toolsOpen?' ev-tools-open':''}` : 'app'}>
++    <div className={embedded ? `app embedded-workbench ev-card-tools${toolsOpen?' ev-tools-open':''}` : 'app'}>
+       <EnvironmentRuntime/>
+       <FunctionalRuntime/>
+       {embedded ? <>
+        <EmbeddedVisionBridge onReady={(ready,restored,simulationNotice,inspectionMode)=>{setInspection(!!inspectionMode);setSimulationUnavailable(simulationNotice);setAutoRunAllowed(ready&&!restored&&!simulationNotice);setImportReady(ready);}} actions={<>
+-        <div className="ev-shared-actions">
++        <EmbeddedToolCard title={inspection?'프로젝트 메뉴':'시스템 전환·파일'} className="ev-shared-actions">
+          {!inspection&&<EmbeddedSystemConversion/>}
+          <EditorMenuBar scope="project"/>
+-        </div>
+-        {!inspection&&<div className="ev-shared-execution">
++        </EmbeddedToolCard>
++        {!inspection&&<EmbeddedToolCard title="시뮬레이션" className="ev-shared-execution">
+          {!importReady?<small>회로를 불러오는 중입니다.</small>:simulationUnavailable?<small>이 변환 회로에서는 실행할 수 없습니다.</small>:<EditorToolbar compact ready={importReady} autoRunAllowed={autoRunAllowed} consoleOpen={consoleOpen} setConsoleOpen={setConsoleOpen} compileLogs={compileLogs} setCompileLogs={setCompileLogs}/>}
+          {importReady&&!inspection&&<FunctionalControls/>}
+          <button className="ev-output-toggle" disabled={!!simulationUnavailable} aria-expanded={resultsOpen} onClick={()=>{setResultsOpen(!resultsOpen);setConsoleOpen(false);if(isMobile)setMobileView('circuit');}}>보드 출력 {resultsOpen?'접기':'보기'}</button>
+-        </div>}
++        </EmbeddedToolCard>}
++        <EmbeddedToolCard title="작업 화면" className="ev-screen-actions">
+         <div className="ev-view-switch" role="group" aria-label="작업 화면">
+          <button aria-pressed={isMobile ? mobileView==='circuit' : viewMode==='circuit'} onClick={()=>{setViewMode('circuit');setMobileView('circuit');}}>{inspection?'3D 구성 보기':'회로 보기'}</button>
+          {!inspection&&<button aria-pressed={isMobile ? mobileView==='code' : viewMode==='both'} onClick={()=>{setViewMode('both');setMobileView('code');}}>{isMobile?'코드 편집':'코드 함께 보기'}</button>}
+         </div>
+         <details className="ev-progress-summary"><summary>진행 상태</summary><p>{!importReady?'불러오는 중입니다.':inspection?'외장·내부 분해 메뉴에서 표시 방식을 선택하세요.':circuitRunning?'가상 보드가 실행 중입니다.':resultsOpen?'보드 출력을 확인하고 있습니다.':'회로와 코드를 편집할 수 있습니다.'}</p></details>
++        </EmbeddedToolCard>
+        </>} />
+        {simulationUnavailable&&<div className="ev-simulation-unavailable" role="status"><strong>{inspection?'기능 기반 내부 구성 추정':'모터 시뮬레이션 미지원'}</strong><span>{simulationUnavailable}</span></div>}
+       </> : <AppHeader editorMenu={!isMobile ? <EditorMenuBar /> : undefined} editorToolbar={unifiedToolbar}/> }
+--- /dev/null
++++ b/frontend/src/components/EmbeddedToolCard.tsx
+@@ -0,0 +1,9 @@
++import type {ReactNode} from 'react';
++
++/** Functional groups share the same readable, wrapping toolbar treatment. */
++export function EmbeddedToolCard({title,children,className=''}:{title:string;children:ReactNode;className?:string}){
++ return <section className={`ev-tool-card ${className}`} aria-label={title}>
++  <h2 className="ev-tool-card-title">{title}</h2>
++  <div className="ev-tool-card-body">{children}</div>
++ </section>;
++}

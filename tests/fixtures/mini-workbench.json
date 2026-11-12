@@ -1,0 +1,223 @@
+{
+  "format": "velxio-project",
+  "version": 1,
+  "exportedAt": "2026-10-28T04:16:20.209729+00:00",
+  "name": "새 설계 · Arduino UNO · LED 깜빡이기",
+  "boards": [
+    {
+      "id": "U1",
+      "name": "Arduino UNO · 새 설계",
+      "boardKind": "arduino-uno",
+      "x": 40,
+      "y": 80,
+      "activeFileGroupId": "group-U1",
+      "languageMode": "arduino",
+      "serialBaudRate": 115200
+    }
+  ],
+  "fileGroups": {
+    "group-U1": [
+      {
+        "name": "sketch.ino",
+        "content": "// NEW DESIGN: UNO R3 D5 -> 220 ohm -> LED A; LED K -> GND.\n// Board/LED model, resistor value and timing are new specifications, not photo facts.\n#include <Arduino.h>\nconstexpr uint8_t LED_PIN = 5;\nvoid setup() {\n  pinMode(LED_PIN, OUTPUT);\n  digitalWrite(LED_PIN, LOW);\n  Serial.begin(115200);\n}\nconstexpr unsigned long HALF_PERIOD_MS = 500;\nvoid loop() {\n  digitalWrite(LED_PIN, HIGH);\n  Serial.println(\"LED ON\");\n  delay(HALF_PERIOD_MS);\n  digitalWrite(LED_PIN, LOW);\n  Serial.println(\"LED OFF\");\n  delay(HALF_PERIOD_MS);\n}\n"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "BB1",
+      "metadataId": "breadboard-mini",
+      "x": 400,
+      "y": 115,
+      "properties": {}
+    },
+    {
+      "id": "R1",
+      "metadataId": "resistor",
+      "properties": {
+        "value": "220"
+      },
+      "x": 454.16,
+      "y": 145.43
+    },
+    {
+      "id": "D1",
+      "metadataId": "led",
+      "properties": {
+        "color": "red"
+      },
+      "x": 486.76,
+      "y": 128.28
+    }
+  ],
+  "wires": [
+    {
+      "id": "J1",
+      "start": {
+        "componentId": "U1",
+        "pinName": "5",
+        "x": 0,
+        "y": 0
+      },
+      "end": {
+        "componentId": "BB1",
+        "pinName": "5t.a",
+        "x": 460.15999999999997,
+        "y": 147.48
+      },
+      "color": "#d3a31c",
+      "waypoints": [],
+      "autoRouted": true
+    },
+    {
+      "id": "J2",
+      "start": {
+        "componentId": "U1",
+        "pinName": "GND",
+        "x": 0,
+        "y": 0
+      },
+      "end": {
+        "componentId": "BB1",
+        "pinName": "10t.a",
+        "x": 508.15999999999997,
+        "y": 147.48
+      },
+      "color": "#263238",
+      "waypoints": [],
+      "autoRouted": true
+    },
+    {
+      "id": "SEAT_R1_1",
+      "start": {
+        "componentId": "R1",
+        "pinName": "1",
+        "x": 0,
+        "y": 0
+      },
+      "end": {
+        "componentId": "BB1",
+        "pinName": "5t.b",
+        "x": 460.15999999999997,
+        "y": 157.07999999999998
+      },
+      "color": "#87988a",
+      "waypoints": [],
+      "bb": true
+    },
+    {
+      "id": "SEAT_R1_2",
+      "start": {
+        "componentId": "R1",
+        "pinName": "2",
+        "x": 0,
+        "y": 0
+      },
+      "end": {
+        "componentId": "BB1",
+        "pinName": "11t.b",
+        "x": 517.76,
+        "y": 157.07999999999998
+      },
+      "color": "#87988a",
+      "waypoints": [],
+      "bb": true
+    },
+    {
+      "id": "SEAT_D1_A",
+      "start": {
+        "componentId": "D1",
+        "pinName": "A",
+        "x": 0,
+        "y": 0
+      },
+      "end": {
+        "componentId": "BB1",
+        "pinName": "11t.d",
+        "x": 517.76,
+        "y": 176.28
+      },
+      "color": "#87988a",
+      "waypoints": [],
+      "bb": true
+    },
+    {
+      "id": "SEAT_D1_C",
+      "start": {
+        "componentId": "D1",
+        "pinName": "C",
+        "x": 0,
+        "y": 0
+      },
+      "end": {
+        "componentId": "BB1",
+        "pinName": "10t.d",
+        "x": 508.15999999999997,
+        "y": 176.28
+      },
+      "color": "#87988a",
+      "waypoints": [],
+      "bb": true
+    }
+  ],
+  "activeBoardId": "U1",
+  "embeddedVision": {
+    "basis": "proposed_design_only",
+    "physical_verified": false,
+    "original_wiring_reused": false,
+    "assembly": {
+      "layout_version": "mini-breadboard-v1",
+      "breadboard": "170-point mini / 17 columns / no power rails",
+      "steps": [
+        {
+          "from": "U1.5",
+          "to": "BB1.5t.a",
+          "kind": "jumper"
+        },
+        {
+          "from": "U1.GND",
+          "to": "BB1.10t.a",
+          "kind": "jumper"
+        },
+        {
+          "from": "R1.1",
+          "to": "BB1.5t.b",
+          "kind": "insert"
+        },
+        {
+          "from": "R1.2",
+          "to": "BB1.11t.b",
+          "kind": "insert"
+        },
+        {
+          "from": "D1.A",
+          "to": "BB1.11t.d",
+          "kind": "insert"
+        },
+        {
+          "from": "D1.C",
+          "to": "BB1.10t.d",
+          "kind": "insert"
+        }
+      ],
+      "note": "같은 열의 a~e 다섯 구멍은 연결됩니다. f~j는 별도 그룹이며 가운데 홈을 건너 연결되지 않습니다."
+    },
+    "recipe": "arduino_led_blink",
+    "source_graph_sha256": "e693babf28b25daff98bc0c451dec0b657d1532d142dbc27ac8f50810214c493",
+    "inventory_plan": "editor-usability-validation",
+    "function": {
+      "kind": "led_blink",
+      "status": "USER_DEFINED",
+      "summary": "편집 검증 · 아두이노와 LED",
+      "input_behavior": "전원을 켜면 반복 실행합니다.",
+      "output_behavior": "부품 추가, 배선 끝점 이동과 화면 조작을 확인합니다.",
+      "evidence": [],
+      "unknowns": [],
+      "acceptance_criteria": [
+        "D5가 500ms 간격으로 HIGH/LOW를 반복한다."
+      ],
+      "display_text": null
+    },
+    "function_version": "editor-usability-v1"
+  }
+}

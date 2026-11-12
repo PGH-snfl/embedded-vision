@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>보드별 공통 워크플로우</title>
+<link rel="stylesheet" href="/board-workflow.css?v=1">
+<main><a href="./">← 사진 분석으로</a><h1>보드가 달라도 같은 순서로 설계합니다</h1>
+<p>사진의 구성품을 파악한 뒤 기능에 맞는 보드를 고르고, 회로·배선·코드를 함께 생성합니다.</p>
+<nav><strong>1 구성품 → 2 기능 → 3 보드·부품 선정 → 4 데이터시트 → 5 회로·코드 → 6 구조·장착 → 7 편집·조립 → 8 조작·검사</strong></nav>
+<p>아래 예제는 모두 <b>버튼을 누르면 LED 켜기</b>입니다. 실제 보드 핀과 언어는 각각 다릅니다.</p>
+<div class="boards" id="boards"></div><p class="status" role="status" id="status"></p>
+<small>예제는 사진 분석 결과가 아닌 검증용 선정 설계입니다. 회로 생성·코드 실행·실물 검증을 구분합니다.</small>
+</main><script src="/runtime-config.js"></script><script type="module" src="/board-workflow.js?v=1"></script>
+</html>

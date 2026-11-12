@@ -1,0 +1,26 @@
+# Example only; not installed or exposed publicly.
+# Place limit_req_zone in nginx's http context; configure your domain/TLS certs.
+limit_req_zone $binary_remote_addr zone=ev_login:10m rate=5r/m;
+upstream embedded_vision_api { server 127.0.0.1:8770; }
+server {
+    listen 443 ssl;
+    server_name your-domain.example;
+    ssl_certificate /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+    client_max_body_size 66m;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    location = /api/saas/login {
+        limit_req zone=ev_login burst=5 nodelay;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_pass http://embedded_vision_api;
+    }
+    location / {
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 70s;
+        proxy_pass http://embedded_vision_api;
+    }
+}

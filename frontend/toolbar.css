@@ -1,0 +1,20 @@
+/* Functional cards keep entry actions legible at every viewport width. */
+.service-header{display:flex;align-items:center;flex-wrap:wrap;gap:18px;padding:16px 28px;position:relative;z-index:30;}
+.service-brand{display:flex;align-items:center;gap:12px;flex:0 1 280px;min-width:0;}
+.service-brand strong{font-size:19px;line-height:1.4;}
+.service-brand .brand-sub{font-size:12px;line-height:1.6;}
+.service-header .header-actions{display:grid;grid-template-columns:minmax(270px,1.4fr) minmax(190px,1fr) minmax(170px,.85fr);flex:1 1 660px;min-width:0;margin:0;gap:12px;align-items:stretch;}
+.header-tool-card{padding:12px 14px;border:1px solid #dce6df;border-radius:12px;background:#f8fbf9;min-width:0;}
+.header-tool-card h2{margin:0 0 9px;font-size:12px;line-height:1.4;color:#627c6b;letter-spacing:.02em;}
+.header-tool-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;}
+.service-header .header-actions button,.service-header .header-actions .button,.service-header .header-actions summary{min-height:42px;height:auto;padding:10px 14px;font:inherit;font-size:13px;font-weight:600;line-height:1.5;white-space:normal;overflow-wrap:anywhere;max-width:100%;}
+.service-header .header-actions .button{display:inline-flex;align-items:center;justify-content:center;}
+.service-header .example-menu,.service-header .agent-model-menu{min-width:0;max-width:100%;}
+.service-header .example-menu>summary{display:flex;align-items:center;border-radius:8px;list-style:none;}
+.service-header .example-menu>summary::after{content:'⌄';margin-left:12px;}
+.service-header .example-options{width:280px;max-width:calc(100vw - 32px);z-index:100;}
+.service-header .example-options button,.service-header .example-options .button{width:100%;text-align:left;justify-content:flex-start;}
+.service-header .agent-model-options{left:0;right:auto;width:270px;max-width:calc(100vw - 32px);z-index:100;}
+.service-header .agent-model-options button{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px 12px;}
+@media(max-width:800px){.service-header{padding:14px;gap:14px;}.service-header .header-actions{flex-basis:100%;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}.header-tool-card:first-child{grid-column:1/-1;}.header-tool-card{padding:12px;}.service-header .example-options{left:auto;right:0;}.service-header .brand-sub{display:block;}}
+@media(max-width:360px){.service-header .header-actions{grid-template-columns:minmax(0,1fr);}.header-tool-card:first-child{grid-column:auto;}.header-tool-actions>label{flex:1 1 120px;}.service-header .example-options{left:0;right:auto;}}

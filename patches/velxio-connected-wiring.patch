@@ -1,0 +1,342 @@
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -8,6 +8,7 @@
+ import { PX } from './catalog';
+ import { useSimulatorStore as native } from '../../store/useSimulatorStore';
+ import {photoAssemblyLayout} from './photoAssemblyLayout';
++import {connectedWirePath} from './connectedWiring';
+ 
+ function JumperCable({
+   points,
+@@ -15,12 +16,14 @@
+   selected,
+   onClick,
+   inspection=false,
++  warning=false,
+ }: {
+   points: [number, number, number][];
+   color: string;
+   selected: boolean;
+   onClick: (e: any) => void;
+   inspection?:boolean;
++  warning?:boolean;
+ }) {
+   const geometry = useMemo(() => {
+     // Keep the tube on the native route. A spline can overshoot a bend and
+@@ -39,9 +42,9 @@
+   return (
+     <group name="ev-cable">
+       <mesh geometry={geometry} onClick={onClick} onContextMenu={onClick} castShadow>
+-        <meshStandardMaterial color={selected ? '#df923c' : color} roughness={0.4} />
++        <meshStandardMaterial color={selected||warning ? '#df923c' : color} roughness={0.4} transparent={warning} opacity={warning?.4:1}/>
+       </mesh>
+-      {inspection&&<Line points={points} color={selected?'#df923c':color} lineWidth={selected?2.2:1.2} transparent opacity={.9} onClick={onClick}/>}
++      {(inspection||warning)&&<Line userData={{evInspectionOverlay:true}} points={points} color={selected||warning?'#df923c':color} lineWidth={selected?2.6:1.6} dashed={warning} dashSize={.004} gapSize={.003} transparent opacity={.95} onClick={onClick}/>}
+       {[points[0], points[points.length - 1]].map((p, i) => (
+         <mesh key={i} position={[p[0], p[1] + 0.0014, p[2]]} castShadow>
+           <boxGeometry args={[0.0021, 0.003, 0.0021]} />
+@@ -98,29 +101,16 @@
+     return part?.config?.evDesignMount==='internal'&&project.components.some(c=>c.instance===part.config?.evDesignEnclosure);
+   };
+   return (
+-    <group position={photoFocus?photoLayout.circuitOffset:[0,0,0]}>
++    <group name="ev-wiring" position={photoFocus?photoLayout.circuitOffset:[0,0,0]}>
+       {project.nets
+         .filter((n) => (!photoFocus||photoExploded)&&!n.hidden&&(photoLayout.photos.length>0||enclosureView!=='assembled'||!n.endpoints.some(concealed)))
+         .map((net) => {
+-          const a = resolvePin(project, net.endpoints[0]),
+-            b = resolvePin(project, net.endpoints[1]);
+-          if (!a || !b) return null;
+-          if (drag?.wireId === net.id) {
+-            if (drag.side === 'start') a.position = drag.point;
+-            else b.position = drag.point;
+-          }
+-          const lift = 0.012;
++          const connection=connectedWirePath(project,net,drag);
++          if(!connection)return null;
++          const {a,b,points,warning}=connection;
+           // This net represents the whole mating header, never one jumper wire.
+           const gpioHeader=net.endpoints.length===2&&net.endpoints.every(p=>p.endsWith('.GPIO40'));
+           const headerAssembly = net.connectorBinding||gpioHeader;
+-          const points: [number, number, number][] = net.physicalRoute ? (net.route?.length?[a.position,...net.route.slice(1,-1),b.position]:[]) : [
+-            a.position,
+-            [a.position[0], lift, a.position[2]],
+-            ...(net.route || []),
+-            [b.position[0], lift, b.position[2]],
+-            b.position,
+-          ];
+-          if(net.routeBlocked||points.length<2)return null;
+           const pick = (e: any) => {
+             e.stopPropagation();
+             if (useStore.getState().endpointDrag || e.delta > 3) return;
+@@ -142,8 +132,12 @@
+                 color={net.color || '#328260'}
+                 selected={selected === net.id}
+                 onClick={pick}
+-                inspection={photoFocus}
++                inspection={photoLayout.photos.length>0||selected===net.id}
++                warning={warning}
+               />}
++              {selected===net.id&&!headerAssembly&&<Html center position={points[Math.floor(points.length/2)]} style={{pointerEvents:'none',fontSize:11,whiteSpace:'nowrap',background:'#ffffffeb',border:'1px solid #a9b9ca',borderRadius:4,padding:'4px 7px',color:'#263e4d'}}>
++                <strong>{a.ownerLabel}.{a.pinLabel} → {b.ownerLabel}.{b.pinLabel}</strong><br/>{warning?'기구 경로 검토 필요':connection.kind==='hardware'?'단자 연결·기구 경로':'실제 핀 기준 연결'}
++              </Html>}
+               {selected === net.id && !photoFocus && !headerAssembly && !running && !wireMode && (
+                 <>
+                   <EndpointHandle
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -12,6 +12,7 @@
+ import {inverseRotate,type V} from './assemblyMath';
+ import {registerAssemblyScene} from './assemblyScene';
+ import {photoAssemblyLayout,photoPartVisible,photoViewFitZoom} from './photoAssemblyLayout';
++import {connectedWirePath} from './connectedWiring';
+ import {
+   UnoModel,
+   LedModel,
+@@ -156,6 +157,11 @@
+           points.push(new T.Vector3(x*Math.cos(a)-z*Math.sin(a),y,x*Math.sin(a)+z*Math.cos(a)).add(new T.Vector3(...(c.position||[0,0,0]))));
+         }
+       }
++      if(layout.photos.length&&(!photoFocus||photoExploded))for(const net of project.nets){
++        if(net.hidden)continue;const path=connectedWirePath(project,net);if(!path)continue;
++        const offset=photoFocus?new T.Vector3(...layout.circuitOffset):new T.Vector3();
++        for(const point of path.points)points.push(new T.Vector3(...point).add(offset));
++      }
+       const box = new T.Box3().setFromPoints(points).expandByScalar(0.009);
+       if (box.isEmpty()) return;
+       const center = box.getCenter(new T.Vector3()),
+--- a/frontend/src/components/circuitiny/bridge.ts
++++ b/frontend/src/components/circuitiny/bridge.ts
+@@ -7,6 +7,7 @@
+ import {physicalPresentation} from './physicalModels';
+ import {mountedPose,rotate} from './assemblyGeometry';
+ import {assemblyRoutingCache} from './assemblyRoutingCache';
++import {assemblyWireNets} from './connectedWiring';
+ import {canDragComponent} from './objectMovement';
+ import { ComponentRegistry } from '../../services/ComponentRegistry';
+ import { resolvePin } from './project/pins';
+@@ -168,8 +169,7 @@
+   });
+   if([...s.components,...s.boards].some(p=>p.properties?.evAssembly)){
+     const routing=assemblyRoutingCache.get([...s.components,...s.boards],s.wires);
+-    project.nets=project.nets.map(n=>({...n,physicalRoute:true,connectorBinding:routing.routes[n.id]?.binding,routeBlocked:!routing.routes[n.id]?.clear,
+-      route:routing.routes[n.id]?.points.map(p=>p.map(x=>x/1000) as [number,number,number])||[]}));
++    project.nets=assemblyWireNets(project,[...s.components,...s.boards],s.wires,routing);
+     useStore.setState({assemblyRouting:routing});
+   }else useStore.setState({assemblyRouting:null});
+   return project;
+--- a/frontend/src/components/circuitiny/PhotoAppearanceControls.tsx
++++ b/frontend/src/components/circuitiny/PhotoAppearanceControls.tsx
+@@ -1,12 +1,19 @@
+ import {useEffect} from 'react';
+ import {useStore} from './store';
++import {connectedWirePath} from './connectedWiring';
+ export function PhotoAppearanceControls(){
+  const project=useStore(s=>s.project),focus=useStore(s=>s.photoFocus),exploded=useStore(s=>s.photoExploded),selected=useStore(s=>s.selected),wireMode=useStore(s=>s.wireMode),moveTarget=useStore(s=>s.moveTarget);
+  const photos=project.components.filter(c=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure);
+  const selectedIsPhoto=photos.some(c=>c.instance===selected);
++ useStore(s=>s.catalogVersion);
+  useEffect(()=>{if(focus&&(wireMode||moveTarget&&!selectedIsPhoto||selected&&!selectedIsPhoto&&!exploded))useStore.setState(s=>({photoFocus:false,fitRevision:s.fitRevision+1}));},[selected,focus,exploded,selectedIsPhoto,wireMode,moveTarget]);
+  if(!photos.length)return null;
+  const change=(photoFocus:boolean,photoExploded=false)=>useStore.setState(s=>({photoFocus,photoExploded,viewMode:photoFocus?'iso':s.viewMode,
+   cameraLocked:photoFocus?false:s.cameraLocked,selected:null,selectedNet:null,moveTarget:null,fitRevision:s.fitRevision+1}));
+- return <span role="group" aria-label="사진 구조 조립과 분해"><button aria-pressed={focus&&!exploded} onClick={()=>change(true)}>조립 보기</button><button aria-pressed={focus&&exploded} onClick={()=>change(true,true)}>분해 보기</button><button aria-pressed={!focus} onClick={()=>change(false)}>회로·배선</button>{focus&&exploded&&<small>독립 구조물 {photos.length}개 · 내부 회로 표시 · 설명용 배치</small>}</span>;
++ const connections=project.nets.filter(n=>!n.hidden).map(net=>({net,path:connectedWirePath(project,net)})),visible=connections.filter(c=>c.path).length;
++ return <><span role="group" aria-label="사진 구조 조립과 분해"><button aria-pressed={focus&&!exploded} onClick={()=>change(true)}>조립 보기</button><button aria-pressed={focus&&exploded} onClick={()=>change(true,true)}>분해 보기</button><button aria-pressed={!focus} onClick={()=>change(false)}>회로·배선</button>{focus&&exploded&&<small>독립 구조물 {photos.length}개 · 내부 회로 표시 · 설명용 배치</small>}</span>
++ {(!focus||exploded)&&connections.length>0&&<details className="ev-c3d-more"><summary data-wiring-status>배선 {visible}/{connections.length}</summary><div>
++  <small>표시선은 저장된 핀 연결을 따릅니다. 실제 기구 간섭은 별도 검토합니다.</small>
++  {connections.map(({net,path})=><p key={net.id}><strong>{path?`${path.a.ownerLabel}.${path.a.pinLabel} → ${path.b.ownerLabel}.${path.b.pinLabel}`:net.endpoints.join(' → ')}</strong><br/>{!path?'핀 위치 준비 중':path.warning?'기구 경로 검토 필요':path.kind==='hardware'?'기구 경로 표시':'핀 기준 배선 표시'}</p>)}
++ </div></details>}</>;
+ }
+--- a/frontend/src/components/circuitiny/assemblyScene.ts
++++ b/frontend/src/components/circuitiny/assemblyScene.ts
+@@ -19,7 +19,10 @@
+   if(photoLayout&&!state.photoFocus)group.position.add(new T.Vector3(...layout.circuitOffset));
+   group.add(body.clone(true));out.add(group);
+  }
+- root.traverse(child=>{if(child.name==='ev-cable'){const wire=child.clone(true);if(photoLayout)wire.position.add(new T.Vector3(...layout.circuitOffset));out.add(wire);}});
++ root.traverse(child=>{if(child.name==='ev-cable'){
++  const wire=child.clone(true),overlays:T.Object3D[]=[];wire.traverse(o=>{if(o.userData.evInspectionOverlay)overlays.push(o);});overlays.forEach(o=>o.removeFromParent());
++  if(photoLayout)wire.position.add(new T.Vector3(...layout.circuitOffset));out.add(wire);
++ }});
+  if(photoLayout){out.scale.setScalar(1/layout.scale);out.position.set(-layout.translation[0]/layout.scale-origin[0]/1000,-layout.translation[1]/layout.scale,-layout.translation[2]/layout.scale-origin[1]/1000);}
+  else out.position.set(-origin[0]/1000,0,-origin[1]/1000);
+  // Bake deformed/parametric meshes. In particular CurvePath-backed tubes
+--- a/frontend/src/components/circuitiny/project/schema.ts
++++ b/frontend/src/components/circuitiny/project/schema.ts
+@@ -45,6 +45,8 @@
+ }
+ 
+ export interface Net {
++  routeKind?:'hardware'|'pins'|'blocked';
++  routeNote?:string;
+   physicalRoute?: boolean;
+   routeBlocked?: boolean;
+   connectorBinding?: boolean;
+--- /dev/null
++++ b/frontend/src/components/circuitiny/connectedWiring.ts
+@@ -0,0 +1,49 @@
++/** Wire display follows native pin identities. Mechanical routing support is optional. */
++import type {Project,Net} from './project/schema';
++import {resolvePin} from './project/pins';
++import {hardwareModel,mountedPose} from './assemblyGeometry';
++import type {routeAssembly} from './assemblyPlanner';
++export type V=[number,number,number];
++type Routing=ReturnType<typeof routeAssembly>;
++const valid=(p:unknown):p is V=>Array.isArray(p)&&p.length===3&&p.every(n=>typeof n==='number'&&Number.isFinite(n));
++export function assemblyWireNets(project:Project,parts:any[],wires:any[],routing:Routing):Net[]{
++ return project.nets.map((net,i)=>{
++  const wire=wires[i],r=routing.routes[net.id];
++  if(r?.clear&&r.points.length>=2&&r.points.every(valid))return {...net,physicalRoute:true,routeBlocked:false,routeKind:'hardware',
++   connectorBinding:r.binding,route:r.points.map(p=>p.map(n=>n/1000) as V)};
++  const supported=wire&&[wire.start,wire.end].every(end=>{
++   const part=parts.find(p=>p.id===end.componentId),model=part&&hardwareModel(part);
++   return part&&model?.ports[end.pinName]&&mountedPose(part,parts);
++  });
++  // Unsupported parts still have native pins. Never replace or invent those pins.
++  return supported?{...net,physicalRoute:true,routeBlocked:true,routeKind:'blocked',routeNote:r?.reason||'기구 배선 경로를 확인해야 합니다.'}:
++   {...net,physicalRoute:false,routeBlocked:false,routeKind:'pins',routeNote:'실제 단자 기준 표시 배선 · 기구 간섭 검증 전'};
++ });
++}
++export function connectedWirePath(project:Project,net:Net,drag?:{wireId:string;side:'start'|'end';point:V}|null){
++ const a=resolvePin(project,net.endpoints[0]),b=resolvePin(project,net.endpoints[1]);
++ if(!a||!b||!valid(a.position)||!valid(b.position))return null;
++ const start=drag?.wireId===net.id&&drag.side==='start'?drag.point:a.position,
++  end=drag?.wireId===net.id&&drag.side==='end'?drag.point:b.position;
++ if(!valid(start)||!valid(end))return null;
++ const routed=net.physicalRoute&&!net.routeBlocked&&(net.route?.length||0)>=2&&net.route!.every(valid);
++ let points:V[];
++ if(routed)points=[start,...net.route!.slice(1,-1),end];
++ else{
++  const pinRoute=net.routeKind==='pins'||net.routeBlocked||net.physicalRoute;
++  let lift=.012;
++  if(pinRoute){
++   const parts=[...project.components,...(project.boards||[])].filter(c=>c.config?.metadataId!=='ev-structure');
++   const ceiling=Math.max(start[1],end[1],...parts.map(c=>(c.position?.[1]||0)+(typeof c.config?.physicalHeight==='number'?c.config.physicalHeight:.02)));
++   const lane=Math.max(0,project.nets.indexOf(net))%24;
++   lift=ceiling+.018+lane*.0025;
++  }
++  const middle=(net.route||[]).filter(valid).map(p=>[p[0],pinRoute?lift:p[1],p[2]] as V);
++  points=[start,[start[0],lift,start[2]],...middle,[end[0],lift,end[2]],end];
++ }
++ // Consecutive coincident points are harmless electrically but break thin tubes.
++ points=points.filter((p,i)=>!i||p.some((v,j)=>Math.abs(v-points[i-1][j])>1e-9));
++ if(points.length<2){if(net.connectorBinding)points=[start,end];else return null;}
++ const warning=!!net.routeBlocked||!!net.physicalRoute&&!routed;
++ return {points,a:{...a,position:start},b:{...b,position:end},warning,kind:routed?'hardware':warning?'blocked':'pins',note:net.routeNote};
++}
+--- /dev/null
++++ b/frontend/src/__tests__/connected-wiring.test.ts
+@@ -0,0 +1,112 @@
++// @vitest-environment jsdom
++import {it,expect,vi,beforeEach} from 'vitest';
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import * as T from 'three';
++import '@wokwi/elements';
++import {registerProject} from '../components/circuitiny/bridge';
++import {useStore} from '../components/circuitiny/store';
++import {useSimulatorStore} from '../store/useSimulatorStore';
++import {importVlxFile,buildVlxPayload} from '../utils/vlxFile';
++import {connectedWirePath,assemblyWireNets} from '../components/circuitiny/connectedWiring';
++import {resolvePin} from '../components/circuitiny/project/pins';
++import {Wires3D} from '../components/circuitiny/Wires3D';
++import {PhotoAppearanceControls} from '../components/circuitiny/PhotoAppearanceControls';
++import {photoAssemblyLayout} from '../components/circuitiny/photoAssemblyLayout';
++import {registerAssemblyScene,captureAssemblyVisual} from '../components/circuitiny/assemblyScene';
++import type {Project,Net} from '../components/circuitiny/project/schema';
++import type {routeAssembly} from '../components/circuitiny/assemblyPlanner';
++import fixture from './fixtures/functional-servo.json';
++
++vi.mock('@react-three/drei',()=>({
++ Line:({points}:{points:unknown})=>createElement('i',{'data-wire-points':JSON.stringify(points)}),
++ Html:({children}:{children:React.ReactNode})=>createElement('span',{},children),
++ TransformControls:()=>null,
++}));
++beforeEach(()=>{
++ document.body.replaceChildren();sessionStorage.clear();
++ useSimulatorStore.setState({running:false});
++ useStore.setState({photoFocus:false,photoExploded:false,enclosureView:'inside',selected:null,selectedNet:null,moveTarget:null,endpointDrag:null,wireMode:false,simulating:false});
++});
++async function load(){
++ await importVlxFile({text:async()=>JSON.stringify(fixture.project)} as File);
++ const state=useSimulatorStore.getState();
++ for(const p of [...state.boards,...state.components]){
++  const kind='boardKind' in p?p.boardKind:p.metadataId;if(kind==='ev-structure')continue;
++  const el=document.createElement('wokwi-'+kind) as HTMLElement&{updateComplete?:Promise<unknown>};
++  el.id=p.id;Object.assign(el,p.properties||{});document.body.append(el);if(el.updateComplete)await el.updateComplete;
++ }
++ return {state,project:registerProject(state)};
++}
++function fingerprint(){const p=buildVlxPayload();return JSON.stringify([p.boards,p.components,p.wires,p.fileGroups,p.activeBoardId]);}
++it('displays mounted sensor and servo connections when the mechanical router has no model',async()=>{
++ const {state,project}=await load(),before=fingerprint();
++ expect(project.nets).toHaveLength(state.wires.length);expect(project.nets.length).toBeGreaterThan(3);
++ for(const net of project.nets){
++  expect(net.routeKind).toBe('pins');expect(net.routeBlocked).toBe(false);
++  const path=connectedWirePath(project,net)!;expect(path).not.toBeNull();
++  expect(path.points[0]).toEqual(resolvePin(project,net.endpoints[0])!.position);
++  expect(path.points.at(-1)).toEqual(resolvePin(project,net.endpoints[1])!.position);
++  expect(path.points.flat().every(Number.isFinite)).toBe(true);
++  expect(path.points.slice(1,-1).every(p=>p[1]>Math.max(path.a.position[1],path.b.position[1]))).toBe(true);
++ }
++ expect(fingerprint()).toBe(before);
++});
++it('keeps a blocked mechanical path visible and marked instead of claiming it is clear',async()=>{
++ const {project}=await load(),base=project.nets[0],wire={id:base.id,start:{componentId:'A',pinName:'5V'},end:{componentId:'B',pinName:'5V'}};
++ const parts=['A','B'].map(id=>({id,boardKind:'arduino-uno',x:0,y:0,properties:{evAssembly:{pose:{position:[0,0,0],rotation:[0,0,0]},baseline:[0,0,0]}}}));
++ const p={...project,nets:[base]},routing={routes:{[base.id]:{points:[],clear:false,lengthMm:0,reason:'프레임 간섭'}},unresolved:[],wireLengthMm:0} as ReturnType<typeof routeAssembly>;
++ p.nets=assemblyWireNets(p,parts,[wire],routing);
++ expect(p.nets[0].routeBlocked).toBe(true);expect(p.nets[0].routeKind).toBe('blocked');
++ const path=connectedWirePath(p,p.nets[0])!;expect(path).not.toBeNull();expect(path.warning).toBe(true);expect(path.note).toBe('프레임 간섭');
++ expect(path.points[0]).toEqual(resolvePin(p,base.endpoints[0])!.position);
++});
++it('uses checked route bends and user waypoints while keeping ends on the actual pins',async()=>{
++ const {project}=await load(),net:Net={...project.nets[0],physicalRoute:true,routeBlocked:false,route:[[8,8,8],[.12,.14,.16],[9,9,9]]};
++ const path=connectedWirePath(project,net)!;expect(path.kind).toBe('hardware');expect(path.points[1]).toEqual([.12,.14,.16]);
++ expect(path.points[0]).toEqual(resolvePin(project,net.endpoints[0])!.position);
++ expect(path.points.at(-1)).toEqual(resolvePin(project,net.endpoints[1])!.position);
++ const custom={...net,physicalRoute:false,routeKind:'pins' as const,route:[[.033,0,.044] as [number,number,number]]};
++ expect(connectedWirePath(project,custom)!.points.some(p=>p[0]===.033&&p[2]===.044)).toBe(true);
++ expect(connectedWirePath(project,{...net,route:[[.1,.1,.1]]})!.warning).toBe(true);
++ const dragged=connectedWirePath(project,custom,{wireId:custom.id,side:'end',point:[.2,.1,.2]})!;
++ expect(dragged.points.at(-1)).toEqual([.2,.1,.2]);
++ expect(connectedWirePath(project,{...net,endpoints:[net.endpoints[0],'missing.PIN']})).toBeNull();
++});
++it('renders actual cable meshes in both requested views, never in assembled photo view',async()=>{
++ const {project}=await load(),photo={instance:'photo-body',componentId:'photo',position:[-.3,0,0] as [number,number,number],pinAssignments:{},config:{metadataId:'ev-structure',structure:{width:100,height:3,depth:80,elevation:100,evPhotoStructure:{role:'chassis'}}}};
++ const p:Project={...project,components:[...project.components,photo]};useStore.setState({project:p});
++ const connections=useSimulatorStore.getState().wires.map(w=>[w.id,w.start.componentId,w.start.pinName,w.end.componentId,w.end.pinName]);
++ const host=document.createElement('div'),root=createRoot(host),errors=vi.spyOn(console,'error').mockImplementation(()=>{});
++ (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
++ try{
++  await act(async()=>root.render(createElement('div',{},createElement(PhotoAppearanceControls),createElement(Wires3D))));
++  // Native import measures initial 2D endpoints asynchronously. Compare views
++  // after that hydration, while preserving the logical pin connections throughout.
++  await vi.waitFor(()=>expect(useSimulatorStore.getState().wires.every(w=>w.start.x!==0||w.start.y!==0)).toBe(true));
++  expect(useSimulatorStore.getState().wires.map(w=>[w.id,w.start.componentId,w.start.pinName,w.end.componentId,w.end.pinName])).toEqual(connections);
++  const before=fingerprint();
++  const count=p.nets.filter(n=>!n.hidden).length;
++  expect(host.querySelectorAll('[name="ev-cable"]')).toHaveLength(count);
++  expect(host.querySelector('[data-wiring-status]')!.textContent).toBe(`배선 ${count}/${count}`);
++  const actual=connectedWirePath(p,p.nets[0])!.points;
++  expect(JSON.parse(host.querySelector('[data-wire-points]')!.getAttribute('data-wire-points')!)).toEqual(actual);
++  await act(async()=>useStore.setState({photoFocus:true,photoExploded:true}));
++  expect(host.querySelectorAll('[name="ev-cable"]')).toHaveLength(count);
++  expect(host.querySelector('[name="ev-wiring"]')!.getAttribute('position')).toBe(photoAssemblyLayout(p).circuitOffset.join(','));
++  await act(async()=>useStore.setState({photoFocus:true,photoExploded:false}));
++  expect(host.querySelectorAll('[name="ev-cable"]')).toHaveLength(0);
++  expect(fingerprint()).toBe(before);
++ }finally{await act(async()=>root.unmount());errors.mockRestore();}
++});
++it('transfers cable geometry without the screen-only thick line overlay',()=>{
++ useStore.setState({project:{...useStore.getState().project,components:[],boards:[],nets:[]}});
++ const scene=new T.Group(),part=new T.Group(),body=new T.Mesh(new T.BoxGeometry(.03,.01,.02),new T.MeshBasicMaterial());part.name='ev-part:U1';body.name='ev-body:U1';part.add(body);scene.add(part);
++ const wire=new T.Group();wire.name='ev-cable';wire.add(new T.Mesh(new T.BoxGeometry(.08,.001,.001),new T.MeshStandardMaterial()));
++ const overlay=new T.Group();overlay.userData.evInspectionOverlay=true;Object.defineProperty(overlay,'type',{value:'Line2'});wire.add(overlay);scene.add(wire);
++ const release=registerAssemblyScene(()=>scene);
++ try{const data=captureAssemblyVisual([{id:'U1',properties:{evAssembly:{}}}])!;
++  expect(JSON.stringify(data)).not.toContain('Line2');const restored=new T.ObjectLoader().parse(data);
++  expect(restored.getObjectByName('ev-cable')!.children).toHaveLength(1);expect(wire.children).toHaveLength(2);
++ }finally{release();}
++});

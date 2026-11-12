@@ -1,0 +1,125 @@
+--- a/frontend/src/simulation/sensorControlConfig.ts
++++ b/frontend/src/simulation/sensorControlConfig.ts
+@@ -146,6 +146,13 @@
+ // ─── Sensor Control Definitions ──────────────────────────────────────────────
+ 
+ export const SENSOR_CONTROLS: Record<string, SensorControlDef> = {
++  // The 3D view cannot drag the hidden 2D element's knob. Expose its same
++  // 0..1023 wiper value through the shared live-input panel.
++  potentiometer: {
++    title: 'Potentiometer',
++    controls: [{ type: 'slider', key: 'value', label: '입력값', min: 0, max: 1023, step: 1, unit: '', defaultValue: 512 }],
++    defaultValues: { value: 512 },
++  },
+   // ── MPU-6050 6-axis IMU ────────────────────────────────────────────────────
+   // The sliders span the chip's widest ranges (16 g, 2000 deg/s). Past the
+   // range the sketch selected, the output stays at full scale, as the chip's.
+--- a/frontend/src/components/simulator/PartInspectorDialog.tsx
++++ b/frontend/src/components/simulator/PartInspectorDialog.tsx
+@@ -320,6 +320,9 @@
+     }
+     const pel: PreviewEl = el;
+     pel.classList.add('pid-preview-element');
++    // This is a separate clone, not the circuit component. Its knob cannot
++    // drive the ADC; use the real live-input panel instead.
++    if (componentMetadata.id === 'potentiometer') pel.inert = true;
+     host.appendChild(pel);
+ 
+     let cancelled = false;
+--- a/frontend/src/simulation/parts/ComplexParts.ts
++++ b/frontend/src/simulation/parts/ComplexParts.ts
+@@ -104,7 +104,16 @@
+     onInput();
+ 
+     element.addEventListener('input', onInput);
+-    return () => element.removeEventListener('input', onInput);
++    registerSensorUpdate(componentId, (values) => {
++      const value = values.value;
++      if (typeof value !== 'number' || !Number.isFinite(value)) return;
++      (element as any).value = Math.max(0, Math.min(1023, Math.round(value)));
++      onInput();
++    });
++    return () => {
++      element.removeEventListener('input', onInput);
++      unregisterSensorUpdate(componentId);
++    };
+   },
+ });
+ 
+--- /dev/null
++++ b/frontend/src/__tests__/embedded-potentiometer-control.test.ts
+@@ -0,0 +1,31 @@
++// @vitest-environment jsdom
++import { describe, expect, it, vi } from 'vitest';
++import { PartSimulationRegistry } from '../simulation/parts/PartSimulationRegistry';
++import { dispatchSensorUpdate, getSensorUpdate } from '../simulation/SensorUpdateRegistry';
++import { getSensorControlForComponent } from '../simulation/sensorControlConfig';
++import '../simulation/parts/ComplexParts';
++
++describe('live potentiometer input for 3D control', () => {
++  it('delivers changes to the wired ADC and the electrical solver state', () => {
++    const element=document.createElement('div') as HTMLElement & {value:number};
++    element.value=512;
++    const adc={channelValues:[0]};
++    const sim={getADC:()=>adc};
++    const events: Array<{componentId:string;propName:string;value:unknown}> = [];
++    const onProp=(e:Event)=>events.push((e as CustomEvent).detail);
++    window.addEventListener('velxio:property-change',onProp);
++    const detach=PartSimulationRegistry.get('potentiometer')!.attachEvents!(element,sim as never,
++      (pin:string)=>pin==='SIG'?14:null,'S1');
++    expect(getSensorControlForComponent({id:'S1',metadataId:'potentiometer',properties:{value:512}} as never)?.controls[0].key).toBe('value');
++    expect(adc.channelValues[0]).toBeCloseTo(512/1023*5,6);
++    dispatchSensorUpdate('S1',{value:900});
++    expect(element.value).toBe(900);
++    expect(adc.channelValues[0]).toBeCloseTo(900/1023*5,6);
++    expect(events.at(-1)).toEqual({componentId:'S1',propName:'value',value:900});
++    dispatchSensorUpdate('S1',{value:100});
++    expect(adc.channelValues[0]).toBeCloseTo(100/1023*5,6);
++    detach?.();
++    expect(getSensorUpdate('S1')).toBeUndefined();
++    window.removeEventListener('velxio:property-change',onProp);
++  });
++});
+--- a/frontend/src/components/circuitiny/nativeInteraction.ts
++++ b/frontend/src/components/circuitiny/nativeInteraction.ts
+@@ -96,10 +96,13 @@
+   if (!record) return;
+   record.x = p.x;
+   record.y = p.y;
++  // The synthetic pointerup bubbles to the window's release handler. Remove
++  // this press first so that handler cannot recursively release it again.
++  if (phase === 'up') active.delete(id);
+   emit(record, phase, phase === 'up');
+-  if (phase === 'up') active.delete(id);
+ }
+ export function releaseNativeSurfaces() {
+-  for (const record of active.values()) emit(record, 'up');
++  const pending = [...active.values()];
+   active.clear();
++  for (const record of pending) emit(record, 'up');
+ }
+--- /dev/null
++++ b/frontend/src/__tests__/native-interaction-release.test.ts
+@@ -0,0 +1,22 @@
++// @vitest-environment jsdom
++import { expect, it, vi } from 'vitest';
++import { nativeSurfaceEvent, releaseNativeSurfaces } from '../components/circuitiny/nativeInteraction';
++
++it('releases once even when the synthetic pointerup reaches the window handler', () => {
++  const element=document.createElement('div'); element.id='test-native';
++  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
++  element.appendChild(svg); document.body.appendChild(element);
++  const up=vi.fn(); svg.addEventListener('pointerup',up);
++  window.addEventListener('pointerup',releaseNativeSurfaces);
++  try {
++    nativeSurfaceEvent('test-native','down',{x:.5,y:.5});
++    nativeSurfaceEvent('test-native','up',{x:.5,y:.5});
++    expect(up).toHaveBeenCalledTimes(1);
++    nativeSurfaceEvent('test-native','down',{x:.5,y:.5});
++    releaseNativeSurfaces();
++    expect(up).toHaveBeenCalledTimes(2);
++  } finally {
++    window.removeEventListener('pointerup',releaseNativeSurfaces);
++    releaseNativeSurfaces(); element.remove();
++  }
++});

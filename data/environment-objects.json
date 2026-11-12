@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "recipe": "arduino_watering_control",
+  "initial_sensor_value": 560,
+  "objects": [
+    {"id":"ENV_PLANTER","kind":"planter","label":"급수 대상 화분","center_mm":[190,-65],"width":80,"height":75,"depth":80,"color":"#c47a54"},
+    {"id":"ENV_TANK","kind":"reservoir","label":"급수용 물통","center_mm":[65,-65],"width":65,"height":90,"depth":65,"color":"#9bcad5"},
+    {"id":"M1","kind":"pump","label":"12V 급수 펌프","center_mm":[115,-10],"width":32,"height":25,"depth":25,"color":"#4c7794"},
+    {"id":"ENV_HOSE","kind":"hose","label":"급수 호스","center_mm":[150,-25],"width":80,"height":8,"depth":30,"color":"#6f9caf"}
+  ],
+  "binding": {
+    "boardId":"U1","sensorId":"S1","outputId":"D1","controlPin":5,
+    "actuation":"pump-current","pumpId":"M1","driverId":"Q1","supplyId":"PS1","gateResistorId":"RG1",
+    "dryAdc":560,"wetAdc":280,
+    "planterId":"ENV_PLANTER","reservoirId":"ENV_TANK","hoseId":"ENV_HOSE",
+    "flowMlPerSecond":1.5,"soilCapacityMl":4,"reservoirCapacityMl":300,
+    "initialReservoirMl":240,"potCapacityMl":20,"absorptionMlPerSecond":1
+  },
+  "notice":"실행 중인 보드 출력과 연결한 가상 급수 모형입니다. 유량·흡수율·용량은 동작 확인용 모형값이며 실물 펌프의 성능이나 유체 해석 결과가 아닙니다."
+}

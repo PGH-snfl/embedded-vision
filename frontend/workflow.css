@@ -1,0 +1,42 @@
+/* Step visibility is UI state only; it never changes the circuit. */
+.stage-nav{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:20px 0 14px}
+.stage-nav button{justify-content:flex-start;text-align:left;min-width:0;padding:16px 12px;gap:10px;background:#fafcf9;position:relative}
+.stage-number{display:grid;place-items:center;flex-shrink:0;width:30px;height:30px;border-radius:50%;background:#e9eee7;color:#59735e;font:12px monospace}
+.stage-nav b{font-size:13px;display:block}.stage-nav small{display:block;font-size:10px;font-weight:400;color:#718272;margin-top:5px;line-height:1.4}
+.stage-chevron{margin-left:auto;color:#a3b29f}.stage-nav [aria-current=step]{border-color:#216850;background:#eaf3ec;box-shadow:0 0 0 1px #216850}
+.stage-nav [aria-current=step] .stage-number{background:#216850;color:white}
+.stage-summary{border:1px solid #d5e1d5;background:white;border-radius:12px;padding:24px;margin-bottom:20px}
+.stage-heading{display:flex;align-items:start;justify-content:space-between;gap:20px}.stage-heading h2{font-size:23px;margin:10px 0;letter-spacing:-.7px}.stage-heading p{font-size:12px;max-width:850px;color:#607267}
+.stage-context{font-size:11px;line-height:1.8;color:#718675;flex-shrink:0;text-align:right}
+.stage-io{display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:24px;margin-top:22px}.stage-io article{position:relative;padding:16px;background:#f4f7f2;border-radius:8px;min-width:0}.io-label{font-size:10px;color:#216850;font-weight:700;letter-spacing:1px}.stage-io p{font-size:12px;color:#3c5549;line-height:1.7;margin-top:6px;overflow-wrap:anywhere}.io-arrow{position:absolute;right:-20px;top:40%;color:#7b927a}
+.stage-actions{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-top:20px}.stage-actions>span{font-size:11px;color:#788775}.stage-actions>div{display:flex;gap:8px;flex-shrink:0}.stage-actions button{font-size:12px}
+.flow-body{padding:22px}.flow-body dl{display:grid;grid-template-columns:130px 1fr;gap:16px;margin:0 0 22px;font-size:12px;line-height:1.7}.flow-body dt{color:#7d8d7d}.flow-body dd{margin:0;color:#2c4c3d;overflow-wrap:anywhere}.flow-note{background:#f1f5ec;border-left:3px solid #a9bf94;padding:14px;font-size:12px;margin:15px 0}.flow-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}.flow-links button{font-size:11px}
+.validation-layout{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}.blocker-list{padding-left:22px;margin:0;line-height:2;color:#87662c;font-size:12px;max-height:280px;overflow:auto}
+.output-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.output-cards article{padding:20px;border:1px solid #d7e2d2;border-radius:10px;background:white;display:flex;align-items:start;flex-direction:column;gap:8px}.output-cards h3{font-size:15px;margin:6px 0}.output-cards p{font-size:12px;flex:1}.output-cards button,.output-cards a{margin-top:10px;font-size:11px}.flow-blocked{padding:14px 18px;margin:16px 0;background:#faf2df;border:1px solid #ead8ae;border-radius:8px;font-size:12px;color:#826329}.flow-blocked button{font-size:11px;margin-left:10px}
+button:disabled{opacity:.48;cursor:not-allowed}
+#flow-input-summary,#flow-validation,#flow-results{display:none}
+#workspace[data-stage=input] #flow-input-summary{display:block}
+#workspace[data-stage=validation] #flow-validation,#workspace[data-stage=outputs] #flow-results{display:block}
+#workspace:not([data-stage=recognition]) #camera-panel,#workspace:not([data-stage=recognition]):not([data-stage=wiring]) #inspection-panel,#workspace:not([data-stage=wiring]) #occlusion-panel{display:none!important}
+#workspace[data-stage=input] #integration-workspace,#workspace[data-stage=wiring] #integration-workspace{display:none}
+#workspace:not([data-stage=outputs]) .workspace-tabs{display:none}
+#workspace[data-stage=outputs] [data-worktab=review],#workspace[data-stage=outputs] [data-worktab=catalog]{display:none}
+#workspace[data-stage=input] .image-tools,#workspace[data-stage=input] #anchor-terminal,#workspace[data-stage=input] #anchor-mark,#workspace[data-stage=input] #analyze-image,#workspace[data-stage=input] .pcb-analysis,#workspace[data-stage=input] #full-pipeline{display:none}
+#workspace:not([data-stage=outputs]) #full-pipeline{display:none}
+#workspace[data-stage=outputs] .workflow-tools>*:not(#full-pipeline){display:none}
+#workspace[data-stage=validation] .workflow-tools{display:none}
+#workspace[data-stage=input] .schematic-panel,#workspace[data-stage=input] .inspector-panel,#workspace[data-stage=input] .review-panel{display:none}
+#workspace[data-stage=recognition] .schematic-panel,#workspace[data-stage=recognition] .review-panel,#workspace[data-stage=wiring] .schematic-panel,#workspace[data-stage=wiring] .review-panel{display:none}
+#workspace[data-stage=validation] .image-panel,#workspace[data-stage=validation] .review-panel{display:none}
+#workspace .step-no{display:none}
+#stats{display:none}.intro .scope{display:none}.intro{margin-bottom:12px}.intro h1{font-size:25px}.intro p{font-size:12px}.intro .eyebrow{letter-spacing:1px}
+.example-menu{position:relative}.example-menu summary{cursor:pointer;border:1px solid #55745e;border-radius:7px;padding:8px 12px;font-size:11px}.example-menu[open] .example-options{position:absolute;right:0;top:40px;z-index:20;display:grid;gap:7px;padding:12px;width:250px;background:#173d31;border:1px solid #55745e;border-radius:8px;box-shadow:0 6px 22px #173d3140}.example-options button{width:100%;text-align:left;justify-content:flex-start}
+@media(max-width:1100px){.stage-nav{gap:6px}.stage-nav button{padding:12px 8px;gap:7px}.stage-chevron{display:none}.stage-number{width:24px;height:24px}.output-cards{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.stage-nav{grid-template-columns:repeat(5,minmax(125px,1fr));overflow:auto;padding:2px}.stage-summary{padding:18px}.stage-heading h2{font-size:19px}.stage-context{display:none}.stage-io{grid-template-columns:1fr;gap:14px}.io-arrow{right:50%;top:auto;bottom:-17px;transform:rotate(90deg)}.stage-actions{align-items:start;flex-direction:column}.stage-actions>div{width:100%;justify-content:space-between}.validation-layout,.output-cards{grid-template-columns:1fr}.flow-body dl{grid-template-columns:100px 1fr}.example-menu[open] .example-options{left:0;right:auto}.image-tools{height:auto;flex-wrap:wrap}.header-actions{align-items:center}.project-bar select{max-width:100%}}
+
+#workspace[data-stage=input] #image-svg .hit,#workspace[data-stage=input] #image-svg .link-path,#workspace[data-stage=input] #image-svg .pin-anchor,#workspace[data-stage=input] #image-svg .text-observation,#workspace[data-stage=input] #image-svg .segment-overlay{display:none}
+#workspace[data-stage=input] #image-hint{visibility:hidden}
+
+#planner-form{display:grid;grid-template-columns:minmax(200px,1fr) minmax(260px,2fr);gap:14px;margin-top:18px}#planner-form label{display:grid;gap:8px;font-size:12px}#planner-form input,#planner-form select{width:100%;max-width:none;padding:12px;border:1px solid #ceddc6;border-radius:7px;background:#fafcf7;color:#355941}#planner-form p{grid-column:1/-1;line-height:1.8}#planner-submit{justify-self:start}#assistant-panel .gate-pills{flex-wrap:wrap}#assistant-panel h3{margin-top:24px;font-size:15px}.planner-result p,.planner-result li{font-size:12px;line-height:1.9}.planner-result details{margin-top:18px;padding:12px;background:#f2f6eb}.planner-result pre{max-height:280px;overflow:auto}@media(max-width:720px){#planner-form{grid-template-columns:1fr}}
+
+#auto-analysis-panel{margin:18px 0}#auto-analysis-panel[hidden]{display:none}.auto-pipeline{display:flex;gap:10px;flex-wrap:wrap}.auto-step{border:1px solid #d8e3cf;padding:12px 16px;border-radius:9px;font-size:12px;background:#f7faf3}.auto-step.current{background:#e0ecd6;border-color:#6c985f;font-weight:700}.auto-step.complete{color:#386a43;background:#edf5e5}.planner-settings{margin:12px 0;padding:12px;border:1px solid #e0e8d8;border-radius:8px}.planner-settings summary{cursor:pointer;font-size:12px;margin-bottom:10px}

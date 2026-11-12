@@ -1,0 +1,259 @@
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -1,5 +1,6 @@
+ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+ import Viewer3D from './Viewer3D';
++import {SelectionCard} from './SelectionCard';
+ import {createPortal} from 'react-dom';
+ import { connectCircuitiny, encodePin } from './bridge';
+ import { useStore } from './store';
+@@ -423,28 +424,21 @@
+           </details>
+         </div>
+       )}
+-      {(component || board) && !running && (
+-        <button
+-          className={guideOpen ? "ev-c3d-move ev-c3d-move-guide" : "ev-c3d-move"}
+-          disabled={wireMode}
+-          aria-label="선택한 오브젝트 이동 활성화"
+-          aria-pressed={moveTarget === selected}
+-          onClick={() => useStore.setState((s) => ({ moveTarget: s.moveTarget === selected ? null : selected }))}
+-        >
+-          {moveTarget === selected ? '이동 완료' : '이동 활성화'}
+-        </button>
+-      )}
+       {(component || board) && (
+-        <aside className="ev-c3d-properties">
+-          <strong>
+-            {selected} · {structure ? String(component?.properties?.label||(structure.shape==='box'?'구조물 상자':'구조물 원통')) : physicalModel?.name || meta?.name || board?.name || board?.boardKind || component?.metadataId}
+-          </strong>
++        <SelectionCard key={selected!} className={toolbarHost?'':'with-local-tools'}
++          title={structure?String(component?.properties?.label||'구조물'):physicalModel?.name||meta?.name||board?.name||board?.boardKind||component?.metadataId||'오브젝트'}
++          reference={selected!}
++          info={structure?`${structure.width} × ${structure.depth} × ${structure.height} mm`:component?.properties?.value?String(component.properties.value):board?'개발보드':`${definitions.get([...project.components,...(project.boards||[])].find(c=>c.instance===selected)?.componentId||'')?.pins.length||0}핀`}
++          moving={moveTarget===selected&&!running&&!wireMode} disabled={running||wireMode}
++          status={running?'실행 중':wireMode?'배선 편집 중':undefined}
++          onMove={()=>useStore.setState(s=>({moveTarget:s.moveTarget===selected?null:selected}))}
++          onClose={()=>useStore.getState().select(null)}>
+           {physicalModel&&<details><summary>실물 형상 · {physicalModel.name}</summary><p>{physicalModel.source?'제안된 설계 부품의 제품 형상 모델입니다.':'제품 모델이 미확인인 일반형입니다.'} 전기 동작 모델과는 별개입니다.</p><p>{physicalModel.basis}</p>{physicalModel.source&&<><p>외곽 기준: {physicalModel.width} × {physicalModel.depth} mm</p><a href={physicalModel.source} target="_blank" rel="noreferrer">제조사 원문·도면</a></>}{['hat','shield'].includes(physicalModel.kind)&&<p><a href="/physical-models/hat-license.txt" target="_blank" rel="noreferrer">Adafruit PCB 자료 · CC BY-SA 3.0</a></p>}</details>}
+           {Boolean(component?.properties?.evAssembly)&&<details><summary>장착 위치 · 새 설계 추정</summary><p>{String((component!.properties.evAssembly as {note:string}).note)}</p><p>사진의 원래 장착을 복원한 결과가 아닙니다. 치수와 고정 방법은 실제 부품으로 검토하세요.</p></details>}
+           <p>
+             {running
+               ? '실행 중입니다. 버튼·다이얼·센서를 조작할 수 있습니다.'
+-              : moveTarget === selected ? '선택한 오브젝트를 드래그해 옮기세요. 이동 완료 또는 Esc를 누르면 다시 고정됩니다.' : '현재 고정되어 있습니다. 오른쪽 아래 이동 활성화 버튼을 켜면 드래그할 수 있습니다.'}
++              : moveTarget === selected ? '선택한 오브젝트를 드래그해 옮기세요. 이동 완료 또는 Esc를 누르면 다시 고정됩니다.' : '현재 고정되어 있습니다. 위의 이동 활성화 버튼을 켜면 드래그할 수 있습니다.'}
+             {meta?.category === 'displays' && ' 실제 시뮬레이터 화면을 표시합니다.'}
+           </p>
+           {component?.metadataId === 'resistor' && (
+@@ -460,7 +454,7 @@
+             </label>
+           )}
+           {structure && component && <div className="ev-structure-fields">
+-            {Boolean(component.properties?.evDesignedStructure)&&<details open><summary>설계 보완 · INFERRED</summary><p>{String((component.properties.evDesignedStructure as {reason:string}).reason)}</p><p>사진에서 확인하지 못한 부분을 완성한 새 설계입니다. 실제 형상과 제작 치수는 미확인입니다.</p></details>}
++            {Boolean(component.properties?.evDesignedStructure)&&<details><summary>설계 보완 · INFERRED</summary><p>{String((component.properties.evDesignedStructure as {reason:string}).reason)}</p><p>사진에서 확인하지 못한 부분을 완성한 새 설계입니다. 실제 형상과 제작 치수는 미확인입니다.</p></details>}
+             {Boolean(component.properties?.evPhotoStructure)&&<details><summary>사진 근거 · INFERRED</summary><p>{String((component.properties.evPhotoStructure as {observation?:string}).observation||'사진의 보이는 형상을 단순화한 모델입니다.')}</p><p>절대 치수 UNKNOWN · 표시 기준 길이 220 mm는 시각화 가정입니다. 실제 제작 치수가 아닙니다.</p><p>{String(((component.properties.evPhotoStructure as {assumptions?:string[]}).assumptions||[]).join(' '))}</p></details>}
+             {([['width','너비'],['height','높이'],['depth','깊이'],['elevation','바닥 높이']] as const).map(([key,label])=><label key={key}>{label} (mm)
+               <input type="number" min={key==='elevation'?-500:2} max="500" step="1" disabled={running||(key==='elevation'&&moveTarget!==selected)} aria-label={`구조물 ${label} (mm)`}
+@@ -538,11 +532,13 @@
+               보드 실행 지원 범위는 기존 컴파일러와 같습니다.
+             </p>
+           </details>}
+-        </aside>
++        </SelectionCard>
+       )}
+       {wire && (
+-        <aside className="ev-c3d-properties">
+-          <strong>배선 · {wire.id}</strong>
++        <SelectionCard key={wire.id} title="배선" reference={wire.id} className={toolbarHost?'':'with-local-tools'}
++          moving={!project.nets.find(n=>n.id===wire.id)?.connectorBinding&&!running&&!wireMode} disabled={running||wireMode} status={project.nets.find(n=>n.id===wire.id)?.connectorBinding?'헤더 결합':running?'실행 중':wireMode?'배선 편집 중':'조작점 활성'}
++          info={`${wire.start.componentId}.${wire.start.pinName} → ${wire.end.componentId}.${wire.end.pinName}`}
++          onClose={()=>{useStore.getState().select(null);native.getState().setSelectedWire(null);}}>
+           <p>
+             {wire.start.componentId}.{wire.start.pinName} → {wire.end.componentId}.
+             {wire.end.pinName}
+@@ -579,8 +575,8 @@
+           <button disabled={running} onClick={() => useStore.getState().removeNet(wire.id)}>
+             배선 삭제
+           </button>
+-          <p>파란 시작점·주황 끝점을 새 핀으로 끌어 놓으세요. 경유점 화살표로 경로를 바꿀 수 있습니다.</p>
+-        </aside>
++          <p>{project.nets.find(n=>n.id===wire.id)?.connectorBinding?'헤더 전체를 맞물리는 적층 결합입니다. 보드 배치를 변경하면 함께 갱신됩니다.':'파란 시작점·주황 끝점을 새 핀으로 끌어 놓으세요. 경유점 화살표로 경로를 바꿀 수 있습니다.'}</p>
++        </SelectionCard>
+       )}
+       {details && (
+         <aside className="ev-c3d-nets">
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -130,7 +130,7 @@
+                 selected={selected === net.id}
+                 onClick={pick}
+               />}
+-              {!headerAssembly && !running && !wireMode && (
++              {selected === net.id && !headerAssembly && !running && !wireMode && (
+                 <>
+                   <EndpointHandle
+                     wireId={net.id}
+@@ -148,6 +148,7 @@
+               )}
+               {selected === net.id &&
+                 !running &&
++                !wireMode &&
+                 !drag &&
+                 (net.handles || []).map((p, i) => (
+                   <Waypoint key={i} wire={net.id} index={i} position={p} />
+--- a/frontend/src/components/circuitiny/EndpointHandle.tsx
++++ b/frontend/src/components/circuitiny/EndpointHandle.tsx
+@@ -128,7 +128,8 @@
+     nativeEvent: { button: number; preventDefault: () => void };
+     target: EventTarget;
+   }) => {
+-    if (native.getState().running || e.nativeEvent.button !== 0) return;
++    const state=useStore.getState();
++    if (native.getState().running || state.simulating || state.wireMode || state.selectedNet!==wireId || e.nativeEvent.button !== 0) return;
+     e.stopPropagation();
+     e.nativeEvent.preventDefault();
+     point.current = position;
+--- a/frontend/src/components/simulator/SimulatorCanvas.tsx
++++ b/frontend/src/components/simulator/SimulatorCanvas.tsx
+@@ -1,4 +1,5 @@
+ import { WireEndpointHandles } from './WireEndpointHandles';
++import {SelectionCard} from '../circuitiny/SelectionCard';
+ import { STRUCTURE_ID, structureParameters } from '../circuitiny/structureObjects';
+ import {SHARED_TOOL_EVENT,sharedPinSelected,type SharedTool} from '../circuitiny/sharedTools';
+ import {
+@@ -2944,9 +2945,27 @@
+ 
+   return (
+     <div className="simulator-canvas-container">
+-      {requireMoveActivation&&selectedObjectId&&!interactionRunning&&<button type="button" aria-label="선택한 오브젝트 이동 활성화" aria-pressed={moveTarget===selectedObjectId} disabled={!!wireInProgress}
+-       style={{position:'absolute',right:18,bottom:64,zIndex:100,padding:'12px 18px',borderRadius:10,border:'1px solid #448766',background:moveTarget===selectedObjectId?'#287b50':'#fff',color:moveTarget===selectedObjectId?'#fff':'#245d40',cursor:'pointer'}}
+-       onMouseDown={e=>e.stopPropagation()} onClick={()=>useMovementStore.setState({moveTarget:moveTarget===selectedObjectId?null:selectedObjectId})}>{moveTarget===selectedObjectId?'이동 완료':'이동 활성화'}</button>}
++      {requireMoveActivation&&selectedObjectId&&(()=>{
++        const item=components.find(p=>p.id===selectedObjectId),board=boards.find(p=>p.id===selectedObjectId);
++        const shape=item?.metadataId===STRUCTURE_ID?structureParameters(item.properties):null;
++        const label=shape?String(item?.properties?.label||'구조물'):String(item?.properties?.chipName||ComponentRegistry.getInstance().getById(item?.metadataId||'')?.name||board?.name||board?.boardKind||item?.metadataId||'오브젝트');
++        return <SelectionCard key={selectedObjectId} className={headerSlot?'':'with-local-tools'} title={label} reference={selectedObjectId}
++          info={shape?`${shape.width} × ${shape.depth} × ${shape.height} mm`:item?.properties?.value?String(item.properties.value):board?'개발보드':'회로 부품'}
++          moving={moveTarget===selectedObjectId&&!interactionRunning&&!wireInProgress} disabled={!!wireInProgress||interactionRunning} status={interactionRunning?'실행 중':wireInProgress?'배선 편집 중':undefined}
++          onMove={()=>useMovementStore.setState({moveTarget:moveTarget===selectedObjectId?null:selectedObjectId})}
++          onClose={()=>{setSelectedComponentId(null);setSelectedBoardId(null);useMovementStore.getState().select(null);}}>
++          <p>선택한 오브젝트만 이동할 수 있습니다. 이동 완료를 누르면 다시 고정됩니다.</p>
++          {item&&<button onClick={()=>openComponentInspector(item.id,{x:window.innerWidth-270,y:90})}>상세 속성·핀 정보</button>}
++          {board&&<button onClick={()=>setBoardContextMenu({boardId:board.id,x:window.innerWidth-270,y:90})}>보드 설정·핀 정보</button>}
++        </SelectionCard>;
++      })()}
++      {requireMoveActivation&&selectedWireId&&(()=>{
++        const wire=wires.find(w=>w.id===selectedWireId);if(!wire)return null;
++        const connection=`${wire.start.componentId}.${wire.start.pinName} → ${wire.end.componentId}.${wire.end.pinName}`;
++        return <SelectionCard key={wire.id} className={headerSlot?'':'with-local-tools'} title="배선" reference={wire.id} info={connection}
++          moving={!interactionRunning&&!wireInProgress} disabled={interactionRunning||!!wireInProgress} status={interactionRunning?'실행 중':wireInProgress?'배선 편집 중':'조작점 활성'}
++          onClose={()=>{setSelectedWire(null);useMovementStore.getState().select(null);}}><p>{connection}</p><p>양 끝 조작점을 드래그해 연결을 옮기세요. 다른 곳을 선택하면 조작점이 숨겨집니다.</p></SelectionCard>;
++      })()}
+       {/* ESP32 crash notification */}
+       {esp32CrashBoardId && (
+         <div
+--- a/frontend/src/components/simulator/WireEndpointHandles.tsx
++++ b/frontend/src/components/simulator/WireEndpointHandles.tsx
+@@ -47,6 +47,7 @@
+       if (!h) return;
+       h.point = toWorld(e.clientX, e.clientY);
+       const state = native.getState();
++      if(state.selectedWireId!==h.wireId){release();return;}
+       const hit = wirePinTarget(state, h.wireId, h.side, h.point, 14 / zoom);
+       const connected = hit ? breadboardHoverPreview(state.components, state.wires, hit.endpoint, h.wireId) : null;
+       setConnectedPreview(connected);
+@@ -65,6 +66,7 @@
+     const up = (e: PointerEvent) => {
+       const h = held.current;
+       if (!h) return;
++      if(native.getState().selectedWireId!==h.wireId){release();return;}
+       const pos = toWorld(e.clientX, e.clientY);
+       const hit = wirePinTarget(native.getState(), h.wireId, h.side, pos, 14 / zoom);
+       try {
+@@ -102,6 +104,7 @@
+     };
+   }, [toWorld, zoom]);
+   useEffect(() => { if (disabled) release(); }, [disabled]);
++  useEffect(() => { release(); }, [selected]);
+   if (disabled) return null;
+   return (
+     <svg
+@@ -121,7 +124,7 @@
+       <style>{`.wire-endpoint-label{opacity:0;pointer-events:none}.wire-endpoint-handle:hover .wire-endpoint-label,.wire-endpoint-handle[data-emphasized=true] .wire-endpoint-label{opacity:1}`}</style>
+       {connectedPreview && <BreadboardHoverOverlay preview={connectedPreview} items={[...native.getState().boards, ...native.getState().components]} wires={wires} excludeWireId={preview?.wireId} zoom={zoom} />}
+       {wires
+-        .filter((w) => !w.bb)
++        .filter((w) => !w.bb && w.id===selected)
+         .flatMap((wire) =>
+           (['start', 'end'] as WireEnd[]).map((side) => {
+             const active = preview?.wireId === wire.id && preview.side === side;
+@@ -167,6 +170,7 @@
+                     e.preventDefault();
+                   }}
+                   onPointerDown={(e) => {
++                    if(native.getState().selectedWireId!==wire.id)return;
+                     e.stopPropagation();
+                     e.preventDefault();
+                     e.currentTarget.setPointerCapture(e.pointerId);
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -842,7 +842,7 @@
+          <div className={embedded?'ev-circuit-layout':undefined} style={{display:'flex',flexDirection:'column',flex:1,minHeight:0}}>
+           {embedded&&<section className="ev-circuit-pane-tools" aria-label="회로 도구 영역" data-action-scope="circuit"><div className="ev-pane-heading"><strong>회로</strong><div className="ev-canvas-actions"><button className="ev-add-part" disabled={circuitRunning} onClick={()=>sharedTool('add')}>＋ 부품 추가</button><div className="ev-dimension-switch" role="group" aria-label="회로 표시 방식"><button aria-pressed={assembly3D&&assemblyView==='top'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'top'});}}>2D 보기</button><button aria-pressed={assembly3D&&assemblyView==='iso'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'iso'});}}>3D 보기</button><button onClick={()=>useCircuitinyStore.setState(s=>({fitRevision:s.fitRevision+1}))}>화면 맞춤</button><button aria-pressed={assembly3D&&cameraLocked} disabled={!assembly3D} onClick={()=>useCircuitinyStore.setState(s=>({cameraLocked:!s.cameraLocked}))}>{cameraLocked?'시점 잠금 해제':'시점 잠금'}</button></div></div></div>
+            <div ref={setCircuitToolsHost} className="ev-circuit-edit-tools"/>
+-           <div className="ev-circuit-help"><p>배선 끝을 드래그해 연결하세요. 왼쪽 드래그 이동 · 오른쪽 드래그 회전 · 휠 확대/축소</p><EditorMenuBar scope="circuit"/><details className="ev-native-circuit-tools" onToggle={event=>setToolsOpen(event.currentTarget.open)}><summary>추가 회로 도구</summary><div ref={setCanvasHeaderSlot}/></details></div>
++           <div className="ev-circuit-help"><p>배선을 선택한 뒤 양 끝 조작점을 드래그하세요. 왼쪽 드래그 이동 · 오른쪽 드래그 회전 · 휠 확대/축소</p><EditorMenuBar scope="circuit"/><details className="ev-native-circuit-tools" onToggle={event=>setToolsOpen(event.currentTarget.open)}><summary>추가 회로 도구</summary><div ref={setCanvasHeaderSlot}/></details></div>
+           </section>}
+           <div className={embedded?'ev-circuit-workspace':undefined} style={{ flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 }}>
+             <div className={embedded&&assembly3D?'ev-canvas-engine ev-hidden-2d':'ev-canvas-engine'} aria-hidden={embedded&&assembly3D?true:undefined}>
+--- /dev/null
++++ b/frontend/src/components/circuitiny/SelectionCard.tsx
+@@ -0,0 +1,17 @@
++import type {ReactNode} from 'react';
++import './SelectionCard.css';
++
++/** Keep the selection and its movement switch together; details are opt-in. */
++export function SelectionCard({title,reference,info,moving,disabled,status,onMove,onClose,children,className=''}:{
++ title:string;reference:string;info?:ReactNode;moving:boolean;disabled:boolean;status?:string;
++ onMove?:()=>void;onClose:()=>void;children?:ReactNode;className?:string;
++}){
++ return <aside className={'ev-selection-card '+className} aria-label="선택한 오브젝트 정보">
++  <div className="ev-selection-card-heading"><div><strong title={title}>{title}</strong><small title={reference}>{reference}</small></div>
++   <button type="button" className="ev-selection-card-close" aria-label="선택한 오브젝트 정보 닫기" onClick={onClose}>×</button>
++  </div>
++  <div className="ev-selection-card-facts"><span className={moving?'is-moving':''}>{status||(moving?'이동 가능':'고정')}</span>{info&&<small>{info}</small>}</div>
++  {onMove&&<button type="button" className="ev-selection-card-move" aria-label="선택한 오브젝트 이동 활성화" aria-pressed={moving} disabled={disabled} onClick={onMove}>{moving?'이동 완료':'이동 활성화'}</button>}
++  {children&&<details className="ev-selection-card-details"><summary>자세히 보기</summary><div className="ev-selection-card-content">{children}</div></details>}
++ </aside>;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/SelectionCard.css
+@@ -0,0 +1,28 @@
++.ev-selection-card{position:absolute;top:12px;right:12px;z-index:250;width:min(232px,calc(100% - 24px));max-height:calc(100% - 24px);box-sizing:border-box;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:9px;padding:11px;border:1px solid #d6e2da;border-radius:12px;background:#fffffff5;color:#294a37;box-shadow:0 4px 18px #183b2920;font:12px/1.4 system-ui,sans-serif;pointer-events:auto}
++.ev-selection-card-heading{display:flex;align-items:flex-start;gap:8px;min-width:0}
++.ev-selection-card-heading>div{flex:1;min-width:0}
++.ev-selection-card-heading strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12px;overflow-wrap:anywhere}
++.ev-selection-card-heading small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#75847b;font-size:10px;margin-top:2px}
++.ev-selection-card .ev-selection-card-close{flex:none;width:23px;height:23px;border:0;border-radius:5px;padding:0;background:transparent;color:#718078;font-size:19px;line-height:1;cursor:pointer}
++.ev-selection-card .ev-selection-card-close:hover{background:#edf3ef}
++.ev-selection-card-facts{display:flex;align-items:center;gap:7px;min-width:0}
++.ev-selection-card-facts>span{flex:none;border-radius:4px;padding:2px 6px;background:#eef2ef;color:#69766d;font-size:10px}
++.ev-selection-card-facts>span.is-moving{background:#e3f4e9;color:#176b48}
++.ev-selection-card-facts>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#677b6b}
++.ev-selection-card .ev-selection-card-move{width:100%;margin:0;padding:7px 10px;border:1px solid #c7dbce;border-radius:7px;background:#f2f8f4;color:#245f3d;font:600 12px/1.4 system-ui,sans-serif;cursor:pointer}
++.ev-selection-card .ev-selection-card-move[aria-pressed=true]{border-color:#236c49;background:#236c49;color:#fff}
++.ev-selection-card button:disabled{cursor:not-allowed;opacity:.5}
++.ev-selection-card-details{flex:none;min-height:0;border-top:1px solid #e4ebe6;padding-top:7px;font-size:11px}
++.ev-selection-card-details>summary{cursor:pointer;color:#697b6e;list-style:none;font-size:10px}
++.ev-selection-card-details>summary:after{content:' ＋';float:right}
++.ev-selection-card-details[open]>summary:after{content:' −'}
++.ev-selection-card-content{overflow:auto;max-height:min(300px,calc(100vh - 280px));margin-top:7px;overscroll-behavior:contain}
++.ev-selection-card-content p{margin:7px 0;font-size:10px;line-height:1.5}
++.ev-selection-card-content label{display:block;margin:8px 0}
++.ev-selection-card-content input{display:block;width:100%;max-width:100%;box-sizing:border-box;margin-top:4px;padding:6px;border:1px solid #d3dfd7;border-radius:5px;background:#fff;color:inherit;font:inherit}
++.ev-selection-card-content input[type=color]{height:30px}
++.ev-selection-card-content button{margin:3px 4px 3px 0;font-size:10px}
++.ev-selection-card-content details{margin:8px 0;padding-top:6px;border-top:1px solid #e2e9e4}
++.ev-selection-card-content summary{cursor:pointer;font-size:10px}
++.ev-selection-card.with-local-tools{top:70px;max-height:calc(100% - 82px)}
++@media(max-width:700px){.ev-selection-card{top:8px;right:8px;width:min(212px,calc(100% - 16px));padding:9px;gap:7px}.ev-selection-card-content{max-height:min(230px,calc(100vh - 250px))}}

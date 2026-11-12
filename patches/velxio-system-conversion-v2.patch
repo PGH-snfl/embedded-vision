@@ -1,0 +1,3574 @@
+--- a/frontend/src/components/EmbeddedCodeTranslation.tsx
++++ b/frontend/src/components/EmbeddedCodeTranslation.tsx
+@@ -6,6 +6,8 @@
+ import {findRobotCode} from './embeddedRobotCode';
+ import {hostedWorkspace} from './embeddedCloud';
+ import {originalSystemUrl} from './embeddedSystemConversion';
++import {EmbeddedBoardConversion} from './EmbeddedBoardConversion';
++import {useSimulatorStore} from '../store/useSimulatorStore';
+ import {acceptedTranslationResult,makeTranslationRequest,translationContext,type TranslationResult,type TranslationTarget} from './embeddedTranslationBridge';
+ 
+ type Pending={id:string;source:string;target:TranslationTarget;fingerprint:string;timer:ReturnType<typeof setTimeout>};
+@@ -18,6 +20,8 @@
+ /** The conversion changes board, wiring and code, so its entry stays global. */
+ export function EmbeddedSystemConversion(){
+  const source=useEditorStore(s=>findRobotCode(s.fileGroups)?.file.content);
++ const board=useSimulatorStore(s=>s.boards.length===1?s.boards[0].boardKind:undefined);
++ if(getMotionSource()?.implementation_design||(!source&&!getMotionSource()?.translation_target&&['arduino-uno','raspberry-pi-pico','esp32','raspberry-pi-4'].includes(board||'')))return <EmbeddedBoardConversion/>;
+  return <EmbeddedCodeTranslation source={source}/>;
+ }
+ export function EmbeddedCodeTranslation({source}:{source:string|undefined}){
+--- a/frontend/src/components/embeddedCloud.ts
++++ b/frontend/src/components/embeddedCloud.ts
+@@ -9,6 +9,7 @@
+   const workspace = hostedWorkspace();
+   if (!workspace) return null;
+   const project = source.source_project;
++  if(!project&&['board_example','standalone_editor'].includes(source.design_origin))return null;
+   if (typeof project !== 'string' || !/^[a-f0-9]{32}$/.test(project))
+     throw new Error(
+       '작업공간의 원본 프로젝트가 필요합니다. 사진 분석 화면에서 편집기를 다시 여세요.',
+--- a/frontend/src/components/circuitiny/assemblyGuide.ts
++++ b/frontend/src/components/circuitiny/assemblyGuide.ts
+@@ -49,7 +49,7 @@
+   const pin = rest.join('.');
+   const hole = /^(\d+)[tb]\.([a-j])$/.exec(pin);
+   if (id === 'BB1' && hole) return `빵판 ${hole[2].toUpperCase()}${hole[1]} 구멍`;
+-  const names: Record<string, string> = { U1: '아두이노 U1', D1: 'LED D1', R1: '저항 R1', R2: '저항 R2', SW1: '버튼 SW1', S1: '조도 센서 S1', BTN1: '버튼 BTN1', B1: '버튼 B1' };
++  const names: Record<string, string> = { U1: '제어 보드 U1', D1: 'LED D1', R1: '저항 R1', R2: '저항 R2', SW1: '버튼 SW1', S1: '부품 S1', BTN1: '버튼 BTN1', B1: '버튼 B1' };
+   const label = pin === 'A' && id.startsWith('D') ? 'A(긴 다리, +)' : pin === 'C' && id.startsWith('D') ? 'C(짧은 다리, −)' : pin;
+   if (id === 'S1') {
+     const sensorPin: Record<string, string> = {VCC: 'VCC(전원)', GND: 'GND(접지)', AO: 'AO(아날로그 출력)'};
+--- a/frontend/src/components/circuitiny/environmentObjects.ts
++++ b/frontend/src/components/circuitiny/environmentObjects.ts
+@@ -36,7 +36,7 @@
+  if(result.actuation==='pump-current')for(const key of ['pumpId','driverId','supplyId','gateResistorId'] as const){if(typeof raw[key]!=='string'||! /^[A-Za-z0-9_-]{1,80}$/.test(raw[key]))return null;result[key]=raw[key];}
+  for(const key of ['controlPin','flowMlPerSecond','soilCapacityMl','reservoirCapacityMl','initialReservoirMl','potCapacityMl','absorptionMlPerSecond','dryAdc','wetAdc'] as const){
+   const n=Number(raw[key]);
+-  result[key]=Number.isFinite(n)?Math.max(['controlPin','wetAdc'].includes(key)?0:.01,Math.min(key==='controlPin'?13:key.endsWith('Adc')?1023:10000,n)):result[key];
++  result[key]=Number.isFinite(n)?Math.max(['controlPin','wetAdc'].includes(key)?0:.01,Math.min(key==='controlPin'?63:key.endsWith('Adc')?1023:10000,n)):result[key];
+  }
+  if(result.dryAdc<=result.wetAdc)return null;
+  result.controlPin=Math.round(result.controlPin);
+--- /dev/null
++++ b/frontend/src/components/boardConversionClient.ts
+@@ -0,0 +1,38 @@
++import {getCsrfHeaders} from '../lib/apiBase';
++export type BoardConversionResult={workbench:Record<string,any>;source_fingerprint:string;method:string;provider_calls:number;
++ pin_mapping:Array<{source:string;target:string;reason:string}>;changes:string[];limitations:string[];
++ runtime:{availability:string;notice:string};validation:Record<string,string>};
++export function conversionEndpoint(path=location.pathname){const wid=/^\/w\/([a-f0-9]{32})(?:\/|$)/.exec(path)?.[1];return wid?`/api/w/${wid}/system-conversions/preview`:'/api/system-conversions/preview';}
++export function conversionFingerprint(project:Record<string,unknown>){const {exportedAt:_,...stable}=project;return JSON.stringify(stable);}
++export function convertedProjectUrl(project:Record<string,any>){
++ const bytes=new TextEncoder().encode(JSON.stringify(project));
++ const encoded=btoa(Array.from(bytes,b=>String.fromCharCode(b)).join(''));
++ const wid=/^\/w\/([a-f0-9]{32})(?:\/|$)/.exec(location.pathname)?.[1];
++ const url=new URL(wid?`/w/${wid}/editor`:'/editor',location.origin);
++ url.searchParams.set('embedded','1');url.searchParams.set('view','system-conversion-2');
++ url.hash='project='+encodeURIComponent(encoded);return url.href;
++}
++export async function requestBoardConversion(project:Record<string,unknown>,target:string,allowAi:boolean,signal?:AbortSignal):Promise<BoardConversionResult>{
++ const endpoint=conversionEndpoint(),id=crypto.randomUUID();
++ let response=await fetch(endpoint,{method:'POST',credentials:'same-origin',signal,
++  headers:{'Content-Type':'application/json','Idempotency-Key':id,...getCsrfHeaders()},body:JSON.stringify({project,target,allow_ai:allowAi})});
++ if(response.status===202){
++  const job=await response.json(),wid=/^\/w\/([a-f0-9]{32})(?:\/|$)/.exec(location.pathname)?.[1];
++  if(!wid||typeof job.status_url!=='string'||!new RegExp(`^/api/w/${wid}/jobs/[a-f0-9]{32}$`).test(job.status_url))throw Error('전환 작업의 작업공간이 일치하지 않습니다.');
++  const deadline=Date.now()+300000;
++  while(true){
++   if(signal?.aborted)throw new DOMException('결과 대기를 중단했습니다. 서버 작업은 자동 재제출하지 않습니다.','AbortError');
++   if(Date.now()>deadline)throw Error('결과 대기 시간이 지났습니다. 서버 작업은 재제출하지 않았습니다.');
++   await new Promise(resolve=>setTimeout(resolve,600));
++   const poll=await fetch(job.status_url,{credentials:'same-origin',signal});if(!poll.ok)throw Error('전환 작업 상태를 읽지 못했습니다.');
++   const status=await poll.json();
++   if(['done','failed','interrupted'].includes(status.status)){
++    response=new Response(JSON.stringify(status.result?.data||status.result||{detail:'전환 작업이 중단됐습니다.'}),{status:status.result?.status_code||(status.status==='done'?200:503),headers:{'Content-Type':'application/json'}});break;
++   }
++  }
++ }
++ const result=await response.json();
++ if(!response.ok){const detail=result.detail;throw Error(typeof detail==='string'?detail:detail?.message||'회로·코드 전환을 완료하지 못했습니다.');}
++ if(result.workbench?.format!=='velxio-project'||result.workbench.boards?.length!==1||result.workbench.boards[0].boardKind!==target||!Array.isArray(result.pin_mapping)||!Array.isArray(result.changes)||!Array.isArray(result.limitations))throw Error('변환 결과의 대상 보드나 형식이 올바르지 않습니다.');
++ return result;
++}
+--- /dev/null
++++ b/frontend/src/components/EmbeddedBoardConversion.tsx
+@@ -0,0 +1,56 @@
++import {useEffect,useRef,useState} from 'react';
++import {createPortal} from 'react-dom';
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {buildVlxPayload} from '../utils/vlxFile';
++import {getMotionSource} from './embeddedMotionBridge';
++import {conversionFingerprint,convertedProjectUrl,requestBoardConversion,type BoardConversionResult} from './boardConversionClient';
++const boards={'arduino-uno':'Arduino UNO','raspberry-pi-pico':'Raspberry Pi Pico','esp32':'ESP32','raspberry-pi-4':'Raspberry Pi 4'};
++function snapshot(){return {...buildVlxPayload(),embeddedVision:getMotionSource()||{}};}
++function download(value:unknown,name:string){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
++export function EmbeddedBoardConversion(){
++ const current=native(s=>s.boards.find(b=>b.id===s.activeBoardId)?.boardKind),running=native(s=>s.running);
++ const [open,setOpen]=useState(false),[target,setTarget]=useState('raspberry-pi-pico'),[ai,setAi]=useState(true),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
++ const [result,setResult]=useState<{value:BoardConversionResult;fingerprint:string;source:ReturnType<typeof snapshot>;target:string}|null>(null);
++ const trigger=useRef<HTMLButtonElement>(null),dialog=useRef<HTMLDivElement>(null),close=useRef<HTMLButtonElement>(null),pending=useRef<AbortController|null>(null),generation=useRef(0);
++ useEffect(()=>{if(target===current)setTarget(Object.keys(boards).find(k=>k!==current)||'raspberry-pi-pico');},[current]);
++ useEffect(()=>{generation.current++;setResult(null);},[target,ai,current]);
++ useEffect(()=>()=>{pending.current?.abort();generation.current++;},[]);
++ useEffect(()=>{
++  if(!open)return;close.current?.focus();
++  const key=(event:KeyboardEvent)=>{
++   if(event.key==='Escape'&&!pending.current){event.preventDefault();setOpen(false);}
++   if(event.key!=='Tab')return;
++   const items=Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),input:not(:disabled),a[href],summary')||[]),first=items[0],last=items[items.length-1];
++   if(!first||!last)return;
++   if(event.shiftKey&&(document.activeElement===first||!dialog.current?.contains(document.activeElement))){event.preventDefault();last.focus();}
++   else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
++  };
++  document.addEventListener('keydown',key);return()=>{document.removeEventListener('keydown',key);trigger.current?.focus();};
++ },[open]);
++ const convert=async()=>{
++  if(pending.current)return;
++  const controller=new AbortController(),source=snapshot(),fingerprint=conversionFingerprint(source),ticket=++generation.current;
++  pending.current=controller;setBusy(true);setResult(null);setMessage(ai?'현재 회로·코드로 전환 설계를 만들고 있습니다…':'현재 코드와 연결을 확인하고 있습니다…');
++  try{
++   const value=await requestBoardConversion(source,target,ai,controller.signal);
++   if(ticket!==generation.current||fingerprint!==conversionFingerprint(snapshot()))throw Error('전환 중 코드·부품·배선이 바뀌었습니다. 현재 설계로 다시 요청하세요.');
++   setResult({value,fingerprint,source,target});setMessage('대상 회로·배선·코드를 만들었습니다. 변경 내용을 확인하고 새 탭에서 여세요.');
++  }catch(error){setMessage(controller.signal.aborted?'대기를 중단했습니다. 서버의 AI 작업은 계속될 수 있으며 자동 재제출하지 않습니다.':error instanceof Error?error.message:String(error));}
++  finally{pending.current=null;setBusy(false);}
++ };
++ const openResult=()=>{
++  if(!result||result.target!==target||result.fingerprint!==conversionFingerprint(snapshot())){setResult(null);setMessage('원본 코드 또는 회로가 바뀌었습니다. 다시 전환하세요.');return;}
++  window.open(convertedProjectUrl(result.value.workbench),'_blank','noopener');
++ };
++ return <><button ref={trigger} className="ev-translation-trigger" onClick={()=>setOpen(true)}>시스템 전환</button>{open&&createPortal(<div className="ev-translation-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)setOpen(false);}}><div ref={dialog} className="ev-code-translation ev-translation-dialog" role="dialog" aria-modal="true" aria-labelledby="ev-board-conversion-title">
++  <div className="ev-translation-heading"><h2 id="ev-board-conversion-title">시스템 전환 · 회로·배선·코드</h2><button ref={close} disabled={busy} onClick={()=>setOpen(false)} aria-label="시스템 전환 닫기">닫기 ✕</button></div>
++  <p>현재 편집한 기능을 유지하면서 보드와 핀 연결·전원·코드를 함께 변경합니다. 원본은 이 탭에 남습니다.</p>
++  <div className="ev-robot-code-row"><span>현재: {boards[current as keyof typeof boards]||current||'보드 없음'}</span><label>대상 보드 <select disabled={busy} value={target} onChange={e=>setTarget(e.target.value)}>{Object.entries(boards).filter(([id])=>id!==current).map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label><button disabled={busy||running||!current} onClick={()=>void convert()}>{busy?'전환 설계 중…':'회로·코드 전환'}</button></div>
++  {running&&<p>시뮬레이션을 정지한 뒤 전환하세요.</p>}
++  {ai&&<small>일반 회로는 현재 부품·배선·코드를 OpenAI Sol에 보내 전환합니다. 사진은 다시 보내지 않습니다.</small>}
++  <details><summary>AI 전환·지원 범위</summary><label><input disabled={busy} type="checkbox" checked={ai} onChange={e=>setAi(e.target.checked)}/> 복잡한 코드는 AI로 자동 전환</label><p>확인된 버튼 LED 회로는 API 호출 없이 전환합니다. 그 밖의 코드는 Sol로 한 번 설계하며 서버 키와 사용 요금이 필요합니다. 사진은 다시 전송하지 않습니다. ESP32·Linux Pi의 실제 실행에는 별도 서비스가 필요합니다.</p></details>
++  {busy&&<button onClick={()=>{pending.current?.abort();setMessage('대기를 중단했습니다. 서버의 AI 작업은 계속될 수 있으며 자동 재제출하지 않습니다.');}}>결과 대기 중단</button>}
++  <span role="status">{message}</span>
++  {result&&<section><p><strong>{boards[result.target as keyof typeof boards]}</strong> · {result.value.method==='verified_local_template'?'검토된 코드·연결 변환':'AI 전환 설계 · 동작 검증 전'}</p><p>{result.value.runtime.notice}</p><button className="ev-translation-open" onClick={openResult}>변환된 회로·코드 새 탭에서 열기 ↗</button><details><summary>핀 변경·검증·원본 보관</summary><ul>{result.value.pin_mapping.map(p=><li key={p.source}>{p.source} → {p.target} · {p.reason}</li>)}</ul>{result.value.changes.map((v,i)=><p key={i}>{v}</p>)}{result.value.limitations.map((v,i)=><p key={'l'+i}>{v}</p>)}<p>코드·회로의 실제 입력/출력 검사는 대상 편집기에서 실행합니다.</p><button onClick={()=>download(result.source,'source-before-conversion.vlx')}>원본 파일 보관</button><button onClick={()=>download(result.value.workbench,'converted-system.vlx')}>전환 파일 보관</button></details></section>}
++ </div></div>,document.body)}</>;
++}
+--- /dev/null
++++ b/frontend/src/__tests__/system-conversion.test.ts
+@@ -0,0 +1,105 @@
++// @vitest-environment jsdom
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import {afterEach,it,expect,vi} from 'vitest';
++import {EmbeddedBoardConversion} from '../components/EmbeddedBoardConversion';
++import {conversionEndpoint,convertedProjectUrl,requestBoardConversion} from '../components/boardConversionClient';
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {useEditorStore} from '../store/useEditorStore';
++import {importVlxFile} from '../utils/vlxFile';
++import {setMotionSource} from '../components/embeddedMotionBridge';
++import {EmbeddedVisionBridge} from '../components/EmbeddedVisionBridge';
++import {openCloudDraft} from '../components/embeddedCloud';
++import {guideSteps,readableRef} from '../components/circuitiny/assemblyGuide';
++import fixture from './fixtures/system-conversion.json';
++vi.stubGlobal('requestAnimationFrame',()=>1);vi.stubGlobal('cancelAnimationFrame',()=>{});
++afterEach(()=>{vi.restoreAllMocks();setMotionSource(undefined);});
++const response=()=>({workbench:structuredClone(fixture.converted),method:'verified_local_template',provider_calls:0,source_fingerprint:'a'.repeat(64),
++ pin_mapping:[{source:'5',target:'GP15',reason:'출력'}],changes:['보드·배선·코드 전환'],limitations:[],runtime:{availability:'local',notice:'Pico 코드 실행 지원'},validation:{behavior:'not_verified'}});
++
++it('uses the workspace conversion API and refuses a mismatched target result',async()=>{
++ expect(conversionEndpoint('/w/'+'a'.repeat(32)+'/editor')).toBe('/api/w/'+'a'.repeat(32)+'/system-conversions/preview');
++ expect(conversionEndpoint('/editor')).toBe('/api/system-conversions/preview');
++ const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response(JSON.stringify(response()),{status:200}));
++ const r=await requestBoardConversion(fixture.source,'raspberry-pi-pico',false);expect(r.provider_calls).toBe(0);
++ const body=JSON.parse(String(fetch.mock.calls[0][1]?.body));expect(body.project.fileGroups).toEqual(fixture.source.fileGroups);expect(body.allow_ai).toBe(false);
++ const wrong=response();wrong.workbench.boards[0].boardKind='esp32';fetch.mockResolvedValue(new Response(JSON.stringify(wrong),{status:200}));
++ await expect(requestBoardConversion(fixture.source,'raspberry-pi-pico',false)).rejects.toThrow('대상 보드');
++ const url=new URL(convertedProjectUrl(fixture.converted));expect(url.searchParams.has('motion')).toBe(false);expect(url.hash).toContain('project=');
++});
++
++it('shows all other boards and opens a separate converted editor only for an unchanged snapshot',async()=>{
++ vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
++ await importVlxFile({text:async()=>JSON.stringify(fixture.source)} as File);setMotionSource(fixture.source.embeddedVision);
++ const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async()=>new Response(JSON.stringify(response()),{status:200}));
++ const open=vi.spyOn(window,'open').mockReturnValue(null),host=document.createElement('div');document.body.append(host);const root=createRoot(host);
++ try{
++  await act(async()=>root.render(createElement(EmbeddedBoardConversion)));
++  const button=(name:string)=>Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b=>b.textContent===name)!;
++  await act(async()=>button('시스템 전환').click());
++  const options=Array.from(document.querySelectorAll('select option')).map(o=>o.getAttribute('value'));
++  expect(options).toEqual(['raspberry-pi-pico','esp32','raspberry-pi-4']);
++  await act(async()=>button('회로·코드 전환').click());expect(fetch).toHaveBeenCalledTimes(1);
++  expect(native.getState().boards[0].boardKind).toBe('arduino-uno');
++  await act(async()=>button('변환된 회로·코드 새 탭에서 열기 ↗').click());expect(open).toHaveBeenCalledTimes(1);
++  expect(open.mock.calls[0][1]).toBe('_blank');
++  await act(async()=>useEditorStore.setState(s=>({fileGroups:Object.fromEntries(Object.entries(s.fileGroups).map(([k,v])=>[k,v.map(f=>({...f,content:f.content+'\n// edit'}))]))})));
++  await act(async()=>button('변환된 회로·코드 새 탭에서 열기 ↗').click());expect(open).toHaveBeenCalledTimes(1);
++  expect(document.body.textContent).toContain('원본 코드 또는 회로가 바뀌었습니다');
++ }finally{await act(async()=>root.unmount());host.remove();}
++});
++
++it('rejects stale conversion results when a wire changes during the request',async()=>{
++ await importVlxFile({text:async()=>JSON.stringify(fixture.source)} as File);setMotionSource(fixture.source.embeddedVision);
++ let finish:(r:Response)=>void=()=>{};
++ vi.spyOn(globalThis,'fetch').mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
++ const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
++ try{
++  await act(async()=>root.render(createElement(EmbeddedBoardConversion)));
++  const button=(name:string)=>Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b=>b.textContent===name)!;
++  await act(async()=>button('시스템 전환').click());await act(async()=>button('회로·코드 전환').click());
++  await act(async()=>native.setState(s=>({wires:s.wires.map((w,i)=>i? w:{...w,end:{...w.end,pinName:'2'}})})));
++  await act(async()=>finish(new Response(JSON.stringify(response()),{status:200})));
++  expect(document.body.textContent).toContain('전환 중 코드·부품·배선이 바뀌었습니다');
++  expect(button('변환된 회로·코드 새 탭에서 열기 ↗')).toBeUndefined();
++ }finally{await act(async()=>root.unmount());host.remove();}
++});
++
++it('polls only the current workspace job and handles the queued result',async()=>{
++ const wid='a'.repeat(32),jid='b'.repeat(32),previous=location.pathname;
++ history.replaceState(null,'',`/w/${wid}/editor`);vi.useFakeTimers();
++ try{
++  const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({status_url:`/api/w/${wid}/jobs/${jid}`}),{status:202}))
++   .mockResolvedValueOnce(new Response(JSON.stringify({status:'done',result:{status_code:200,data:response()}}),{status:200}));
++  const pending=requestBoardConversion(fixture.source,'raspberry-pi-pico',true);
++  await vi.advanceTimersByTimeAsync(650);
++  expect((await pending).workbench.boards[0].boardKind).toBe('raspberry-pi-pico');
++  expect(fetch.mock.calls[1][0]).toBe(`/api/w/${wid}/jobs/${jid}`);
++  expect(new URL(convertedProjectUrl(fixture.converted)).pathname).toBe(`/w/${wid}/editor`);
++  fetch.mockResolvedValue(new Response(JSON.stringify({status_url:'https://unrelated.example/job'}),{status:202}));
++  await expect(requestBoardConversion(fixture.source,'raspberry-pi-pico',true)).rejects.toThrow('작업공간');
++ }finally{vi.useRealTimers();history.replaceState(null,'',previous);}
++});
++
++it('opens the converted project through the real import bridge and regenerates guide connections',async()=>{
++ const previous=location.href,url=convertedProjectUrl(fixture.converted);history.replaceState(null,'',url);
++ localStorage.clear();const ready=vi.fn(),host=document.createElement('div');document.body.append(host);const root=createRoot(host);
++ try{
++  await act(async()=>root.render(createElement(EmbeddedVisionBridge,{onReady:ready})));
++  expect(ready).toHaveBeenCalledWith(true,false,undefined,false);
++  expect(native.getState().boards[0].boardKind).toBe('raspberry-pi-pico');
++  const guide=guideSteps(location.hash);expect(guide.steps.length).toBe(fixture.converted.wires.length);
++  expect(guide.steps.some(s=>s.from==='U1.GP15')).toBe(true);
++  expect(readableRef('U1.GP15')).toContain('제어 보드');
++  expect(host.textContent).not.toContain('가져오기 실패');
++ }finally{await act(async()=>root.unmount());host.remove();history.replaceState(null,'',previous);localStorage.clear();}
++});
++
++it('keeps standalone examples local in SaaS while retaining project-backed cloud checks',async()=>{
++ const previous=location.href;history.replaceState(null,'','/w/'+'a'.repeat(32)+'/editor');
++ try{
++  const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('{}',{status:404}));
++  expect(await openCloudDraft({design_origin:'board_example'})).toBeNull();expect(fetch).not.toHaveBeenCalled();
++  await expect(openCloudDraft({design_origin:'board_example',source_project:'b'.repeat(32)})).rejects.toThrow('서버 저장본');
++ }finally{history.replaceState(null,'',previous);}
++});
+--- /dev/null
++++ b/frontend/src/__tests__/system-conversion-runtime.test.ts
+@@ -0,0 +1,29 @@
++// @vitest-environment jsdom
++import {readFile,writeFile} from 'node:fs/promises';
++import {it,expect,vi} from 'vitest';
++import {probeFunctionalSystem} from '../simulation/functional/FunctionalProbe';
++import {NgSpiceNodeAdapter} from '../simulation/spice/adapters/NgSpiceNodeAdapter';
++import fixture from './fixtures/system-conversion.json';
++vi.mock('../simulation/MicroPythonLoader',async original=>({...await original<typeof import('../simulation/MicroPythonLoader')>(),getFirmware:async()=>new Uint8Array(await readFile('public/firmware/micropython-rp2040.uf2'))}));
++const realFetch=globalThis.fetch;
++vi.stubGlobal('fetch',async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('littlefs.wasm')?new Response(await readFile('node_modules/littlefs/dist/littlefs.wasm'),{headers:{'Content-Type':'application/wasm'}}):realFetch(input,init));
++vi.stubGlobal('requestAnimationFrame',()=>1);vi.stubGlobal('cancelAnimationFrame',()=>{});
++it('executes the converted Pico program against its converted circuit, with button feedback',async()=>{
++ const solver=new NgSpiceNodeAdapter();try{
++  const before=JSON.stringify(fixture),report=await probeFunctionalSystem(fixture.converted,'micropython-source',solver);
++  expect(report.status,JSON.stringify(report)).toBe('pass');expect(report.engine).toBe('rp2040js+ngspice');
++  expect(report.samples.find(s=>s.input==='S1'&&s.value===1)!.outputs.D1).toBeGreaterThan(.001);
++  expect(report.samples.find(s=>s.input==='S1'&&s.value===0)!.outputs.D1).toBeLessThan(.00001);
++  expect(JSON.stringify(fixture)).toBe(before);
++  await writeFile('../../../outputs/system-conversion/pico-execution.json',JSON.stringify(report,null,2));
++ }finally{solver.dispose();}
++},120000);
++it('executes the Pico-to-UNO round-trip program with the same button behavior',async()=>{
++ const solver=new NgSpiceNodeAdapter();try{
++  const report=await probeFunctionalSystem(fixture.roundtrip,fixture.roundtrip_hex,solver);
++  expect(report.status,JSON.stringify(report)).toBe('pass');expect(report.engine).toBe('avr8js+ngspice');
++  expect(report.samples.find(s=>s.input==='S1'&&s.value===1)!.outputs.D1).toBeGreaterThan(.001);
++  expect(report.samples.find(s=>s.input==='S1'&&s.value===0)!.outputs.D1).toBeLessThan(.00001);
++  await writeFile('../../../outputs/system-conversion/uno-roundtrip-execution.json',JSON.stringify(report,null,2));
++ }finally{solver.dispose();}
++},30000);
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/system-conversion.json
+@@ -0,0 +1,3279 @@
++{
++  "source": {
++    "format": "velxio-project",
++    "version": 1,
++    "exportedAt": "2026-11-10T11:19:15.907080+00:00",
++    "name": "arduino-uno · 버튼 LED 제어",
++    "boards": [
++      {
++        "id": "U1",
++        "name": "Arduino UNO R3 · 기능 구현 설계",
++        "boardKind": "arduino-uno",
++        "x": -345.82677165354335,
++        "y": -272.12598425196853,
++        "properties": {
++          "label": "Arduino UNO R3",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "입력 처리와 출력 제어",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [
++              "housing.control"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -345.82677165354335,
++              -272.12598425196853,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          },
++          "evBoardRuntime": {
++            "board_kind": "arduino-uno",
++            "language": "arduino_cpp",
++            "language_mode": "arduino",
++            "entry_file": "sketch.ino",
++            "engine": "avr8js+ngspice",
++            "availability": "local",
++            "requirements": [],
++            "execution_status": "not_run",
++            "electrical_status": "not_run",
++            "io_test_status": "not_run",
++            "physical_verified": false,
++            "notice": "로컬 컴파일·코드 실행·회로 입력/출력 자동 시험을 지원합니다. 결과는 실행 후 기록합니다."
++          }
++        },
++        "activeFileGroupId": "group-U1",
++        "languageMode": "arduino",
++        "serialBaudRate": 115200
++      }
++    ],
++    "components": [
++      {
++        "id": "build-case-housing",
++        "metadataId": "ev-structure",
++        "x": -478.44094488188983,
++        "y": -421.74803149606305,
++        "properties": {
++          "label": "예시 제어기 외장",
++          "shape": "box",
++          "width": 250,
++          "height": 90,
++          "depth": 220,
++          "elevation": 0,
++          "color": "#8c9ca7",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "designBasis": "functional_implementation",
++          "evEnclosure": {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "design_selected": true,
++            "rationale": "선정 부품을 장착하고 배선 공간을 확보하도록 외장 치수를 정했습니다.",
++            "assumptions": [
++              "원본 복원이 아닌 기능 동등 설계",
++              "arduino-uno의 핀·전압·언어를 함께 선정"
++            ],
++            "unknowns": []
++          }
++        }
++      },
++      {
++        "id": "S1",
++        "metadataId": "pushbutton-6mm",
++        "x": 186.75590551181105,
++        "y": -191.1968503937008,
++        "properties": {
++          "label": "6mm 순간 누름 버튼",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "pushbutton-6mm",
++            "name": "6mm 순간 누름 버튼",
++            "quantity": 1,
++            "purpose": "사용자 버튼 입력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {},
++            "pin_basis": "Wokwi Pushbutton6mmElement.pinInfo"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              186.75590551181105,
++              -191.1968503937008,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "R1",
++        "metadataId": "resistor",
++        "x": -247.88976377952758,
++        "y": 167.85826771653547,
++        "properties": {
++          "value": "220",
++          "label": "축형 저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "LED 전류 제한",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {
++              "value": "220"
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -247.88976377952758,
++              167.85826771653547,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "D1",
++        "metadataId": "led",
++        "x": 179.1968503937008,
++        "y": 160.2992125984252,
++        "properties": {
++          "color": "green",
++          "label": "표시용 LED",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "밝기 출력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {
++              "color": "green"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              179.1968503937008,
++              160.2992125984252,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "MOUNT1",
++        "metadataId": "ev-structure",
++        "x": -119.38582677165356,
++        "y": -752.456692913386,
++        "properties": {
++          "label": "제어기 고정판",
++          "shape": "box",
++          "width": 60.0,
++          "height": 4.0,
++          "depth": 35.0,
++          "elevation": 1.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "제어 장치를 지지하는 장착판"
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "제어기 고정판",
++            "purpose": "제어 장치를 지지하는 장착판",
++            "selection_reason": "제어 장치를 지지하는 장착판",
++            "quantity": 1
++          }
++        }
++      }
++    ],
++    "wires": [
++      {
++        "id": "BUILD_W1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "1.l",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W2",
++        "start": {
++          "componentId": "S1",
++          "pinName": "2.l",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "BUILD_W3",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "R1",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W4",
++        "start": {
++          "componentId": "R1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "D1",
++          "pinName": "A",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "BUILD_W5",
++        "start": {
++          "componentId": "D1",
++          "pinName": "C",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      }
++    ],
++    "activeBoardId": "U1",
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "sketch.ino",
++          "content": "#include <Arduino.h>\nvoid setup(){pinMode(5,OUTPUT);pinMode(2,INPUT_PULLUP);}\nvoid loop(){digitalWrite(5,!digitalRead(2));delay(10);}\n"
++        }
++      ]
++    },
++    "embeddedVision": {
++      "example": true,
++      "workflow": {
++        "id": "embedded-system-input-to-simulation",
++        "version": 3,
++        "sha256": "db31ae2fea5e93b27a20bbda0ccc60f874eb1c593ed512d770000f748a776489",
++        "default_destination": "interactive_simulator",
++        "viewer": {
++          "views": [
++            "assembled",
++            "exploded",
++            "circuit"
++          ],
++          "transition_ms": 720,
++          "mounting": "per_structure",
++          "wire_endpoints": "displayed_pins",
++          "reduced_motion": "instant",
++          "manual_camera_input": "cancel_camera_motion"
++        },
++        "board_workflow": {
++          "version": 1,
++          "policy": {
++            "selection": "prefer_observed_compatible_board_then_function_requirements",
++            "fallback": "explicit_replacement_with_reason",
++            "conversion": "regenerate_circuit_wiring_code_and_tests_together",
++            "verification": "never_treat_profile_availability_as_pass",
++            "same_stages": [
++              "components",
++              "function",
++              "completion",
++              "datasheet",
++              "circuit",
++              "structure",
++              "assembly",
++              "editor",
++              "simulation",
++              "verification"
++            ]
++          },
++          "profiles": {
++            "arduino-uno": {
++              "family": "arduino",
++              "language": "arduino_cpp",
++              "language_mode": "arduino",
++              "native_language_mode": "arduino",
++              "entry_file": "sketch.ino",
++              "gpio_modules": [],
++              "logic_voltage": 5.0,
++              "ground_pin": "GND",
++              "analog_pins": [
++                "A0",
++                "A1",
++                "A2",
++                "A3",
++                "A4",
++                "A5"
++              ],
++              "input_only_pins": [],
++              "selection": "간단한 5V 제어와 기존 AVR 검증 회로",
++              "component": {
++                "name": "Arduino UNO R3",
++                "pins": [
++                  "0",
++                  "1",
++                  "2",
++                  "3",
++                  "4",
++                  "5",
++                  "6",
++                  "7",
++                  "8",
++                  "9",
++                  "10",
++                  "11",
++                  "12",
++                  "13",
++                  "A0",
++                  "A1",
++                  "A2",
++                  "A3",
++                  "A4",
++                  "A5",
++                  "5V",
++                  "3.3V",
++                  "GND",
++                  "VIN",
++                  "RESET",
++                  "AREF"
++                ],
++                "size_mm": [
++                  73,
++                  18,
++                  54
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 UNO 실행 모델과 인터페이스 정의",
++                "use": "5V 센서 입력과 디지털/PWM 출력. USB 전원."
++              },
++              "runtime": {
++                "engine": "avr8js+ngspice",
++                "availability": "local",
++                "requirements": [],
++                "notice": "로컬 컴파일·코드 실행·회로 입력/출력 자동 시험을 지원합니다. 결과는 실행 후 기록합니다."
++              },
++              "references": [
++                "https://docs.arduino.cc/hardware/uno-rev3/"
++              ]
++            },
++            "raspberry-pi-pico": {
++              "family": "pico",
++              "language": "micropython",
++              "language_mode": "micropython",
++              "native_language_mode": "micropython",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "machine"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND.1",
++              "analog_pins": [
++                "GP26",
++                "GP27",
++                "GP28"
++              ],
++              "input_only_pins": [],
++              "selection": "3.3V 센서·PWM 제어, 브라우저 RP2040 실행",
++              "component": {
++                "name": "Raspberry Pi Pico · RP2040",
++                "pins": [
++                  "GP0",
++                  "GP1",
++                  "GND.1",
++                  "GP2",
++                  "GP3",
++                  "GP4",
++                  "GP5",
++                  "GND.2",
++                  "GP6",
++                  "GP7",
++                  "GP8",
++                  "GP9",
++                  "GND.3",
++                  "GP10",
++                  "GP11",
++                  "GP12",
++                  "GP13",
++                  "GND.4",
++                  "GP14",
++                  "GP15",
++                  "GP16",
++                  "GP17",
++                  "GND.5",
++                  "GP18",
++                  "GP19",
++                  "GP20",
++                  "GP21",
++                  "GND.6",
++                  "GP22",
++                  "RUN",
++                  "GP26",
++                  "A0",
++                  "GP27",
++                  "A1",
++                  "GND.7",
++                  "GP28",
++                  "A2",
++                  "ADC_VREF",
++                  "3V3",
++                  "3V3_EN",
++                  "GND.8",
++                  "VSYS",
++                  "VBUS",
++                  "GP25"
++                ],
++                "size_mm": [
++                  21,
++                  4,
++                  51
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 Pico 표시 핀 정의 + Raspberry Pi Pico 데이터시트. Pico W 그림을 공유하지만 선택 보드는 일반 Pico입니다.",
++                "use": "GP0~22·GP26~28 사용. GP25는 내장 LED이며 외부 헤더가 아님. ADC=GP26~28. GPIO는 3.3V. MicroPython machine.Pin/ADC/PWM."
++              },
++              "runtime": {
++                "engine": "rp2040js+ngspice",
++                "availability": "local",
++                "requirements": [
++                  "bundled_micropython_firmware"
++                ],
++                "notice": "브라우저 RP2040에서 실제 MicroPython 코드를 실행합니다. 무선 기능은 이 프로파일에 포함하지 않습니다."
++              },
++              "references": [
++                "https://datasheets.raspberrypi.org/pico/pico-datasheet.pdf",
++                "https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html"
++              ]
++            },
++            "esp32": {
++              "family": "esp32",
++              "language": "micropython",
++              "language_mode": "micropython",
++              "native_language_mode": "micropython",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "machine"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND",
++              "analog_pins": [
++                "32",
++                "33",
++                "34",
++                "35",
++                "VP",
++                "VN"
++              ],
++              "input_only_pins": [
++                "34",
++                "35",
++                "VP",
++                "VN"
++              ],
++              "selection": "무선 연결이 필요한 3.3V 마이크로컨트롤러, 현재 로컬 QEMU 연결 필요",
++              "component": {
++                "name": "ESP32 DevKit V1",
++                "pins": [
++                  "EN",
++                  "VN",
++                  "VP",
++                  "34",
++                  "35",
++                  "32",
++                  "33",
++                  "25",
++                  "26",
++                  "27",
++                  "14",
++                  "12",
++                  "13",
++                  "GND",
++                  "VIN",
++                  "3V3",
++                  "GND2",
++                  "15",
++                  "2",
++                  "4",
++                  "RX2",
++                  "16",
++                  "TX2",
++                  "17",
++                  "5",
++                  "18",
++                  "19",
++                  "21",
++                  "RX0",
++                  "TX0",
++                  "22",
++                  "23"
++                ],
++                "size_mm": [
++                  28.2,
++                  12,
++                  53
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 ESP32 DevKit V1 표시 핀 정의. 칩 핀 기능은 Espressif 문서 참조. DevKitC와 보드 헤더를 혼동하지 않음.",
++                "use": "숫자 핀은 GPIO 번호. VP=36,VN=39. 34/35/36/39는 입력 전용. GPIO는 3.3V. machine.Pin/ADC/PWM 사용, AVR 타이머 레지스터 사용 금지."
++              },
++              "runtime": {
++                "engine": "esp32-qemu+ngspice",
++                "availability": "requires_service",
++                "requirements": [
++                  "esp32_qemu_websocket",
++                  "micropython_esp32_firmware"
++                ],
++                "notice": "회로·배선·MicroPython 설계는 지원합니다. 현재 로컬 서버에는 ESP32 QEMU 실행 서비스가 연결되지 않았습니다."
++              },
++              "references": [
++                "https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/gpio.html",
++                "https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32/esp32-devkitc/user_guide.html"
++              ]
++            },
++            "raspberry-pi-4": {
++              "family": "raspberry_pi",
++              "language": "python",
++              "language_mode": "python",
++              "native_language_mode": "arduino",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "gpiozero",
++                "RPi.GPIO",
++                "gpiod"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND",
++              "analog_pins": [],
++              "input_only_pins": [],
++              "selection": "카메라·영상 처리·Linux 프로그램이 필요한 시스템. Pico와 다른 보드",
++              "component": {
++                "name": "Raspberry Pi 4 Model B",
++                "pins": [
++                  "3V3",
++                  "5V",
++                  "GPIO2",
++                  "GPIO3",
++                  "GND",
++                  "GPIO4",
++                  "GPIO14",
++                  "GPIO15",
++                  "GPIO17",
++                  "GPIO18",
++                  "GPIO27",
++                  "GPIO22",
++                  "GPIO23",
++                  "GPIO24",
++                  "GPIO10",
++                  "GPIO9",
++                  "GPIO25",
++                  "GPIO11",
++                  "GPIO8",
++                  "GPIO7",
++                  "ID_SD",
++                  "ID_SC",
++                  "GPIO5",
++                  "GPIO6",
++                  "GPIO12",
++                  "GPIO13",
++                  "GPIO19",
++                  "GPIO16",
++                  "GPIO26",
++                  "GPIO20",
++                  "GPIO21"
++                ],
++                "size_mm": [
++                  85,
++                  18,
++                  56
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 RaspberryPi4Element 40핀 표시 정의 + Raspberry Pi 공식 GPIO 문서",
++                "use": "GPIO17 같은 이름은 BCM 번호이며 물리 핀 번호와 다름. GPIO는 3.3V. 내장 ADC 없음: 아날로그 센서는 별도 지원 ADC/디지털 센서로 설계. Linux Python gpiozero 사용."
++              },
++              "runtime": {
++                "engine": "raspberry-pi-qemu+ngspice",
++                "availability": "requires_service",
++                "requirements": [
++                  "raspberry_pi_qemu_websocket",
++                  "linux_guest_image",
++                  "guest_gpio_library"
++                ],
++                "notice": "회로·배선·Linux Python 설계는 지원합니다. 실제 Linux 코드 실행에는 QEMU와 게스트 이미지·GPIO 연동 서비스가 필요합니다."
++              },
++              "references": [
++                "https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#gpio"
++              ]
++            }
++          }
++        },
++        "stage_order": [
++          "input",
++          "components",
++          "function",
++          "completion",
++          "datasheet",
++          "circuit",
++          "structure",
++          "assembly",
++          "editor",
++          "simulation",
++          "verification"
++        ],
++        "kind": "processing_contract",
++        "notice": "공통 처리 규칙입니다. 모든 단계의 완료나 실행 성공을 뜻하지 않습니다."
++      },
++      "recipe": "ai_functional_build",
++      "basis": "selected_functional_implementation",
++      "functional_build_version": "0d2a38a3ed0817d54c3aef2f224bf4bcfe3f0f354e51a363746cad83ae0942f2",
++      "implementation_design": {
++        "status": "DESIGN_SELECTED",
++        "hypothesis_id": "top",
++        "title": "arduino-uno · 버튼 LED 제어",
++        "behavior": "버튼을 누르는 동안 LED를 켜고 놓으면 끕니다.",
++        "parts": [
++          {
++            "id": "U1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "입력 처리와 출력 제어",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [
++              "housing.control"
++            ],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          {
++            "id": "S1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "pushbutton-6mm",
++            "name": "6mm 순간 누름 버튼",
++            "quantity": 1,
++            "purpose": "사용자 버튼 입력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {},
++            "pin_basis": "Wokwi Pushbutton6mmElement.pinInfo"
++          },
++          {
++            "id": "R1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "LED 전류 제한",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "internal",
++            "parameters": {
++              "value": "220"
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          {
++            "id": "D1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "밝기 출력",
++            "selection_reason": "기능에 필요한 실행 모델과 연결을 선정",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": "housing",
++            "location": "panel",
++            "parameters": {
++              "color": "green"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          }
++        ],
++        "structures": [
++          {
++            "id": "MOUNT1",
++            "label": "제어기 고정판",
++            "role": "bracket",
++            "shape": "box",
++            "size_mm": [
++              60.0,
++              4.0,
++              35.0
++            ],
++            "position_mm": [
++              0.0,
++              3.0,
++              -180.0
++            ],
++            "purpose": "제어 장치를 지지하는 장착판"
++          }
++        ],
++        "connections": [
++          {
++            "source": "U1.2",
++            "target": "S1.1.l",
++            "purpose": "버튼 입력과 LED 출력"
++          },
++          {
++            "source": "S1.2.l",
++            "target": "U1.GND",
++            "purpose": "버튼 입력과 LED 출력"
++          },
++          {
++            "source": "U1.5",
++            "target": "R1.1",
++            "purpose": "버튼 입력과 LED 출력"
++          },
++          {
++            "source": "R1.2",
++            "target": "D1.A",
++            "purpose": "버튼 입력과 LED 출력"
++          },
++          {
++            "source": "D1.C",
++            "target": "U1.GND",
++            "purpose": "버튼 입력과 LED 출력"
++          }
++        ],
++        "design_choices": [
++          "원본 복원이 아닌 기능 동등 설계",
++          "arduino-uno의 핀·전압·언어를 함께 선정"
++        ],
++        "acceptance_tests": [
++          "버튼 해제 시 LED 꺼짐",
++          "버튼 누르면 LED 켜짐"
++        ],
++        "not_implemented": [],
++        "runtime": {
++          "board_kind": "arduino-uno",
++          "language": "arduino_cpp",
++          "language_mode": "arduino",
++          "entry_file": "sketch.ino",
++          "engine": "avr8js+ngspice",
++          "availability": "local",
++          "requirements": [],
++          "execution_status": "not_run",
++          "electrical_status": "not_run",
++          "io_test_status": "not_run",
++          "physical_verified": false,
++          "notice": "로컬 컴파일·코드 실행·회로 입력/출력 자동 시험을 지원합니다. 결과는 실행 후 기록합니다."
++        },
++        "firmware": {
++          "language": "arduino_cpp",
++          "entry_file": "sketch.ino",
++          "source": "#include <Arduino.h>\nvoid setup(){pinMode(5,OUTPUT);pinMode(2,INPUT_PULLUP);}\nvoid loop(){digitalWrite(5,!digitalRead(2));delay(10);}\n"
++        }
++      },
++      "enclosure_analysis": {
++        "summary": "예시 외장 내부의 기능 기반 가설",
++        "enclosures": [
++          {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "observed_part_ids": [
++              "case",
++              "lcd"
++            ],
++            "structure_object_id": null,
++            "hypothesis_ids": [
++              "top"
++            ],
++            "rationale": "외장과 외부 LCD를 근거로 내부 제어 및 전원부를 가정합니다.",
++            "modules": [
++              {
++                "id": "control",
++                "parent_id": null,
++                "name": "제어부",
++                "role": "controller",
++                "candidate_parts": [
++                  "MCU 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "제어부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "mcu",
++                "parent_id": "control",
++                "name": "마이크로컨트롤러",
++                "role": "controller",
++                "candidate_parts": [
++                  "ATmega 계열 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "마이크로컨트롤러 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "supply",
++                "parent_id": null,
++                "name": "전원부",
++                "role": "power",
++                "candidate_parts": [
++                  "DC 전압 변환 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "전원부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "cap",
++                "parent_id": "supply",
++                "name": "평활 커패시터",
++                "role": "passive",
++                "candidate_parts": [
++                  "커패시터 · 값 미확인"
++                ],
++                "required_part_ids": [],
++                "purpose": "평활 커패시터 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              }
++            ],
++            "assumptions": [
++              "외장 내부에 제어 회로가 있다고 가정"
++            ],
++            "unknowns": [
++              "실제 IC 모델·배선·치수"
++            ]
++          }
++        ],
++        "limitations": [
++          "불투명 외장 안의 실물 구성은 관측되지 않았습니다."
++        ]
++      },
++      "physical_verified": false,
++      "original_wiring_reused": false,
++      "simulation_behavior": "버튼을 누르는 동안 LED를 켜고 놓으면 끕니다.",
++      "simulation_notice": "기능을 실행하도록 부품·값·배선·코드를 선정한 새 설계입니다. 최종 실물 검증은 사용자가 진행합니다.",
++      "design_origin": "board_example",
++      "source_graph_sha256": "aa5f78a7277ce2cc2cf79664082c0afeeb8a1e4551d8ba9abf4b406189e5d09e",
++      "inventory_plan": "board-example-arduino-uno",
++      "assembly": {
++        "layout_version": "board-example-v1",
++        "note": "양 끝의 부품·핀을 확인하고 한 단계에서 연결하세요. 선정 예제이며 실물 검증 전입니다.",
++        "steps": [
++          {
++            "from": "U1.2",
++            "to": "S1.1.l",
++            "kind": "jumper"
++          },
++          {
++            "from": "S1.2.l",
++            "to": "U1.GND",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.5",
++            "to": "R1.1",
++            "kind": "jumper"
++          },
++          {
++            "from": "R1.2",
++            "to": "D1.A",
++            "kind": "jumper"
++          },
++          {
++            "from": "D1.C",
++            "to": "U1.GND",
++            "kind": "jumper"
++          }
++        ]
++      }
++    }
++  },
++  "converted": {
++    "format": "velxio-project",
++    "version": 1,
++    "exportedAt": "2026-11-10T12:02:41.556195+00:00",
++    "name": "Raspberry Pi Pico · RP2040 · 시스템 전환",
++    "boards": [
++      {
++        "id": "U1",
++        "name": "Raspberry Pi Pico · RP2040",
++        "boardKind": "raspberry-pi-pico",
++        "x": -345.82677165354335,
++        "y": -272.12598425196853,
++        "properties": {
++          "label": "Raspberry Pi Pico · RP2040",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "raspberry-pi-pico",
++            "name": "Raspberry Pi Pico · RP2040",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 Pico 표시 핀 정의 + Raspberry Pi Pico 데이터시트. Pico W 그림을 공유하지만 선택 보드는 일반 Pico입니다."
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -345.82677165354335,
++              -272.12598425196853,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          },
++          "evBoardRuntime": {
++            "board_kind": "raspberry-pi-pico",
++            "language": "micropython",
++            "language_mode": "micropython",
++            "entry_file": "main.py",
++            "engine": "rp2040js+ngspice",
++            "availability": "local",
++            "requirements": [
++              "bundled_micropython_firmware"
++            ],
++            "execution_status": "not_run",
++            "electrical_status": "not_run",
++            "io_test_status": "not_run",
++            "physical_verified": false,
++            "notice": "브라우저 RP2040에서 실제 MicroPython 코드를 실행합니다. 무선 기능은 이 프로파일에 포함하지 않습니다."
++          }
++        },
++        "activeFileGroupId": "group-U1",
++        "languageMode": "micropython",
++        "serialBaudRate": 115200
++      }
++    ],
++    "components": [
++      {
++        "id": "build-case-housing",
++        "metadataId": "ev-structure",
++        "x": -478.44094488188983,
++        "y": -421.74803149606305,
++        "properties": {
++          "label": "예시 제어기 외장",
++          "shape": "box",
++          "width": 250,
++          "height": 90,
++          "depth": 220,
++          "elevation": 0,
++          "color": "#8c9ca7",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "designBasis": "functional_implementation",
++          "evEnclosure": {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "design_selected": true,
++            "rationale": "선정 부품을 장착하고 배선 공간을 확보하도록 외장 치수를 정했습니다.",
++            "assumptions": [
++              "원본 복원이 아닌 기능 동등 설계",
++              "arduino-uno의 핀·전압·언어를 함께 선정"
++            ],
++            "unknowns": []
++          }
++        }
++      },
++      {
++        "id": "S1",
++        "metadataId": "pushbutton-6mm",
++        "x": 186.75590551181105,
++        "y": -191.1968503937008,
++        "properties": {
++          "label": "6mm 순간 누름 버튼",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "pushbutton-6mm",
++            "name": "6mm 순간 누름 버튼",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "Wokwi Pushbutton6mmElement.pinInfo"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              186.75590551181105,
++              -191.1968503937008,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "R1",
++        "metadataId": "resistor",
++        "x": -247.88976377952758,
++        "y": 167.85826771653547,
++        "properties": {
++          "value": "220",
++          "label": "축형 저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {
++              "value": "220"
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -247.88976377952758,
++              167.85826771653547,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "D1",
++        "metadataId": "led",
++        "x": 179.1968503937008,
++        "y": 160.2992125984252,
++        "properties": {
++          "color": "green",
++          "label": "표시용 LED",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {
++              "color": "green"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              179.1968503937008,
++              160.2992125984252,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "MOUNT1",
++        "metadataId": "ev-structure",
++        "x": -119.38582677165356,
++        "y": -752.456692913386,
++        "properties": {
++          "label": "제어기 고정판",
++          "shape": "box",
++          "width": 60.0,
++          "height": 4.0,
++          "depth": 35.0,
++          "elevation": 1.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "제어 장치를 지지하는 장착판"
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "제어기 고정판",
++            "purpose": "제어 장치를 지지하는 장착판",
++            "selection_reason": "제어 장치를 지지하는 장착판",
++            "quantity": 1
++          }
++        }
++      }
++    ],
++    "wires": [
++      {
++        "id": "CONVERT_1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GP15",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "R1",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "CONVERT_2",
++        "start": {
++          "componentId": "R1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "D1",
++          "pinName": "A",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "CONVERT_3",
++        "start": {
++          "componentId": "D1",
++          "pinName": "C",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND.1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "CONVERT_4",
++        "start": {
++          "componentId": "U1",
++          "pinName": "GP14",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "1.l",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "CONVERT_5",
++        "start": {
++          "componentId": "S1",
++          "pinName": "2.l",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND.1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      }
++    ],
++    "activeBoardId": "U1",
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "main.py",
++          "content": "from machine import Pin\nfrom time import sleep_ms\nled = Pin(15, Pin.OUT)\nbutton = Pin(14, Pin.IN, Pin.PULL_UP)\nwhile True:\n    led.value(not button.value())\n    sleep_ms(10)\n"
++        }
++      ]
++    },
++    "embeddedVision": {
++      "example": true,
++      "workflow": {
++        "id": "embedded-system-input-to-simulation",
++        "version": 3,
++        "sha256": "db31ae2fea5e93b27a20bbda0ccc60f874eb1c593ed512d770000f748a776489",
++        "default_destination": "interactive_simulator",
++        "viewer": {
++          "views": [
++            "assembled",
++            "exploded",
++            "circuit"
++          ],
++          "transition_ms": 720,
++          "mounting": "per_structure",
++          "wire_endpoints": "displayed_pins",
++          "reduced_motion": "instant",
++          "manual_camera_input": "cancel_camera_motion"
++        },
++        "board_workflow": {
++          "version": 1,
++          "policy": {
++            "selection": "prefer_observed_compatible_board_then_function_requirements",
++            "fallback": "explicit_replacement_with_reason",
++            "conversion": "regenerate_circuit_wiring_code_and_tests_together",
++            "verification": "never_treat_profile_availability_as_pass",
++            "same_stages": [
++              "components",
++              "function",
++              "completion",
++              "datasheet",
++              "circuit",
++              "structure",
++              "assembly",
++              "editor",
++              "simulation",
++              "verification"
++            ]
++          },
++          "profiles": {
++            "arduino-uno": {
++              "family": "arduino",
++              "language": "arduino_cpp",
++              "language_mode": "arduino",
++              "native_language_mode": "arduino",
++              "entry_file": "sketch.ino",
++              "gpio_modules": [],
++              "logic_voltage": 5.0,
++              "ground_pin": "GND",
++              "analog_pins": [
++                "A0",
++                "A1",
++                "A2",
++                "A3",
++                "A4",
++                "A5"
++              ],
++              "input_only_pins": [],
++              "selection": "간단한 5V 제어와 기존 AVR 검증 회로",
++              "component": {
++                "name": "Arduino UNO R3",
++                "pins": [
++                  "0",
++                  "1",
++                  "2",
++                  "3",
++                  "4",
++                  "5",
++                  "6",
++                  "7",
++                  "8",
++                  "9",
++                  "10",
++                  "11",
++                  "12",
++                  "13",
++                  "A0",
++                  "A1",
++                  "A2",
++                  "A3",
++                  "A4",
++                  "A5",
++                  "5V",
++                  "3.3V",
++                  "GND",
++                  "VIN",
++                  "RESET",
++                  "AREF"
++                ],
++                "size_mm": [
++                  73,
++                  18,
++                  54
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 UNO 실행 모델과 인터페이스 정의",
++                "use": "5V 센서 입력과 디지털/PWM 출력. USB 전원."
++              },
++              "runtime": {
++                "engine": "avr8js+ngspice",
++                "availability": "local",
++                "requirements": [],
++                "notice": "로컬 컴파일·코드 실행·회로 입력/출력 자동 시험을 지원합니다. 결과는 실행 후 기록합니다."
++              },
++              "references": [
++                "https://docs.arduino.cc/hardware/uno-rev3/"
++              ]
++            },
++            "raspberry-pi-pico": {
++              "family": "pico",
++              "language": "micropython",
++              "language_mode": "micropython",
++              "native_language_mode": "micropython",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "machine"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND.1",
++              "analog_pins": [
++                "GP26",
++                "GP27",
++                "GP28"
++              ],
++              "input_only_pins": [],
++              "selection": "3.3V 센서·PWM 제어, 브라우저 RP2040 실행",
++              "component": {
++                "name": "Raspberry Pi Pico · RP2040",
++                "pins": [
++                  "GP0",
++                  "GP1",
++                  "GND.1",
++                  "GP2",
++                  "GP3",
++                  "GP4",
++                  "GP5",
++                  "GND.2",
++                  "GP6",
++                  "GP7",
++                  "GP8",
++                  "GP9",
++                  "GND.3",
++                  "GP10",
++                  "GP11",
++                  "GP12",
++                  "GP13",
++                  "GND.4",
++                  "GP14",
++                  "GP15",
++                  "GP16",
++                  "GP17",
++                  "GND.5",
++                  "GP18",
++                  "GP19",
++                  "GP20",
++                  "GP21",
++                  "GND.6",
++                  "GP22",
++                  "RUN",
++                  "GP26",
++                  "A0",
++                  "GP27",
++                  "A1",
++                  "GND.7",
++                  "GP28",
++                  "A2",
++                  "ADC_VREF",
++                  "3V3",
++                  "3V3_EN",
++                  "GND.8",
++                  "VSYS",
++                  "VBUS",
++                  "GP25"
++                ],
++                "size_mm": [
++                  21,
++                  4,
++                  51
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 Pico 표시 핀 정의 + Raspberry Pi Pico 데이터시트. Pico W 그림을 공유하지만 선택 보드는 일반 Pico입니다.",
++                "use": "GP0~22·GP26~28 사용. GP25는 내장 LED이며 외부 헤더가 아님. ADC=GP26~28. GPIO는 3.3V. MicroPython machine.Pin/ADC/PWM."
++              },
++              "runtime": {
++                "engine": "rp2040js+ngspice",
++                "availability": "local",
++                "requirements": [
++                  "bundled_micropython_firmware"
++                ],
++                "notice": "브라우저 RP2040에서 실제 MicroPython 코드를 실행합니다. 무선 기능은 이 프로파일에 포함하지 않습니다."
++              },
++              "references": [
++                "https://datasheets.raspberrypi.org/pico/pico-datasheet.pdf",
++                "https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html"
++              ]
++            },
++            "esp32": {
++              "family": "esp32",
++              "language": "micropython",
++              "language_mode": "micropython",
++              "native_language_mode": "micropython",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "machine"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND",
++              "analog_pins": [
++                "32",
++                "33",
++                "34",
++                "35",
++                "VP",
++                "VN"
++              ],
++              "input_only_pins": [
++                "34",
++                "35",
++                "VP",
++                "VN"
++              ],
++              "selection": "무선 연결이 필요한 3.3V 마이크로컨트롤러, 현재 로컬 QEMU 연결 필요",
++              "component": {
++                "name": "ESP32 DevKit V1",
++                "pins": [
++                  "EN",
++                  "VN",
++                  "VP",
++                  "34",
++                  "35",
++                  "32",
++                  "33",
++                  "25",
++                  "26",
++                  "27",
++                  "14",
++                  "12",
++                  "13",
++                  "GND",
++                  "VIN",
++                  "3V3",
++                  "GND2",
++                  "15",
++                  "2",
++                  "4",
++                  "RX2",
++                  "16",
++                  "TX2",
++                  "17",
++                  "5",
++                  "18",
++                  "19",
++                  "21",
++                  "RX0",
++                  "TX0",
++                  "22",
++                  "23"
++                ],
++                "size_mm": [
++                  28.2,
++                  12,
++                  53
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 ESP32 DevKit V1 표시 핀 정의. 칩 핀 기능은 Espressif 문서 참조. DevKitC와 보드 헤더를 혼동하지 않음.",
++                "use": "숫자 핀은 GPIO 번호. VP=36,VN=39. 34/35/36/39는 입력 전용. GPIO는 3.3V. machine.Pin/ADC/PWM 사용, AVR 타이머 레지스터 사용 금지."
++              },
++              "runtime": {
++                "engine": "esp32-qemu+ngspice",
++                "availability": "requires_service",
++                "requirements": [
++                  "esp32_qemu_websocket",
++                  "micropython_esp32_firmware"
++                ],
++                "notice": "회로·배선·MicroPython 설계는 지원합니다. 현재 로컬 서버에는 ESP32 QEMU 실행 서비스가 연결되지 않았습니다."
++              },
++              "references": [
++                "https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/gpio.html",
++                "https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32/esp32-devkitc/user_guide.html"
++              ]
++            },
++            "raspberry-pi-4": {
++              "family": "raspberry_pi",
++              "language": "python",
++              "language_mode": "python",
++              "native_language_mode": "arduino",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "gpiozero",
++                "RPi.GPIO",
++                "gpiod"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND",
++              "analog_pins": [],
++              "input_only_pins": [],
++              "selection": "카메라·영상 처리·Linux 프로그램이 필요한 시스템. Pico와 다른 보드",
++              "component": {
++                "name": "Raspberry Pi 4 Model B",
++                "pins": [
++                  "3V3",
++                  "5V",
++                  "GPIO2",
++                  "GPIO3",
++                  "GND",
++                  "GPIO4",
++                  "GPIO14",
++                  "GPIO15",
++                  "GPIO17",
++                  "GPIO18",
++                  "GPIO27",
++                  "GPIO22",
++                  "GPIO23",
++                  "GPIO24",
++                  "GPIO10",
++                  "GPIO9",
++                  "GPIO25",
++                  "GPIO11",
++                  "GPIO8",
++                  "GPIO7",
++                  "ID_SD",
++                  "ID_SC",
++                  "GPIO5",
++                  "GPIO6",
++                  "GPIO12",
++                  "GPIO13",
++                  "GPIO19",
++                  "GPIO16",
++                  "GPIO26",
++                  "GPIO20",
++                  "GPIO21"
++                ],
++                "size_mm": [
++                  85,
++                  18,
++                  56
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 RaspberryPi4Element 40핀 표시 정의 + Raspberry Pi 공식 GPIO 문서",
++                "use": "GPIO17 같은 이름은 BCM 번호이며 물리 핀 번호와 다름. GPIO는 3.3V. 내장 ADC 없음: 아날로그 센서는 별도 지원 ADC/디지털 센서로 설계. Linux Python gpiozero 사용."
++              },
++              "runtime": {
++                "engine": "raspberry-pi-qemu+ngspice",
++                "availability": "requires_service",
++                "requirements": [
++                  "raspberry_pi_qemu_websocket",
++                  "linux_guest_image",
++                  "guest_gpio_library"
++                ],
++                "notice": "회로·배선·Linux Python 설계는 지원합니다. 실제 Linux 코드 실행에는 QEMU와 게스트 이미지·GPIO 연동 서비스가 필요합니다."
++              },
++              "references": [
++                "https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#gpio"
++              ]
++            }
++          }
++        },
++        "stage_order": [
++          "input",
++          "components",
++          "function",
++          "completion",
++          "datasheet",
++          "circuit",
++          "structure",
++          "assembly",
++          "editor",
++          "simulation",
++          "verification"
++        ],
++        "kind": "processing_contract",
++        "notice": "공통 처리 규칙입니다. 모든 단계의 완료나 실행 성공을 뜻하지 않습니다."
++      },
++      "recipe": "ai_functional_build",
++      "basis": "selected_functional_implementation",
++      "functional_build_version": "67a968532491473de888fa28ea4260c87304bdf7c7a10e2163076ceeb56ab303",
++      "implementation_design": {
++        "status": "DESIGN_SELECTED",
++        "hypothesis_id": "conversion",
++        "title": "Raspberry Pi Pico · RP2040 · 버튼 LED 전환",
++        "behavior": "버튼을 누르는 동안 LED를 켜고 놓으면 끕니다.",
++        "parts": [
++          {
++            "id": "U1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "raspberry-pi-pico",
++            "name": "Raspberry Pi Pico · RP2040",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 Pico 표시 핀 정의 + Raspberry Pi Pico 데이터시트. Pico W 그림을 공유하지만 선택 보드는 일반 Pico입니다."
++          },
++          {
++            "id": "S1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "pushbutton-6mm",
++            "name": "6mm 순간 누름 버튼",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "Wokwi Pushbutton6mmElement.pinInfo"
++          },
++          {
++            "id": "R1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {
++              "value": "220"
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          {
++            "id": "D1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {
++              "color": "green"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          }
++        ],
++        "structures": [
++          {
++            "id": "MOUNT1",
++            "label": "제어기 고정판",
++            "role": "bracket",
++            "shape": "box",
++            "size_mm": [
++              60.0,
++              4.0,
++              35.0
++            ],
++            "position_mm": [
++              0.0,
++              3.0,
++              -180.0
++            ],
++            "purpose": "제어 장치를 지지하는 장착판"
++          }
++        ],
++        "connections": [
++          {
++            "source": "U1.GP15",
++            "target": "R1.1",
++            "purpose": "동일 기능의 대상 보드 연결"
++          },
++          {
++            "source": "R1.2",
++            "target": "D1.A",
++            "purpose": "동일 기능의 대상 보드 연결"
++          },
++          {
++            "source": "D1.C",
++            "target": "U1.GND.1",
++            "purpose": "동일 기능의 대상 보드 연결"
++          },
++          {
++            "source": "U1.GP14",
++            "target": "S1.1.l",
++            "purpose": "동일 기능의 대상 보드 연결"
++          },
++          {
++            "source": "S1.2.l",
++            "target": "U1.GND.1",
++            "purpose": "동일 기능의 대상 보드 연결"
++          }
++        ],
++        "design_choices": [
++          "원본 회로와 코드의 동작을 확인한 뒤 보드별 핀·전압·언어를 함께 전환"
++        ],
++        "acceptance_tests": [
++          "버튼 해제 시 LED 꺼짐",
++          "버튼 누르면 LED 켜짐"
++        ],
++        "not_implemented": [],
++        "runtime": {
++          "board_kind": "raspberry-pi-pico",
++          "language": "micropython",
++          "language_mode": "micropython",
++          "entry_file": "main.py",
++          "engine": "rp2040js+ngspice",
++          "availability": "local",
++          "requirements": [
++            "bundled_micropython_firmware"
++          ],
++          "execution_status": "not_run",
++          "electrical_status": "not_run",
++          "io_test_status": "not_run",
++          "physical_verified": false,
++          "notice": "브라우저 RP2040에서 실제 MicroPython 코드를 실행합니다. 무선 기능은 이 프로파일에 포함하지 않습니다."
++        },
++        "firmware": {
++          "language": "micropython",
++          "entry_file": "main.py",
++          "source": "from machine import Pin\nfrom time import sleep_ms\nled = Pin(15, Pin.OUT)\nbutton = Pin(14, Pin.IN, Pin.PULL_UP)\nwhile True:\n    led.value(not button.value())\n    sleep_ms(10)\n"
++        }
++      },
++      "enclosure_analysis": {
++        "summary": "예시 외장 내부의 기능 기반 가설",
++        "enclosures": [
++          {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "observed_part_ids": [
++              "case",
++              "lcd"
++            ],
++            "structure_object_id": null,
++            "hypothesis_ids": [
++              "top"
++            ],
++            "rationale": "외장과 외부 LCD를 근거로 내부 제어 및 전원부를 가정합니다.",
++            "modules": [
++              {
++                "id": "control",
++                "parent_id": null,
++                "name": "제어부",
++                "role": "controller",
++                "candidate_parts": [
++                  "MCU 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "제어부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "mcu",
++                "parent_id": "control",
++                "name": "마이크로컨트롤러",
++                "role": "controller",
++                "candidate_parts": [
++                  "ATmega 계열 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "마이크로컨트롤러 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "supply",
++                "parent_id": null,
++                "name": "전원부",
++                "role": "power",
++                "candidate_parts": [
++                  "DC 전압 변환 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "전원부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "cap",
++                "parent_id": "supply",
++                "name": "평활 커패시터",
++                "role": "passive",
++                "candidate_parts": [
++                  "커패시터 · 값 미확인"
++                ],
++                "required_part_ids": [],
++                "purpose": "평활 커패시터 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              }
++            ],
++            "assumptions": [
++              "외장 내부에 제어 회로가 있다고 가정"
++            ],
++            "unknowns": [
++              "실제 IC 모델·배선·치수"
++            ]
++          }
++        ],
++        "limitations": [
++          "불투명 외장 안의 실물 구성은 관측되지 않았습니다."
++        ]
++      },
++      "physical_verified": false,
++      "original_wiring_reused": false,
++      "simulation_behavior": "버튼을 누르는 동안 LED를 켜고 놓으면 끕니다.",
++      "simulation_notice": "브라우저 RP2040에서 실제 MicroPython 코드를 실행합니다. 무선 기능은 이 프로파일에 포함하지 않습니다.",
++      "design_origin": "board_example",
++      "source_graph_sha256": "aa5f78a7277ce2cc2cf79664082c0afeeb8a1e4551d8ba9abf4b406189e5d09e",
++      "inventory_plan": "board-example-arduino-uno",
++      "translation_instance": "ff5b2d1694354287bed5f8617c7da1d7",
++      "translation_target": "raspberry-pi-pico",
++      "system_conversion": {
++        "source_fingerprint": "2d07a7ffea334e32b2f2fc572c9a74c65e8c35d1bacb9b2785543f7741f630e6",
++        "from": "arduino-uno",
++        "to": "raspberry-pi-pico",
++        "method": "verified_local_template",
++        "pin_mapping": [
++          {
++            "source": "2",
++            "target": "GP14",
++            "reason": "동일한 버튼 입력·LED 출력 역할 유지"
++          },
++          {
++            "source": "5",
++            "target": "GP15",
++            "reason": "동일한 버튼 입력·LED 출력 역할 유지"
++          },
++          {
++            "source": "GND",
++            "target": "GND.1",
++            "reason": "동일한 버튼 입력·LED 출력 역할 유지"
++          }
++        ],
++        "acceptance_tests": [
++          "버튼 해제 시 LED 꺼짐",
++          "버튼 누르면 LED 켜짐"
++        ],
++        "behavior_verified": false
++      },
++      "assembly": {
++        "layout_version": "system-conversion-v1",
++        "note": "전원을 분리하고 변환한 새 회로의 양 끝을 한 단계에서 연결하세요. 원본 사진 배선을 재현한 안내가 아닙니다.",
++        "steps": [
++          {
++            "from": "U1.GP15",
++            "to": "R1.1",
++            "kind": "jumper"
++          },
++          {
++            "from": "R1.2",
++            "to": "D1.A",
++            "kind": "jumper"
++          },
++          {
++            "from": "D1.C",
++            "to": "U1.GND.1",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.GP14",
++            "to": "S1.1.l",
++            "kind": "jumper"
++          },
++          {
++            "from": "S1.2.l",
++            "to": "U1.GND.1",
++            "kind": "jumper"
++          }
++        ]
++      }
++    }
++  },
++  "roundtrip": {
++    "format": "velxio-project",
++    "version": 1,
++    "exportedAt": "2026-11-10T12:02:41.561595+00:00",
++    "name": "Arduino UNO R3 · 시스템 전환",
++    "boards": [
++      {
++        "id": "U1",
++        "name": "Arduino UNO R3",
++        "boardKind": "arduino-uno",
++        "x": -345.82677165354335,
++        "y": -272.12598425196853,
++        "properties": {
++          "label": "Arduino UNO R3",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -345.82677165354335,
++              -272.12598425196853,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          },
++          "evBoardRuntime": {
++            "board_kind": "arduino-uno",
++            "language": "arduino_cpp",
++            "language_mode": "arduino",
++            "entry_file": "sketch.ino",
++            "engine": "avr8js+ngspice",
++            "availability": "local",
++            "requirements": [],
++            "execution_status": "not_run",
++            "electrical_status": "not_run",
++            "io_test_status": "not_run",
++            "physical_verified": false,
++            "notice": "로컬 컴파일·코드 실행·회로 입력/출력 자동 시험을 지원합니다. 결과는 실행 후 기록합니다."
++          }
++        },
++        "activeFileGroupId": "group-U1",
++        "languageMode": "arduino",
++        "serialBaudRate": 115200
++      }
++    ],
++    "components": [
++      {
++        "id": "build-case-housing",
++        "metadataId": "ev-structure",
++        "x": -478.44094488188983,
++        "y": -421.74803149606305,
++        "properties": {
++          "label": "예시 제어기 외장",
++          "shape": "box",
++          "width": 250,
++          "height": 90,
++          "depth": 220,
++          "elevation": 0,
++          "color": "#8c9ca7",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "designBasis": "functional_implementation",
++          "evEnclosure": {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "design_selected": true,
++            "rationale": "선정 부품을 장착하고 배선 공간을 확보하도록 외장 치수를 정했습니다.",
++            "assumptions": [
++              "원본 복원이 아닌 기능 동등 설계",
++              "arduino-uno의 핀·전압·언어를 함께 선정"
++            ],
++            "unknowns": []
++          }
++        }
++      },
++      {
++        "id": "S1",
++        "metadataId": "pushbutton-6mm",
++        "x": 186.75590551181105,
++        "y": -191.1968503937008,
++        "properties": {
++          "label": "6mm 순간 누름 버튼",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "pushbutton-6mm",
++            "name": "6mm 순간 누름 버튼",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "Wokwi Pushbutton6mmElement.pinInfo"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                -45.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              186.75590551181105,
++              -191.1968503937008,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "R1",
++        "metadataId": "resistor",
++        "x": -247.88976377952758,
++        "y": 167.85826771653547,
++        "properties": {
++          "value": "220",
++          "label": "축형 저항",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {
++              "value": "220"
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          "evDesignMount": "internal",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                -55.0,
++                12,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              -247.88976377952758,
++              167.85826771653547,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "D1",
++        "metadataId": "led",
++        "x": 179.1968503937008,
++        "y": 160.2992125984252,
++        "properties": {
++          "color": "green",
++          "label": "표시용 LED",
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {
++              "color": "green"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          },
++          "evDesignMount": "panel",
++          "evDesignEnclosure": "build-case-housing",
++          "evAssembly": {
++            "pose": {
++              "position": [
++                55.0,
++                92,
++                50.0
++              ],
++              "rotation": [
++                0,
++                0,
++                0
++              ]
++            },
++            "baseline": [
++              179.1968503937008,
++              160.2992125984252,
++              0
++            ],
++            "host": {
++              "id": "build-case-housing",
++              "center": [
++                0,
++                45.0,
++                0
++              ]
++            },
++            "note": "기능 구현용 선정 배치 · 장착 및 배선 여유 포함"
++          }
++        }
++      },
++      {
++        "id": "MOUNT1",
++        "metadataId": "ev-structure",
++        "x": -119.38582677165356,
++        "y": -752.456692913386,
++        "properties": {
++          "label": "제어기 고정판",
++          "shape": "box",
++          "width": 60.0,
++          "height": 4.0,
++          "depth": 35.0,
++          "elevation": 1.0,
++          "color": "#a6adb1",
++          "visualOnly": true,
++          "dimensionsStatus": "DESIGN_SELECTED",
++          "evDesignedStructure": {
++            "role": "bracket",
++            "reason": "제어 장치를 지지하는 장착판"
++          },
++          "evSelectedDesign": {
++            "status": "DESIGN_SELECTED",
++            "name": "제어기 고정판",
++            "purpose": "제어 장치를 지지하는 장착판",
++            "selection_reason": "제어 장치를 지지하는 장착판",
++            "quantity": 1
++          }
++        }
++      }
++    ],
++    "wires": [
++      {
++        "id": "CONVERT_1",
++        "start": {
++          "componentId": "U1",
++          "pinName": "5",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "R1",
++          "pinName": "1",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "CONVERT_2",
++        "start": {
++          "componentId": "R1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "D1",
++          "pinName": "A",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "CONVERT_3",
++        "start": {
++          "componentId": "D1",
++          "pinName": "C",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      },
++      {
++        "id": "CONVERT_4",
++        "start": {
++          "componentId": "U1",
++          "pinName": "2",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "S1",
++          "pinName": "1.l",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#267dba"
++      },
++      {
++        "id": "CONVERT_5",
++        "start": {
++          "componentId": "S1",
++          "pinName": "2.l",
++          "x": 0,
++          "y": 0
++        },
++        "end": {
++          "componentId": "U1",
++          "pinName": "GND",
++          "x": 0,
++          "y": 0
++        },
++        "waypoints": [],
++        "autoRouted": true,
++        "color": "#263238"
++      }
++    ],
++    "activeBoardId": "U1",
++    "fileGroups": {
++      "group-U1": [
++        {
++          "name": "sketch.ino",
++          "content": "#include <Arduino.h>\nvoid setup(){pinMode(5,OUTPUT);pinMode(2,INPUT_PULLUP);}\nvoid loop(){digitalWrite(5,!digitalRead(2));delay(10);}\n"
++        }
++      ]
++    },
++    "embeddedVision": {
++      "example": true,
++      "workflow": {
++        "id": "embedded-system-input-to-simulation",
++        "version": 3,
++        "sha256": "db31ae2fea5e93b27a20bbda0ccc60f874eb1c593ed512d770000f748a776489",
++        "default_destination": "interactive_simulator",
++        "viewer": {
++          "views": [
++            "assembled",
++            "exploded",
++            "circuit"
++          ],
++          "transition_ms": 720,
++          "mounting": "per_structure",
++          "wire_endpoints": "displayed_pins",
++          "reduced_motion": "instant",
++          "manual_camera_input": "cancel_camera_motion"
++        },
++        "board_workflow": {
++          "version": 1,
++          "policy": {
++            "selection": "prefer_observed_compatible_board_then_function_requirements",
++            "fallback": "explicit_replacement_with_reason",
++            "conversion": "regenerate_circuit_wiring_code_and_tests_together",
++            "verification": "never_treat_profile_availability_as_pass",
++            "same_stages": [
++              "components",
++              "function",
++              "completion",
++              "datasheet",
++              "circuit",
++              "structure",
++              "assembly",
++              "editor",
++              "simulation",
++              "verification"
++            ]
++          },
++          "profiles": {
++            "arduino-uno": {
++              "family": "arduino",
++              "language": "arduino_cpp",
++              "language_mode": "arduino",
++              "native_language_mode": "arduino",
++              "entry_file": "sketch.ino",
++              "gpio_modules": [],
++              "logic_voltage": 5.0,
++              "ground_pin": "GND",
++              "analog_pins": [
++                "A0",
++                "A1",
++                "A2",
++                "A3",
++                "A4",
++                "A5"
++              ],
++              "input_only_pins": [],
++              "selection": "간단한 5V 제어와 기존 AVR 검증 회로",
++              "component": {
++                "name": "Arduino UNO R3",
++                "pins": [
++                  "0",
++                  "1",
++                  "2",
++                  "3",
++                  "4",
++                  "5",
++                  "6",
++                  "7",
++                  "8",
++                  "9",
++                  "10",
++                  "11",
++                  "12",
++                  "13",
++                  "A0",
++                  "A1",
++                  "A2",
++                  "A3",
++                  "A4",
++                  "A5",
++                  "5V",
++                  "3.3V",
++                  "GND",
++                  "VIN",
++                  "RESET",
++                  "AREF"
++                ],
++                "size_mm": [
++                  73,
++                  18,
++                  54
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 UNO 실행 모델과 인터페이스 정의",
++                "use": "5V 센서 입력과 디지털/PWM 출력. USB 전원."
++              },
++              "runtime": {
++                "engine": "avr8js+ngspice",
++                "availability": "local",
++                "requirements": [],
++                "notice": "로컬 컴파일·코드 실행·회로 입력/출력 자동 시험을 지원합니다. 결과는 실행 후 기록합니다."
++              },
++              "references": [
++                "https://docs.arduino.cc/hardware/uno-rev3/"
++              ]
++            },
++            "raspberry-pi-pico": {
++              "family": "pico",
++              "language": "micropython",
++              "language_mode": "micropython",
++              "native_language_mode": "micropython",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "machine"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND.1",
++              "analog_pins": [
++                "GP26",
++                "GP27",
++                "GP28"
++              ],
++              "input_only_pins": [],
++              "selection": "3.3V 센서·PWM 제어, 브라우저 RP2040 실행",
++              "component": {
++                "name": "Raspberry Pi Pico · RP2040",
++                "pins": [
++                  "GP0",
++                  "GP1",
++                  "GND.1",
++                  "GP2",
++                  "GP3",
++                  "GP4",
++                  "GP5",
++                  "GND.2",
++                  "GP6",
++                  "GP7",
++                  "GP8",
++                  "GP9",
++                  "GND.3",
++                  "GP10",
++                  "GP11",
++                  "GP12",
++                  "GP13",
++                  "GND.4",
++                  "GP14",
++                  "GP15",
++                  "GP16",
++                  "GP17",
++                  "GND.5",
++                  "GP18",
++                  "GP19",
++                  "GP20",
++                  "GP21",
++                  "GND.6",
++                  "GP22",
++                  "RUN",
++                  "GP26",
++                  "A0",
++                  "GP27",
++                  "A1",
++                  "GND.7",
++                  "GP28",
++                  "A2",
++                  "ADC_VREF",
++                  "3V3",
++                  "3V3_EN",
++                  "GND.8",
++                  "VSYS",
++                  "VBUS",
++                  "GP25"
++                ],
++                "size_mm": [
++                  21,
++                  4,
++                  51
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 Pico 표시 핀 정의 + Raspberry Pi Pico 데이터시트. Pico W 그림을 공유하지만 선택 보드는 일반 Pico입니다.",
++                "use": "GP0~22·GP26~28 사용. GP25는 내장 LED이며 외부 헤더가 아님. ADC=GP26~28. GPIO는 3.3V. MicroPython machine.Pin/ADC/PWM."
++              },
++              "runtime": {
++                "engine": "rp2040js+ngspice",
++                "availability": "local",
++                "requirements": [
++                  "bundled_micropython_firmware"
++                ],
++                "notice": "브라우저 RP2040에서 실제 MicroPython 코드를 실행합니다. 무선 기능은 이 프로파일에 포함하지 않습니다."
++              },
++              "references": [
++                "https://datasheets.raspberrypi.org/pico/pico-datasheet.pdf",
++                "https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html"
++              ]
++            },
++            "esp32": {
++              "family": "esp32",
++              "language": "micropython",
++              "language_mode": "micropython",
++              "native_language_mode": "micropython",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "machine"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND",
++              "analog_pins": [
++                "32",
++                "33",
++                "34",
++                "35",
++                "VP",
++                "VN"
++              ],
++              "input_only_pins": [
++                "34",
++                "35",
++                "VP",
++                "VN"
++              ],
++              "selection": "무선 연결이 필요한 3.3V 마이크로컨트롤러, 현재 로컬 QEMU 연결 필요",
++              "component": {
++                "name": "ESP32 DevKit V1",
++                "pins": [
++                  "EN",
++                  "VN",
++                  "VP",
++                  "34",
++                  "35",
++                  "32",
++                  "33",
++                  "25",
++                  "26",
++                  "27",
++                  "14",
++                  "12",
++                  "13",
++                  "GND",
++                  "VIN",
++                  "3V3",
++                  "GND2",
++                  "15",
++                  "2",
++                  "4",
++                  "RX2",
++                  "16",
++                  "TX2",
++                  "17",
++                  "5",
++                  "18",
++                  "19",
++                  "21",
++                  "RX0",
++                  "TX0",
++                  "22",
++                  "23"
++                ],
++                "size_mm": [
++                  28.2,
++                  12,
++                  53
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 ESP32 DevKit V1 표시 핀 정의. 칩 핀 기능은 Espressif 문서 참조. DevKitC와 보드 헤더를 혼동하지 않음.",
++                "use": "숫자 핀은 GPIO 번호. VP=36,VN=39. 34/35/36/39는 입력 전용. GPIO는 3.3V. machine.Pin/ADC/PWM 사용, AVR 타이머 레지스터 사용 금지."
++              },
++              "runtime": {
++                "engine": "esp32-qemu+ngspice",
++                "availability": "requires_service",
++                "requirements": [
++                  "esp32_qemu_websocket",
++                  "micropython_esp32_firmware"
++                ],
++                "notice": "회로·배선·MicroPython 설계는 지원합니다. 현재 로컬 서버에는 ESP32 QEMU 실행 서비스가 연결되지 않았습니다."
++              },
++              "references": [
++                "https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/gpio.html",
++                "https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32/esp32-devkitc/user_guide.html"
++              ]
++            },
++            "raspberry-pi-4": {
++              "family": "raspberry_pi",
++              "language": "python",
++              "language_mode": "python",
++              "native_language_mode": "arduino",
++              "entry_file": "main.py",
++              "gpio_modules": [
++                "gpiozero",
++                "RPi.GPIO",
++                "gpiod"
++              ],
++              "logic_voltage": 3.3,
++              "ground_pin": "GND",
++              "analog_pins": [],
++              "input_only_pins": [],
++              "selection": "카메라·영상 처리·Linux 프로그램이 필요한 시스템. Pico와 다른 보드",
++              "component": {
++                "name": "Raspberry Pi 4 Model B",
++                "pins": [
++                  "3V3",
++                  "5V",
++                  "GPIO2",
++                  "GPIO3",
++                  "GND",
++                  "GPIO4",
++                  "GPIO14",
++                  "GPIO15",
++                  "GPIO17",
++                  "GPIO18",
++                  "GPIO27",
++                  "GPIO22",
++                  "GPIO23",
++                  "GPIO24",
++                  "GPIO10",
++                  "GPIO9",
++                  "GPIO25",
++                  "GPIO11",
++                  "GPIO8",
++                  "GPIO7",
++                  "ID_SD",
++                  "ID_SC",
++                  "GPIO5",
++                  "GPIO6",
++                  "GPIO12",
++                  "GPIO13",
++                  "GPIO19",
++                  "GPIO16",
++                  "GPIO26",
++                  "GPIO20",
++                  "GPIO21"
++                ],
++                "size_mm": [
++                  85,
++                  18,
++                  56
++                ],
++                "defaults": {},
++                "properties": [],
++                "basis": "기존 RaspberryPi4Element 40핀 표시 정의 + Raspberry Pi 공식 GPIO 문서",
++                "use": "GPIO17 같은 이름은 BCM 번호이며 물리 핀 번호와 다름. GPIO는 3.3V. 내장 ADC 없음: 아날로그 센서는 별도 지원 ADC/디지털 센서로 설계. Linux Python gpiozero 사용."
++              },
++              "runtime": {
++                "engine": "raspberry-pi-qemu+ngspice",
++                "availability": "requires_service",
++                "requirements": [
++                  "raspberry_pi_qemu_websocket",
++                  "linux_guest_image",
++                  "guest_gpio_library"
++                ],
++                "notice": "회로·배선·Linux Python 설계는 지원합니다. 실제 Linux 코드 실행에는 QEMU와 게스트 이미지·GPIO 연동 서비스가 필요합니다."
++              },
++              "references": [
++                "https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#gpio"
++              ]
++            }
++          }
++        },
++        "stage_order": [
++          "input",
++          "components",
++          "function",
++          "completion",
++          "datasheet",
++          "circuit",
++          "structure",
++          "assembly",
++          "editor",
++          "simulation",
++          "verification"
++        ],
++        "kind": "processing_contract",
++        "notice": "공통 처리 규칙입니다. 모든 단계의 완료나 실행 성공을 뜻하지 않습니다."
++      },
++      "recipe": "ai_functional_build",
++      "basis": "selected_functional_implementation",
++      "functional_build_version": "f4860d123a666a266d25a5a396f91ac64517d5d1cdd0455e22aabf6e70168fa7",
++      "implementation_design": {
++        "status": "DESIGN_SELECTED",
++        "hypothesis_id": "conversion",
++        "title": "Arduino UNO R3 · 버튼 LED 전환",
++        "behavior": "버튼을 누르는 동안 LED를 켜고 놓으면 끕니다.",
++        "parts": [
++          {
++            "id": "U1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "arduino-uno",
++            "name": "Arduino UNO R3",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "기존 UNO 실행 모델과 인터페이스 정의"
++          },
++          {
++            "id": "S1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "pushbutton-6mm",
++            "name": "6mm 순간 누름 버튼",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {},
++            "pin_basis": "Wokwi Pushbutton6mmElement.pinInfo"
++          },
++          {
++            "id": "R1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "resistor",
++            "name": "축형 저항",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {
++              "value": "220"
++            },
++            "pin_basis": "기존 SPICE 저항 모델"
++          },
++          {
++            "id": "D1",
++            "status": "DESIGN_SELECTED",
++            "model_id": "led",
++            "name": "표시용 LED",
++            "quantity": 1,
++            "purpose": "버튼 입력·LED 출력 동작 유지",
++            "selection_reason": "현재 코드와 실제 연결의 동일 기능 전환",
++            "module_refs": [],
++            "observed_part_ids": [],
++            "enclosure_id": null,
++            "location": "internal",
++            "parameters": {
++              "color": "green"
++            },
++            "pin_basis": "기존 LED 실행 모델"
++          }
++        ],
++        "structures": [
++          {
++            "id": "MOUNT1",
++            "label": "제어기 고정판",
++            "role": "bracket",
++            "shape": "box",
++            "size_mm": [
++              60.0,
++              4.0,
++              35.0
++            ],
++            "position_mm": [
++              0.0,
++              3.0,
++              -180.0
++            ],
++            "purpose": "제어 장치를 지지하는 장착판"
++          }
++        ],
++        "connections": [
++          {
++            "source": "U1.5",
++            "target": "R1.1",
++            "purpose": "동일 기능의 대상 보드 연결"
++          },
++          {
++            "source": "R1.2",
++            "target": "D1.A",
++            "purpose": "동일 기능의 대상 보드 연결"
++          },
++          {
++            "source": "D1.C",
++            "target": "U1.GND",
++            "purpose": "동일 기능의 대상 보드 연결"
++          },
++          {
++            "source": "U1.2",
++            "target": "S1.1.l",
++            "purpose": "동일 기능의 대상 보드 연결"
++          },
++          {
++            "source": "S1.2.l",
++            "target": "U1.GND",
++            "purpose": "동일 기능의 대상 보드 연결"
++          }
++        ],
++        "design_choices": [
++          "원본 회로와 코드의 동작을 확인한 뒤 보드별 핀·전압·언어를 함께 전환"
++        ],
++        "acceptance_tests": [
++          "버튼 해제 시 LED 꺼짐",
++          "버튼 누르면 LED 켜짐"
++        ],
++        "not_implemented": [],
++        "runtime": {
++          "board_kind": "arduino-uno",
++          "language": "arduino_cpp",
++          "language_mode": "arduino",
++          "entry_file": "sketch.ino",
++          "engine": "avr8js+ngspice",
++          "availability": "local",
++          "requirements": [],
++          "execution_status": "not_run",
++          "electrical_status": "not_run",
++          "io_test_status": "not_run",
++          "physical_verified": false,
++          "notice": "로컬 컴파일·코드 실행·회로 입력/출력 자동 시험을 지원합니다. 결과는 실행 후 기록합니다."
++        },
++        "firmware": {
++          "language": "arduino_cpp",
++          "entry_file": "sketch.ino",
++          "source": "#include <Arduino.h>\nvoid setup(){pinMode(5,OUTPUT);pinMode(2,INPUT_PULLUP);}\nvoid loop(){digitalWrite(5,!digitalRead(2));delay(10);}\n"
++        }
++      },
++      "enclosure_analysis": {
++        "summary": "예시 외장 내부의 기능 기반 가설",
++        "enclosures": [
++          {
++            "id": "housing",
++            "name": "예시 제어기 외장",
++            "observed_part_ids": [
++              "case",
++              "lcd"
++            ],
++            "structure_object_id": null,
++            "hypothesis_ids": [
++              "top"
++            ],
++            "rationale": "외장과 외부 LCD를 근거로 내부 제어 및 전원부를 가정합니다.",
++            "modules": [
++              {
++                "id": "control",
++                "parent_id": null,
++                "name": "제어부",
++                "role": "controller",
++                "candidate_parts": [
++                  "MCU 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "제어부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "mcu",
++                "parent_id": "control",
++                "name": "마이크로컨트롤러",
++                "role": "controller",
++                "candidate_parts": [
++                  "ATmega 계열 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "마이크로컨트롤러 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "supply",
++                "parent_id": null,
++                "name": "전원부",
++                "role": "power",
++                "candidate_parts": [
++                  "DC 전압 변환 모듈 예시"
++                ],
++                "required_part_ids": [],
++                "purpose": "전원부 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              },
++              {
++                "id": "cap",
++                "parent_id": "supply",
++                "name": "평활 커패시터",
++                "role": "passive",
++                "candidate_parts": [
++                  "커패시터 · 값 미확인"
++                ],
++                "required_part_ids": [],
++                "purpose": "평활 커패시터 기능",
++                "rationale": "외부 표시 기능을 구현하기 위한 후보",
++                "confidence": "medium",
++                "status": "INFERRED",
++                "photo_presence": "UNKNOWN",
++                "alternatives": [
++                  "다른 통합 모듈 가능"
++                ]
++              }
++            ],
++            "assumptions": [
++              "외장 내부에 제어 회로가 있다고 가정"
++            ],
++            "unknowns": [
++              "실제 IC 모델·배선·치수"
++            ]
++          }
++        ],
++        "limitations": [
++          "불투명 외장 안의 실물 구성은 관측되지 않았습니다."
++        ]
++      },
++      "physical_verified": false,
++      "original_wiring_reused": false,
++      "simulation_behavior": "버튼을 누르는 동안 LED를 켜고 놓으면 끕니다.",
++      "simulation_notice": "로컬 컴파일·코드 실행·회로 입력/출력 자동 시험을 지원합니다. 결과는 실행 후 기록합니다.",
++      "design_origin": "board_example",
++      "source_graph_sha256": "aa5f78a7277ce2cc2cf79664082c0afeeb8a1e4551d8ba9abf4b406189e5d09e",
++      "inventory_plan": "board-example-arduino-uno",
++      "translation_instance": "7ae6367df23c46eca6bf0817a684b330",
++      "translation_target": "arduino-uno",
++      "system_conversion": {
++        "source_fingerprint": "efa203d59153f016f2c5e83d4a2f54784f69adeb0655dbe6635f80c217bbcfba",
++        "from": "raspberry-pi-pico",
++        "to": "arduino-uno",
++        "method": "verified_local_template",
++        "pin_mapping": [
++          {
++            "source": "GND.1",
++            "target": "GND",
++            "reason": "동일한 버튼 입력·LED 출력 역할 유지"
++          },
++          {
++            "source": "GP14",
++            "target": "2",
++            "reason": "동일한 버튼 입력·LED 출력 역할 유지"
++          },
++          {
++            "source": "GP15",
++            "target": "5",
++            "reason": "동일한 버튼 입력·LED 출력 역할 유지"
++          }
++        ],
++        "acceptance_tests": [
++          "버튼 해제 시 LED 꺼짐",
++          "버튼 누르면 LED 켜짐"
++        ],
++        "behavior_verified": false
++      },
++      "assembly": {
++        "layout_version": "system-conversion-v1",
++        "note": "전원을 분리하고 변환한 새 회로의 양 끝을 한 단계에서 연결하세요. 원본 사진 배선을 재현한 안내가 아닙니다.",
++        "steps": [
++          {
++            "from": "U1.5",
++            "to": "R1.1",
++            "kind": "jumper"
++          },
++          {
++            "from": "R1.2",
++            "to": "D1.A",
++            "kind": "jumper"
++          },
++          {
++            "from": "D1.C",
++            "to": "U1.GND",
++            "kind": "jumper"
++          },
++          {
++            "from": "U1.2",
++            "to": "S1.1.l",
++            "kind": "jumper"
++          },
++          {
++            "from": "S1.2.l",
++            "to": "U1.GND",
++            "kind": "jumper"
++          }
++        ]
++      }
++    }
++  },
++  "roundtrip_hex": ":100000000C9461000C9473000C9473000C947300B6\n:100010000C9473000C9473000C9473000C94730094\n:100020000C9473000C9473000C9473000C94730084\n:100030000C9473000C9473000C9473000C94730074\n:100040000C949D000C9473000C9473000C9473003A\n:100050000C9473000C9473000C9473000C94730054\n:100060000C9473000C94730000000008000201005F\n:100070000003040700000000000000000102040863\n:100080001020408001020408102001020408102002\n:10009000040404040404040402020202020203032E\n:1000A00003030303000000002300260029000000D2\n:1000B0000000250028002B0000000000240027007D\n:1000C0002A0011241FBECFEFD8E0DEBFCDBF21E054\n:1000D000A0E0B1E001C01D92A930B207E1F70E9493\n:1000E0008E000C9441020C94000061E085E00E94B7\n:1000F000AC0162E082E00C94AC0182E00E94170245\n:1001000061E0892B09F060E085E00E94E8016AE087\n:1001100070E080E090E00C940C0108950E9448018A\n:100120000E948D000E947500C0E0D0E00E947D001A\n:100130002097E1F30E940000F9CF1F920F920FB6B3\n:100140000F9211242F933F938F939F93AF93BF935D\n:100150008091010190910201A0910301B0910401ED\n:100160003091000123E0230F2D3720F40196A11DCB\n:10017000B11D05C026E8230F0296A11DB11D2093D5\n:1001800000018093010190930201A0930301B093B9\n:1001900004018091050190910601A0910701B091A1\n:1001A00008010196A11DB11D8093050190930601E0\n:1001B000A0930701B0930801BF91AF919F918F91D8\n:1001C0003F912F910F900FBE0F901F9018953FB742\n:1001D000F8948091050190910601A0910701B091DA\n:1001E000080126B5A89B05C02F3F19F00196A11D57\n:1001F000B11D3FBFBA2FA92F982F8827820F911DBD\n:10020000A11DB11DBC01CD0142E0660F771F881F03\n:10021000991F4A95D1F708958F929F92AF92BF92FE\n:10022000CF92DF92EF92FF926B017C010E94E70078\n:100230004B015C01C114D104E104F10401F10E94FD\n:1002400040020E94E700DC01CB0188199909AA0944\n:10025000BB09883E9340A105B10560F321E0C21AB5\n:10026000D108E108F10888EE880E83E0981EA11CF1\n:10027000B11CC114D104E104F10419F7DBCFFF90E4\n:10028000EF90DF90CF90BF90AF909F908F900895A8\n:10029000789484B5826084BD84B5816084BD85B561\n:1002A000826085BD85B5816085BDEEE6F0E0808128\n:1002B00081608083E1E8F0E0108280818260808349\n:1002C000808181608083E0E8F0E0808181608083CC\n:1002D000E1EBF0E0808184608083E0EBF0E08081FE\n:1002E00081608083EAE7F0E08081846080838081A0\n:1002F0008260808380818160808380818068808348\n:100300001092C1000895833081F028F4813099F073\n:100310008230A1F008958730A9F08830B9F0843098\n:10032000D1F4809180008F7D03C0809180008F7711\n:1003300080938000089584B58F7702C084B58F7D47\n:1003400084BD08958091B0008F7703C08091B00084\n:100350008F7D8093B0000895CF93DF9390E0FC01F0\n:10036000E458FF4F2491FC01E057FF4F849188230C\n:1003700061F190E0880F991FFC01E854FF4FC5918F\n:10038000D491FC01E255FF4FA591B491611109C0D0\n:100390009FB7F8948881209582238883EC912E233F\n:1003A0000BC0623061F49FB7F8948881322F30958A\n:1003B00083238883EC912E2B2C939FBF06C08FB78D\n:1003C000F894E8812E2B28838FBFDF91CF91089579\n:1003D0001F93CF93DF93282F30E0F901E859FF4FA7\n:1003E0008491F901E458FF4FD491F901E057FF4F90\n:1003F000C491CC23C1F0162F81110E948301EC2FF0\n:10040000F0E0EE0FFF1FE255FF4FA591B4919FB7AB\n:10041000F894111104C08C91D095D82302C0EC91AE\n:10042000DE2BDC939FBFDF91CF911F910895CF9377\n:10043000DF93282F30E0F901E859FF4F8491F9014B\n:10044000E458FF4FD491F901E057FF4FC491CC23FA\n:1004500091F081110E948301EC2FF0E0EE0FFF1F5D\n:10046000EC55FF4FA591B491EC91ED2381E090E024\n:1004700021F480E002C080E090E0DF91CF91089508\n:060480000895F894FFCF7F\n:00000001FF\n"
++}

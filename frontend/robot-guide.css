@@ -1,0 +1,8 @@
+.rover-guide{margin:0 0 22px;padding:22px;border:1px solid #b9d3c3;border-radius:14px;background:#f7fbf8}
+.rover-guide h3,.rover-guide h4{margin:0}.rover-guide p{line-height:1.6}.rover-goal{font-size:15px}.rover-notice{font-size:12px;color:#52695a}
+.rover-warning{padding:8px 12px;border-left:3px solid #dfa93b;background:#fff9e8;font-size:12px;line-height:1.5}
+.rover-parts{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:8px;margin:14px 0}.rover-part{display:grid;gap:4px;padding:11px;border:1px solid #dce8de;border-radius:8px;background:#fff}.rover-part small{line-height:1.5;color:#617668}
+.rover-instruction{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(250px,.5fr);gap:14px;margin:14px 0}.rover-diagram{background:#fff;border:1px solid #dce8de;border-radius:10px;overflow:auto}.rover-wiring{display:block;width:100%;height:auto;min-width:700px}.rover-wiring .rover-dim{opacity:.18}
+.rover-step{display:grid;align-content:start;gap:10px;background:#fff;border:1px solid #dce8de;border-radius:10px;padding:16px}.rover-step small{font-weight:700;color:#396750}.rover-step p{white-space:pre-line;margin:0;font-size:13px}.rover-step button{padding:7px 12px}
+.rover-guide ul{padding-left:20px;display:grid;gap:5px;line-height:1.5;font-size:12px}.rover-code{white-space:pre-wrap;word-break:break-word;max-height:350px;overflow:auto;background:#172520;color:#e5f1e8;border-radius:8px;padding:14px;font-size:12px}.rover-download{display:inline-block;font-weight:700;margin:12px 0}
+@media(max-width:950px){.rover-instruction{grid-template-columns:1fr}}

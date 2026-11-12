@@ -1,0 +1,1053 @@
+{
+  "schema_version": "0.1.0",
+  "project_id": "00000000000000000000000000000000",
+  "title": "ESP32 · LED · 버튼 | 합성 검토 예제",
+  "revision": 1,
+  "mode": "synthetic_demo",
+  "assets": [
+    {
+      "id": "image",
+      "sha256": "3d6d74b0accccd2e69fc6e6f946c926f8840d4ddce01ea4882fe2612f8b0c40c",
+      "width": 1200,
+      "height": 800,
+      "filename": "synthetic-example.png",
+      "synthetic": true
+    }
+  ],
+  "evidence": [
+    {
+      "id": "fixture_U1",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.07,
+          "y": 0.12
+        },
+        {
+          "x": 0.29,
+          "y": 0.8
+        }
+      ],
+      "text": "직접 작성한 합성 예제의 정의입니다. 실제 부품이나 사진에서 검증한 정보가 아닙니다."
+    },
+    {
+      "id": "fixture_R1",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.57,
+          "y": 0.29
+        },
+        {
+          "x": 0.68,
+          "y": 0.37
+        }
+      ],
+      "text": "직접 작성한 합성 예제의 정의입니다. 실제 부품이나 사진에서 검증한 정보가 아닙니다."
+    },
+    {
+      "id": "fixture_D1",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.77,
+          "y": 0.21
+        },
+        {
+          "x": 0.83,
+          "y": 0.32
+        }
+      ],
+      "text": "직접 작성한 합성 예제의 정의입니다. 실제 부품이나 사진에서 검증한 정보가 아닙니다."
+    },
+    {
+      "id": "fixture_SW1",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.54,
+          "y": 0.57
+        },
+        {
+          "x": 0.63,
+          "y": 0.69
+        }
+      ],
+      "text": "직접 작성한 합성 예제의 정의입니다. 실제 부품이나 사진에서 검증한 정보가 아닙니다."
+    },
+    {
+      "id": "fixture_R2",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.76,
+          "y": 0.55
+        },
+        {
+          "x": 0.84,
+          "y": 0.63
+        }
+      ],
+      "text": "직접 작성한 합성 예제의 정의입니다. 실제 부품이나 사진에서 검증한 정보가 아닙니다."
+    },
+    {
+      "id": "fixture_BB1",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.4,
+          "y": 0.12
+        },
+        {
+          "x": 0.94,
+          "y": 0.85
+        }
+      ],
+      "text": "직접 작성한 합성 예제의 정의입니다. 실제 부품이나 사진에서 검증한 정보가 아닙니다."
+    },
+    {
+      "id": "fixture_W1",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.29,
+          "y": 0.46
+        },
+        {
+          "x": 0.44,
+          "y": 0.46
+        },
+        {
+          "x": 0.44,
+          "y": 0.33
+        },
+        {
+          "x": 0.57,
+          "y": 0.33
+        }
+      ],
+      "text": "합성 배선 예제. W6은 끝점 가림, W7은 미확인 핀 라벨을 의도적으로 포함합니다."
+    },
+    {
+      "id": "fixture_W2",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.68,
+          "y": 0.33
+        },
+        {
+          "x": 0.78,
+          "y": 0.33
+        },
+        {
+          "x": 0.78,
+          "y": 0.29
+        }
+      ],
+      "text": "합성 배선 예제. W6은 끝점 가림, W7은 미확인 핀 라벨을 의도적으로 포함합니다."
+    },
+    {
+      "id": "fixture_W3",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.82,
+          "y": 0.29
+        },
+        {
+          "x": 0.9,
+          "y": 0.29
+        },
+        {
+          "x": 0.9,
+          "y": 0.74
+        },
+        {
+          "x": 0.33,
+          "y": 0.74
+        },
+        {
+          "x": 0.33,
+          "y": 0.7
+        },
+        {
+          "x": 0.29,
+          "y": 0.7
+        }
+      ],
+      "text": "합성 배선 예제. W6은 끝점 가림, W7은 미확인 핀 라벨을 의도적으로 포함합니다."
+    },
+    {
+      "id": "fixture_W4",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.29,
+          "y": 0.24
+        },
+        {
+          "x": 0.36,
+          "y": 0.24
+        },
+        {
+          "x": 0.36,
+          "y": 0.52
+        },
+        {
+          "x": 0.77,
+          "y": 0.52
+        },
+        {
+          "x": 0.77,
+          "y": 0.59
+        }
+      ],
+      "text": "합성 배선 예제. W6은 끝점 가림, W7은 미확인 핀 라벨을 의도적으로 포함합니다."
+    },
+    {
+      "id": "fixture_W5",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.83,
+          "y": 0.59
+        },
+        {
+          "x": 0.87,
+          "y": 0.59
+        },
+        {
+          "x": 0.87,
+          "y": 0.7
+        },
+        {
+          "x": 0.59,
+          "y": 0.7
+        },
+        {
+          "x": 0.59,
+          "y": 0.65
+        }
+      ],
+      "text": "합성 배선 예제. W6은 끝점 가림, W7은 미확인 핀 라벨을 의도적으로 포함합니다."
+    },
+    {
+      "id": "fixture_W6",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.55,
+          "y": 0.65
+        },
+        {
+          "x": 0.48,
+          "y": 0.65
+        },
+        {
+          "x": 0.48,
+          "y": 0.77
+        },
+        {
+          "x": 0.4,
+          "y": 0.77
+        }
+      ],
+      "text": "합성 배선 예제. W6은 끝점 가림, W7은 미확인 핀 라벨을 의도적으로 포함합니다."
+    },
+    {
+      "id": "fixture_W7",
+      "asset_id": "image",
+      "method": "synthetic_fixture",
+      "points": [
+        {
+          "x": 0.29,
+          "y": 0.58
+        },
+        {
+          "x": 0.41,
+          "y": 0.58
+        },
+        {
+          "x": 0.41,
+          "y": 0.55
+        },
+        {
+          "x": 0.59,
+          "y": 0.55
+        },
+        {
+          "x": 0.59,
+          "y": 0.6
+        }
+      ],
+      "text": "합성 배선 예제. W6은 끝점 가림, W7은 미확인 핀 라벨을 의도적으로 포함합니다."
+    }
+  ],
+  "components": [
+    {
+      "id": "U1",
+      "kind": "board",
+      "label": {
+        "value": "ESP32 DevKit (candidate)",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_U1"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답 정의에 한정"
+      },
+      "value": {
+        "value": null,
+        "status": "UNKNOWN",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [],
+        "candidates": [],
+        "reason": "아직 확인하지 않았습니다."
+      },
+      "bbox": [
+        {
+          "x": 0.07,
+          "y": 0.12
+        },
+        {
+          "x": 0.29,
+          "y": 0.8
+        }
+      ],
+      "terminals": [
+        {
+          "id": "U1.3V3",
+          "name": {
+            "value": "3V3",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_U1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        },
+        {
+          "id": "U1.GND",
+          "name": {
+            "value": "GND",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_U1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        },
+        {
+          "id": "U1.GPIO23",
+          "name": {
+            "value": "GPIO23",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_U1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        },
+        {
+          "id": "U1.GPIO18",
+          "name": {
+            "value": "GPIO18",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_U1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        }
+      ]
+    },
+    {
+      "id": "R1",
+      "kind": "resistor",
+      "label": {
+        "value": "LED resistor",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_R1"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답 정의에 한정"
+      },
+      "value": {
+        "value": "220 Ω",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_R1"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답 정의에 한정"
+      },
+      "bbox": [
+        {
+          "x": 0.57,
+          "y": 0.29
+        },
+        {
+          "x": 0.68,
+          "y": 0.37
+        }
+      ],
+      "terminals": [
+        {
+          "id": "R1.1",
+          "name": {
+            "value": "1",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_R1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        },
+        {
+          "id": "R1.2",
+          "name": {
+            "value": "2",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_R1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        }
+      ]
+    },
+    {
+      "id": "D1",
+      "kind": "led",
+      "label": {
+        "value": "Red LED",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_D1"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답 정의에 한정"
+      },
+      "value": {
+        "value": null,
+        "status": "UNKNOWN",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [],
+        "candidates": [],
+        "reason": "아직 확인하지 않았습니다."
+      },
+      "bbox": [
+        {
+          "x": 0.77,
+          "y": 0.21
+        },
+        {
+          "x": 0.83,
+          "y": 0.32
+        }
+      ],
+      "terminals": [
+        {
+          "id": "D1.A",
+          "name": {
+            "value": "A",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_D1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        },
+        {
+          "id": "D1.K",
+          "name": {
+            "value": "K",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_D1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        }
+      ]
+    },
+    {
+      "id": "SW1",
+      "kind": "button",
+      "label": {
+        "value": "Push button",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_SW1"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답 정의에 한정"
+      },
+      "value": {
+        "value": null,
+        "status": "UNKNOWN",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [],
+        "candidates": [],
+        "reason": "아직 확인하지 않았습니다."
+      },
+      "bbox": [
+        {
+          "x": 0.54,
+          "y": 0.57
+        },
+        {
+          "x": 0.63,
+          "y": 0.69
+        }
+      ],
+      "terminals": [
+        {
+          "id": "SW1.1",
+          "name": {
+            "value": "1",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_SW1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        },
+        {
+          "id": "SW1.2",
+          "name": {
+            "value": "2",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_SW1"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "kind": "resistor",
+      "label": {
+        "value": "Input resistor",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_R2"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답 정의에 한정"
+      },
+      "value": {
+        "value": "10 kΩ",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_R2"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답 정의에 한정"
+      },
+      "bbox": [
+        {
+          "x": 0.76,
+          "y": 0.55
+        },
+        {
+          "x": 0.84,
+          "y": 0.63
+        }
+      ],
+      "terminals": [
+        {
+          "id": "R2.1",
+          "name": {
+            "value": "1",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_R2"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        },
+        {
+          "id": "R2.2",
+          "name": {
+            "value": "2",
+            "status": "CONFIRMED",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [
+              "fixture_R2"
+            ],
+            "candidates": [],
+            "reason": "합성 예제의 정답 정의에 한정"
+          },
+          "pin_mapping": {
+            "value": null,
+            "status": "UNKNOWN",
+            "score": null,
+            "calibrated": false,
+            "evidence_ids": [],
+            "candidates": [],
+            "reason": "아직 확인하지 않았습니다."
+          }
+        }
+      ]
+    },
+    {
+      "id": "BB1",
+      "kind": "breadboard",
+      "label": {
+        "value": "Breadboard",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_BB1"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답 정의에 한정"
+      },
+      "value": {
+        "value": null,
+        "status": "UNKNOWN",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [],
+        "candidates": [],
+        "reason": "아직 확인하지 않았습니다."
+      },
+      "bbox": [
+        {
+          "x": 0.4,
+          "y": 0.12
+        },
+        {
+          "x": 0.94,
+          "y": 0.85
+        }
+      ],
+      "terminals": []
+    }
+  ],
+  "links": [
+    {
+      "id": "W1",
+      "from_terminal": "U1.GPIO23",
+      "to_terminal": "R1.1",
+      "path": [
+        {
+          "x": 0.29,
+          "y": 0.46
+        },
+        {
+          "x": 0.44,
+          "y": 0.46
+        },
+        {
+          "x": 0.44,
+          "y": 0.33
+        },
+        {
+          "x": 0.57,
+          "y": 0.33
+        }
+      ],
+      "connection": {
+        "value": "connected",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_W1"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답"
+      }
+    },
+    {
+      "id": "W2",
+      "from_terminal": "R1.2",
+      "to_terminal": "D1.A",
+      "path": [
+        {
+          "x": 0.68,
+          "y": 0.33
+        },
+        {
+          "x": 0.78,
+          "y": 0.33
+        },
+        {
+          "x": 0.78,
+          "y": 0.29
+        }
+      ],
+      "connection": {
+        "value": "connected",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_W2"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답"
+      }
+    },
+    {
+      "id": "W3",
+      "from_terminal": "D1.K",
+      "to_terminal": "U1.GND",
+      "path": [
+        {
+          "x": 0.82,
+          "y": 0.29
+        },
+        {
+          "x": 0.9,
+          "y": 0.29
+        },
+        {
+          "x": 0.9,
+          "y": 0.74
+        },
+        {
+          "x": 0.33,
+          "y": 0.74
+        },
+        {
+          "x": 0.33,
+          "y": 0.7
+        },
+        {
+          "x": 0.29,
+          "y": 0.7
+        }
+      ],
+      "connection": {
+        "value": "connected",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_W3"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답"
+      }
+    },
+    {
+      "id": "W4",
+      "from_terminal": "U1.3V3",
+      "to_terminal": "R2.1",
+      "path": [
+        {
+          "x": 0.29,
+          "y": 0.24
+        },
+        {
+          "x": 0.36,
+          "y": 0.24
+        },
+        {
+          "x": 0.36,
+          "y": 0.52
+        },
+        {
+          "x": 0.77,
+          "y": 0.52
+        },
+        {
+          "x": 0.77,
+          "y": 0.59
+        }
+      ],
+      "connection": {
+        "value": "connected",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_W4"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답"
+      }
+    },
+    {
+      "id": "W5",
+      "from_terminal": "R2.2",
+      "to_terminal": "SW1.1",
+      "path": [
+        {
+          "x": 0.83,
+          "y": 0.59
+        },
+        {
+          "x": 0.87,
+          "y": 0.59
+        },
+        {
+          "x": 0.87,
+          "y": 0.7
+        },
+        {
+          "x": 0.59,
+          "y": 0.7
+        },
+        {
+          "x": 0.59,
+          "y": 0.65
+        }
+      ],
+      "connection": {
+        "value": "connected",
+        "status": "CONFIRMED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_W5"
+        ],
+        "candidates": [],
+        "reason": "합성 예제의 정답"
+      }
+    },
+    {
+      "id": "W6",
+      "from_terminal": "SW1.2",
+      "to_terminal": null,
+      "path": [
+        {
+          "x": 0.55,
+          "y": 0.65
+        },
+        {
+          "x": 0.48,
+          "y": 0.65
+        },
+        {
+          "x": 0.48,
+          "y": 0.77
+        },
+        {
+          "x": 0.4,
+          "y": 0.77
+        }
+      ],
+      "connection": {
+        "value": null,
+        "status": "UNKNOWN",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_W6"
+        ],
+        "candidates": [],
+        "reason": "끝점이 가려져 있습니다."
+      }
+    },
+    {
+      "id": "W7",
+      "from_terminal": "U1.GPIO18",
+      "to_terminal": "SW1.1",
+      "path": [
+        {
+          "x": 0.29,
+          "y": 0.58
+        },
+        {
+          "x": 0.41,
+          "y": 0.58
+        },
+        {
+          "x": 0.41,
+          "y": 0.55
+        },
+        {
+          "x": 0.59,
+          "y": 0.55
+        },
+        {
+          "x": 0.59,
+          "y": 0.6
+        }
+      ],
+      "connection": {
+        "value": "connected",
+        "status": "INFERRED",
+        "score": null,
+        "calibrated": false,
+        "evidence_ids": [
+          "fixture_W7"
+        ],
+        "candidates": [],
+        "reason": "핀 라벨을 추가 확인해야 합니다."
+      }
+    }
+  ],
+  "wire_candidates": []
+}

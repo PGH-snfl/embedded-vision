@@ -1,0 +1,268 @@
+diff --git a/frontend/src/__tests__/embedded-code-translation.test.ts b/frontend/src/__tests__/embedded-code-translation.test.ts
+index e4ca410..cd6bbf1 100644
+--- a/frontend/src/__tests__/embedded-code-translation.test.ts
++++ b/frontend/src/__tests__/embedded-code-translation.test.ts
+@@ -19,19 +19,32 @@ afterEach(()=>{act(()=>root.unmount());host.remove();if(originalParent)Object.de
+ describe('code translation UI',()=>{
+  it('rejects stale results after source edits and keeps translated code separate',async()=>{
+   await act(async()=>root.render(createElement(EmbeddedCodeTranslation,{source:'original Python'})));
+-  const button=[...host.querySelectorAll('button')].find(b=>b.textContent==='코드 번역')!;
++  expect(document.querySelector('[role="dialog"]')).toBeNull();
++  const open=host.querySelector('button')!;
++  expect(open.textContent).toBe('코드 번역');
++  act(()=>open.click());
++  expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-modal')).toBe('true');
++  const button=[...document.querySelectorAll('[role="dialog"] button')].find(b=>b.textContent==='코드 번역')! as HTMLButtonElement;
+   act(()=>button.click());
+   const request=parent.postMessage.mock.calls[0][0];
+   expect(request.source).toBe('original Python');
+   await act(async()=>root.render(createElement(EmbeddedCodeTranslation,{source:'edited Python'})));
+   const result={type:'ev:translate-result',channel,requestId:request.requestId,result:{filename:'test.c',code:'int main(){}',notice:'확인 필요',details:[]}};
+   act(()=>window.dispatchEvent(new MessageEvent('message',{origin,source:parent as unknown as Window,data:result})));
+-  expect(host.querySelector('textarea')).toBeNull();
+-  expect(host.textContent).toContain('다시 번역');
++  expect(document.querySelector('[role="dialog"] textarea')).toBeNull();
++  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('다시 번역');
+   act(()=>button.click());
+   const second=parent.postMessage.mock.calls[1][0];
+   expect(second.source).toBe('edited Python');
+   act(()=>window.dispatchEvent(new MessageEvent('message',{origin,source:parent as unknown as Window,data:{...result,requestId:second.requestId}})));
+-  expect(host.querySelector('textarea')?.value).toBe('int main(){}');
++  expect(document.querySelector('[role="dialog"] textarea')?.getAttribute('aria-label')).toBe('번역된 코드');
++  expect((document.querySelector('[role="dialog"] textarea') as HTMLTextAreaElement)?.value).toBe('int main(){}');
++  act(()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));
++  expect(document.querySelector('[role="dialog"]')).toBeNull();
++  expect(document.activeElement).toBe(open);
++  act(()=>open.click());
++  expect((document.querySelector('[role="dialog"] textarea') as HTMLTextAreaElement)?.value).toBe('int main(){}');
++  act(()=>(document.querySelector('[aria-label="번역 창 닫기"]') as HTMLButtonElement).click());
++  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+ });
+diff --git a/frontend/src/__tests__/embedded-motion-bridge.test.ts b/frontend/src/__tests__/embedded-motion-bridge.test.ts
+index 2fc31b8..4bc49bf 100644
+--- a/frontend/src/__tests__/embedded-motion-bridge.test.ts
++++ b/frontend/src/__tests__/embedded-motion-bridge.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, expect, it, vi } from 'vitest';
+-import { acceptedMotionRevision, matchingCircuitRevision, requestMotionPreview } from '../components/embeddedMotionBridge';
++import { acceptedMotionResult, acceptedMotionRevision, matchingCircuitRevision, requestMotionPreview } from '../components/embeddedMotionBridge';
+ 
+ const channel = 'a'.repeat(32);
+ const source = { source_graph_sha256: 'abc', analysis_origin: 'http://localhost:8897' };
+@@ -72,4 +72,24 @@ describe('embedded motion preview bridge', () => {
+       { referrer: '' },
+     ]) expect(acceptedMotionRevision({ ...valid, ...bad })).toBeUndefined();
+   });
++  it('requests the separate motion tab with a cryptographic request identifier', () => {
++    const requestId='b'.repeat(48);
++    const options={...base(),search:base().search+'&motion_tab=1',requestId};
++    expect(requestMotionPreview(options)).toEqual({handled:true});
++    expect(options.send).toHaveBeenCalledWith(expect.objectContaining({type:'ev:motion-request',channel,popup:true,requestId}),source.analysis_origin);
++    expect(requestMotionPreview({...options,requestId:'bad'})).toMatchObject({handled:true,error:expect.any(String)});
++  });
++  it('accepts only the matching parent, request and same-origin motion URL', () => {
++    const requestId='c'.repeat(48),origin=source.analysis_origin;
++    const valid={search:base().search+'&motion_tab=1',referrer:base().referrer,eventOrigin:origin,fromParent:true,
++      data:{type:'ev:motion-result',channel,requestId,url:origin+'/rover-motion.html?project=123'},source,requestId};
++    expect(acceptedMotionResult(valid)).toEqual({url:origin+'/rover-motion.html?project=123'});
++    expect(acceptedMotionResult({...valid,data:{...valid.data,url:origin+'/w/'+'a'.repeat(32)+'/rover-motion.html'}})?.url).toContain('/w/');
++    for(const mutation of [{fromParent:false},{eventOrigin:'https://bad.example'},{referrer:'https://bad.example/'},
++      {requestId:'d'.repeat(48)},{data:{...valid.data,channel:'bad'}},{search:base().search}])
++      expect(acceptedMotionResult({...valid,...mutation})).toBeUndefined();
++    for(const url of ['https://bad.example/rover-motion.html',origin+'/elsewhere',origin+'/w/bad/rover-motion.html','javascript:alert(1)'])
++      expect(acceptedMotionResult({...valid,data:{...valid.data,url}})).toEqual({error:expect.any(String)});
++    expect(acceptedMotionResult({...valid,data:{type:'ev:motion-result',channel,requestId,error:'저장 실패'}})).toEqual({error:'저장 실패'});
++  });
+ });
+diff --git a/frontend/src/components/EmbeddedCodeTranslation.tsx b/frontend/src/components/EmbeddedCodeTranslation.tsx
+index 1ad7781..3a360f7 100644
+--- a/frontend/src/components/EmbeddedCodeTranslation.tsx
++++ b/frontend/src/components/EmbeddedCodeTranslation.tsx
+@@ -1,14 +1,31 @@
+ import {useEffect,useRef,useState} from 'react';
++import {createPortal} from 'react-dom';
+ import {getMotionSource} from './embeddedMotionBridge';
+ import {acceptedTranslationResult,makeTranslationRequest,translationContext,type TranslationResult,type TranslationTarget} from './embeddedTranslationBridge';
+ 
+ type Pending={id:string;source:string;target:TranslationTarget;timer:ReturnType<typeof setTimeout>};
+ export function EmbeddedCodeTranslation({source}:{source:string|undefined}){
++ const [open,setOpen]=useState(false);
++ const trigger=useRef<HTMLButtonElement>(null),dialog=useRef<HTMLDivElement>(null),closeButton=useRef<HTMLButtonElement>(null);
+  const [target,setTarget]=useState<TranslationTarget>('raspberry_pi_c');
+  const [result,setResult]=useState<{value:TranslationResult;source:string;target:TranslationTarget}|null>(null);
+  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
+  const pending=useRef<Pending|null>(null),latestSource=useRef(source),latestTarget=useRef(target);
+  latestSource.current=source;latestTarget.current=target;
++ useEffect(()=>{
++  if(!open)return;
++  closeButton.current?.focus();
++  const keydown=(event:KeyboardEvent)=>{
++   if(event.key==='Escape'){event.preventDefault();setOpen(false);return;}
++   if(event.key!=='Tab'||!dialog.current)return;
++   const controls=Array.from(dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],summary,[tabindex]:not([tabindex="-1"])'));
++   const first=controls[0],last=controls[controls.length-1];if(!first||!last)return;
++   if(event.shiftKey&&(document.activeElement===first||!dialog.current.contains(document.activeElement))){event.preventDefault();last.focus();}
++   else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
++  };
++  document.addEventListener('keydown',keydown);
++  return()=>{document.removeEventListener('keydown',keydown);if(trigger.current?.isConnected)trigger.current.focus();};
++ },[open]);
+  useEffect(()=>{
+   const receive=(event:MessageEvent)=>{
+    const job=pending.current,ctx=translationContext(location.search,document.referrer,getMotionSource(),window.parent!==window);
+@@ -48,10 +65,12 @@ export function EmbeddedCodeTranslation({source}:{source:string|undefined}){
+   try{await navigator.clipboard.writeText(result.value.code);setMessage('번역 코드를 복사했습니다.');}
+   catch{setMessage('자동 복사를 사용할 수 없습니다. 결과를 선택하고 Ctrl+C를 누르세요.');}
+  };
+- return <details className="ev-code-translation"><summary>다른 보드·언어로 코드 번역</summary>
++ return <><button type="button" className="ev-translation-trigger" ref={trigger} onClick={()=>setOpen(true)}>코드 번역</button>{open&&createPortal(<div className="ev-translation-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setOpen(false);}}>
++ <div className="ev-code-translation ev-translation-dialog" role="dialog" aria-modal="true" aria-labelledby="ev-translation-title" ref={dialog}>
++  <div className="ev-translation-heading"><h2 id="ev-translation-title">다른 보드·언어로 코드 번역</h2><button type="button" ref={closeButton} aria-label="번역 창 닫기" onClick={()=>setOpen(false)}>닫기 ✕</button></div>
+   <p>현재 2륜 로봇 예제에서 주석·서식과 명령별 모터 출력값 변경을 지원합니다. 다른 동작 변경은 자동 번역하지 않습니다. 원본 코드는 바뀌지 않습니다.</p>
+   <div className="ev-robot-code-row"><label>대상 <select value={target} onChange={e=>setTarget(e.target.value as TranslationTarget)}><option value="raspberry_pi_c">Raspberry Pi · C</option><option value="arduino_cpp">Arduino · C++</option></select></label><button type="button" onClick={translate} disabled={busy||!source}>{busy?'번역 중…':'코드 번역'}</button></div>
+   {result&&result.source===source&&result.target===target&&<div><p><strong>{result.value.filename}</strong> · {result.value.notice}</p>{target==='arduino_cpp'&&<p>Arduino Uno와 별도의 Motor Shield V2, 새로운 전원·배선이 필요합니다.</p>}<button type="button" onClick={()=>void copy()}>번역 코드 복사</button><textarea aria-label="번역된 코드" readOnly value={result.value.code}/><details><summary>부품·배선과 실행 방법 자세히</summary>{result.value.details.map((item,i)=><p key={i}>{item}</p>)}</details></div>}
+   <span role="status">{message}</span>
+- </details>;
++ </div></div>,document.body)}</>;
+ }
+diff --git a/frontend/src/components/EmbeddedWorkbench.css b/frontend/src/components/EmbeddedWorkbench.css
+index a29ba89..2274487 100644
+--- a/frontend/src/components/EmbeddedWorkbench.css
++++ b/frontend/src/components/EmbeddedWorkbench.css
+@@ -54,7 +54,11 @@
+ .ev-robot-code-help{flex-shrink:0;padding:8px 12px;background:#fff;border-bottom:1px solid #dce7df;font-size:11px;color:#405949}
+ .ev-robot-code-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.ev-robot-code-row strong{margin-right:auto}.ev-robot-code-row button{padding:5px 8px;border:1px solid #a8c8b4;border-radius:6px;background:#fff;color:#22533a;cursor:pointer}
+ .ev-robot-code-help p{margin:5px 0;line-height:1.4}.ev-robot-code-help details{max-height:130px;overflow:auto}.ev-robot-code-help summary{cursor:pointer}.ev-robot-code-help pre{margin:4px 0;padding:5px;background:#f4f8f5;white-space:pre-wrap;overflow-wrap:anywhere}.ev-robot-code-help [role=status]{display:block;color:#22533a}
+-.ev-robot-code-help .ev-code-translation{max-height:320px;overflow:auto;margin-top:5px;border-top:1px solid #dce7df;padding-top:5px}.ev-code-translation select{max-width:100%;font:inherit;padding:4px}.ev-code-translation textarea{display:block;width:100%;height:130px;box-sizing:border-box;resize:vertical;margin-top:6px;font:11px monospace;white-space:pre}.ev-code-translation button{padding:5px 8px;border:1px solid #a8c8b4;border-radius:6px;background:#fff;color:#22533a;cursor:pointer}.ev-code-translation button:disabled{opacity:.6}
++.ev-translation-trigger,.ev-code-translation button{padding:5px 8px;border:1px solid #a8c8b4;border-radius:6px;background:#fff;color:#22533a;cursor:pointer}.ev-translation-trigger{font:inherit;margin:5px 0}.ev-code-translation button:disabled{opacity:.6}
++.ev-translation-backdrop{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(17,30,23,.52)}
++.ev-translation-dialog{box-sizing:border-box;width:min(720px,100%);max-height:min(88dvh,820px);overflow:auto;border-radius:14px;padding:20px;background:#fff;box-shadow:0 15px 50px #0004;color:#263b30;font-size:13px;line-height:1.5}
++.ev-translation-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.ev-translation-heading h2{font-size:18px;margin:0}.ev-translation-heading button{flex-shrink:0}
++.ev-code-translation select{max-width:100%;font:inherit;padding:6px}.ev-code-translation textarea{display:block;width:100%;height:260px;box-sizing:border-box;resize:vertical;margin-top:8px;padding:10px;background:#17221b;color:#e8f4e9;border:0;border-radius:8px;font:12px/1.45 monospace;white-space:pre}.ev-code-translation [role=status]{display:block;color:#22533a}
+ .embedded-workbench .canvas-content {background-color:#f8faf7;background-image:radial-gradient(#dce5dd .8px,transparent .8px);background-size:20px 20px;}
+ .embedded-workbench .zoom-controls--floating {background:#fff;border:1px solid #dde7df;box-shadow:0 2px 12px #193b1910;border-radius:9px;}
+ .embedded-workbench .zoom-btn,.embedded-workbench .zoom-level {color:#395c42;}
+diff --git a/frontend/src/components/editor/EditorToolbar.tsx b/frontend/src/components/editor/EditorToolbar.tsx
+index 5216298..9ab498b 100644
+--- a/frontend/src/components/editor/EditorToolbar.tsx
++++ b/frontend/src/components/editor/EditorToolbar.tsx
+@@ -26,7 +26,7 @@ import { requestElectricalResolve } from '../../simulation/spice/electricalResol
+ import { reportRunEvent } from '../../services/metricsService';
+ import { useProjectStore } from '../../store/useProjectStore';
+ import { buildVlxPayload, triggerDownloadVlx } from '../../utils/vlxFile';
+-import { getMotionSource, requestMotionPreview } from '../embeddedMotionBridge';
++import { acceptedMotionResult, getMotionSource, requestMotionPreview } from '../embeddedMotionBridge';
+ import {
+   compileProgress,
+   MULTI_BOARD_PROGRESS_ID,
+@@ -268,6 +268,24 @@ export const EditorToolbar = ({
+   // flight is ignored, so rapid clicks can't stack multiple verifications.
+   const runInFlightRef = useRef(false);
+   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
++  const motionPopupRef = useRef<{popup: Window; requestId: string; timer: ReturnType<typeof setTimeout>} | null>(null);
++  useEffect(() => {
++    const receive=(event: MessageEvent) => {
++      const pending=motionPopupRef.current;
++      if(!pending)return;
++      const response=acceptedMotionResult({search:window.location.search,referrer:document.referrer,
++        eventOrigin:event.origin,fromParent:event.source===window.parent,data:event.data,
++        source:getMotionSource(),requestId:pending.requestId});
++      if(!response)return;
++      clearTimeout(pending.timer);motionPopupRef.current=null;
++      if(response.error){if(!pending.popup.closed)pending.popup.close();setMessage({type:'error',text:response.error});return;}
++      if(pending.popup.closed){setMessage({type:'error',text:'운동 화면 탭이 닫혔습니다. 다시 실행하세요.'});return;}
++      try{pending.popup.opener=null;pending.popup.location.href=response.url!;setMessage({type:'success',text:'새 탭에서 3D 운동 화면을 열었습니다. 전기 동작 검증은 별도입니다.'});}
++      catch{pending.popup.close();setMessage({type:'error',text:'운동 화면 탭을 열 수 없습니다. 다시 시도하세요.'});}
++    };
++    window.addEventListener('message',receive);
++    return()=>{window.removeEventListener('message',receive);const pending=motionPopupRef.current;if(pending){clearTimeout(pending.timer);if(!pending.popup.closed)pending.popup.close();motionPopupRef.current=null;}};
++  },[]);
+   const [libManagerOpen, setLibManagerOpen] = useState(false);
+   const [pendingLibraries, setPendingLibraries] = useState<string[]>([]);
+   const [installModalOpen, setInstallModalOpen] = useState(false);
+@@ -767,6 +785,20 @@ export const EditorToolbar = ({
+ 
+   const motionMode = new URLSearchParams(window.location.search).get('motion') === '1';
+   const requestMotion = () => {
++    const popupMode=motionMode && new URLSearchParams(window.location.search).get('motion_tab')==='1';
++    let requestId: string | undefined;
++    if(popupMode){
++      if(motionPopupRef.current){setMessage({type:'error',text:'이전 운동 화면 요청을 처리하고 있습니다.'});return true;}
++      let popup: Window | null = null;
++      try{
++        const bytes=new Uint8Array(24);crypto.getRandomValues(bytes);
++        requestId=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
++        popup=window.open('about:blank','_blank');
++        if(!popup)throw new Error('팝업이 차단되었습니다. 이 사이트의 팝업을 허용하고 다시 실행하세요.');
++        const timer=setTimeout(()=>{const pending=motionPopupRef.current;if(pending && pending.requestId===requestId){motionPopupRef.current=null;if(!pending.popup.closed)pending.popup.close();setMessage({type:'error',text:'운동 화면 연결 시간이 초과되었습니다. 다시 시도하세요.'});}},30000);
++        motionPopupRef.current={popup,requestId,timer};
++      }catch(e){if(popup && !popup.closed)popup.close();setMessage({type:'error',text:e instanceof Error?e.message:'운동 화면 탭을 열 수 없습니다.'});return true;}
++    }
+     const result = requestMotionPreview({
+       search: window.location.search,
+       hash: window.location.hash,
+@@ -774,11 +806,13 @@ export const EditorToolbar = ({
+       isFramed: window.parent !== window,
+       snapshot: () => buildVlxPayload({ name: 'embedded-circuit' }),
+       sourceOverride: getMotionSource(),
++      requestId,
+       send: (message, origin) => window.parent.postMessage(message, origin),
+     });
++    if(result.handled && result.error && motionPopupRef.current){const pending=motionPopupRef.current;clearTimeout(pending.timer);if(!pending.popup.closed)pending.popup.close();motionPopupRef.current=null;}
+     if (result.handled) setMessage(result.error
+       ? { type: 'error', text: result.error }
+-      : { type: 'success', text: '운동 미리보기를 요청했습니다. 회로 실행 검증은 별도입니다.' });
++      : { type: 'success', text: popupMode?'회로를 확인하고 운동 화면을 열고 있습니다…':'운동 미리보기를 요청했습니다. 회로 실행 검증은 별도입니다.' });
+     return result.handled;
+   };
+ 
+diff --git a/frontend/src/components/embeddedMotionBridge.ts b/frontend/src/components/embeddedMotionBridge.ts
+index 6613bc9..7fbbccd 100644
+--- a/frontend/src/components/embeddedMotionBridge.ts
++++ b/frontend/src/components/embeddedMotionBridge.ts
+@@ -44,6 +44,7 @@ export function requestMotionPreview(options: {
+   snapshot: () => unknown;
+   send: (message: unknown, origin: string) => void;
+   sourceOverride?: Record<string, unknown>;
++  requestId?: string;
+ }): MotionBridgeResult {
+   const query = new URLSearchParams(options.search);
+   if (query.get('motion') !== '1') return { handled: false };
+@@ -63,9 +64,35 @@ export function requestMotionPreview(options: {
+     const payload = { ...(options.snapshot() as object), embeddedVision: options.sourceOverride || source };
+     const serialized = JSON.stringify(payload);
+     if (serialized.length > 1_000_000) throw new Error('프로젝트가 너무 큽니다.');
+-    options.send({ type: 'ev:motion-request', channel, payload: JSON.parse(serialized) }, origin);
++    const popup = query.get('motion_tab') === '1';
++    if (popup && !/^[a-f0-9]{32,128}$/i.test(options.requestId || '')) throw new Error('운동 화면 연결 설정이 올바르지 않습니다.');
++    options.send({ type: 'ev:motion-request', channel, payload: JSON.parse(serialized),
++      ...(popup ? {popup: true, requestId: options.requestId} : {}) }, origin);
+     return { handled: true };
+   } catch (error) {
+     return { handled: true, error: error instanceof Error ? error.message : '운동 미리보기 요청에 실패했습니다.' };
+   }
+ }
++
++/** Accept only a response from the containing analysis app, for this request.
++ * A valid destination is a same-origin motion page; arbitrary redirects and
++ * a second response for a different popup must never be followed. */
++export function acceptedMotionResult(options: {
++  search: string; referrer: string; eventOrigin: string; fromParent: boolean;
++  data: any; source: Record<string, any> | undefined; requestId: string;
++}): {url?: string; error?: string} | undefined {
++  try {
++    const query=new URLSearchParams(options.search), channel=query.get('channel') || '';
++    const origin=options.source?.analysis_origin, data=options.data;
++    if(query.get('embedded')!=='1' || query.get('motion')!=='1' || query.get('motion_tab')!=='1' ||
++       !/^[a-f0-9]{32,128}$/i.test(channel) || !/^[a-f0-9]{32,128}$/i.test(options.requestId) ||
++       !options.fromParent || data?.type!=='ev:motion-result' || data?.channel!==channel || data?.requestId!==options.requestId ||
++       typeof origin!=='string' || new URL(origin).origin!==origin || !['http:','https:'].includes(new URL(origin).protocol) ||
++       new URL(options.referrer).origin!==origin || options.eventOrigin!==origin) return undefined;
++    if(typeof data.error==='string' && data.error.length>0 && data.error.length<=2000)return {error:data.error};
++    if(typeof data.url!=='string' || data.url.length>4000)return {error:'운동 화면 주소를 확인할 수 없습니다.'};
++    const url=new URL(data.url);
++    if(url.origin!==origin || url.username || url.password || !/^\/(?:w\/[a-f0-9]{32}\/)?rover-motion\.html$/.test(url.pathname))return {error:'운동 화면 주소가 올바르지 않습니다.'};
++    return {url:url.href};
++  } catch { return undefined; }
++}

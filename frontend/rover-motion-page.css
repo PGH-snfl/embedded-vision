@@ -1,0 +1,10 @@
+.rover-motion-page{margin:0;min-height:100vh;background:#f3f7f4;color:#20382b;font-family:system-ui,sans-serif}
+.motion-header{min-height:54px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #d9e5db;background:white}
+.motion-header>div{display:flex;align-items:center;gap:14px}.motion-header span{font-size:13px;color:#61786a}.motion-header a{font-size:13px;color:#276043}
+.motion-main{max-width:none;margin:0 auto;padding:18px 24px}.motion-main h1{font-size:22px;margin:4px 0 10px}
+.motion-context{margin:5px 0;font-size:13px;color:#506659;line-height:1.5}
+.motion-main [role=status]{min-height:1.2em;font-size:13px;color:#355e46}
+.motion-main .rover-sim{margin:12px 0;padding:18px}.motion-main .rover-viewport{height:min(72vh,850px);min-height:400px}
+.motion-main .rover-sim-layout{grid-template-columns:minmax(0,1fr) minmax(260px,340px)}
+.motion-guide{margin:14px 0}.motion-guide>summary{cursor:pointer;font-weight:650}.motion-guide .rover-guide{margin-top:12px}
+@media(max-width:850px){.motion-main{padding:12px}.motion-main .rover-sim-layout{grid-template-columns:1fr}.motion-main .rover-viewport{height:55vh;min-height:280px}.motion-header{padding:0 12px}}

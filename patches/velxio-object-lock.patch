@@ -1,0 +1,429 @@
+--- a/frontend/src/components/circuitiny/directComponentDrag.ts
++++ b/frontend/src/components/circuitiny/directComponentDrag.ts
+@@ -1,13 +1,6 @@
+ import * as THREE from 'three';
+ 
+-/** Only the explicitly enabled selection can be dragged. */
+-export function canDragComponent(options: {
+-  selected: boolean; armed: boolean; simulating: boolean; wireMode: boolean;
+-  infrastructure: boolean; infrastructureMoveEnabled: boolean;
+-}) {
+-  return options.selected && options.armed && !options.simulating && !options.wireMode
+-    && (!options.infrastructure || options.infrastructureMoveEnabled);
+-}
++export {canDragComponent} from './objectMovement';
+ 
+ /** A drag changes only the temporary 3D pose until a single release commit. */
+ export function createComponentDrag(start: [number, number, number], hit: THREE.Vector3, screen: {x:number; y:number}) {
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -33,8 +33,6 @@
+ import { guideCameraView, splitNearbyGuideLabels } from './guideCamera';
+ import { alignTopView } from './sceneCamera';
+ import { canDragComponent, createComponentDrag } from './directComponentDrag';
+-import { useSimulatorStore as native } from '../../store/useSimulatorStore';
+-import { isBreadboard } from '../../utils/breadboardNets';
+ import { STRUCTURE_ID, structureParameters } from './structureObjects';
+ import {MechanicalShape} from './MechanicalShape';
+ type Violation = { severity: 'error' | 'warning'; involves: string[] };
+@@ -626,7 +624,6 @@
+   const simLog = useStore((s) => s.simLog);
+   const pixels = useStore((s) => s.simStrips[c.instance]);
+   const wireMode = useStore((s) => s.wireMode);
+-  const movableInfrastructure = native((s) => s.infrastructureMoveEnabled);
+   const { camera, gl, controls } = useThree();
+ 
+   const def = catalog.getComponent(c.componentId);
+@@ -637,10 +634,7 @@
+     model: ReturnType<typeof createComponentDrag>; pointerId: number;
+     capture: {releasePointerCapture:(id:number)=>void}; enabled: boolean;
+   }>(null);
+-  const infrastructure = Boolean(c.config?.isBoard) || isBreadboard(String(c.config?.metadataId || ''));
+-  const isStructure = c.config?.metadataId === STRUCTURE_ID;
+-  const canMove = isStructure ? !simulating && !wireMode : canDragComponent({ selected, armed: moveTarget === c.instance, simulating, wireMode,
+-    infrastructure, infrastructureMoveEnabled: movableInfrastructure });
++  const canMove = canDragComponent({selected,armed:moveTarget===c.instance,simulating,wireMode});
+ 
+   const projectPointer = (x:number, y:number) => {
+     const rect = gl.domElement.getBoundingClientRect();
+--- a/frontend/src/components/circuitiny/MechanicalShape.tsx
++++ b/frontend/src/components/circuitiny/MechanicalShape.tsx
+@@ -1,7 +1,7 @@
+ import {mechanicalDetails,type MechanicalPrimitive} from './mechanicalDetails';
+ export function MechanicalShape({id,role,shape,color,ghost,selected}:{id:string;role:string;shape:string;color:string;ghost:boolean;selected:boolean}){
+  const pieces=mechanicalDetails(id,role)||[{shape,size:[1,1,1],position:[0,0,0]} as MechanicalPrimitive];
+- return <>{pieces.map((p,i)=><mesh key={i} position={p.position} rotation={p.rotation} scale={p.scale} castShadow={!ghost} receiveShadow raycast={ghost?()=>{}:undefined}>
++ return <>{pieces.map((p,i)=><mesh key={i} position={p.position} rotation={p.rotation} scale={p.scale} castShadow={!ghost} receiveShadow raycast={ghost&&!selected?()=>{}:undefined}>
+   {p.shape==='sphere'?<sphereGeometry args={[.5,28,20]}/>:p.shape==='torus'?<torusGeometry args={[p.radius!,p.tube!,12,56]}/>:p.shape==='cylinder'?<cylinderGeometry args={[p.radius??.5,p.radius??.5,p.size?.[1]??1,p.segments??40]}/>:<boxGeometry args={p.size||[1,1,1]}/>}
+   <meshStandardMaterial color={p.color||color} metalness={p.metal??.12} roughness={.65} transparent={ghost} opacity={ghost?.18:1} depthWrite={!ghost} emissive={selected?'#9bd1ff':'#000000'} emissiveIntensity={selected?.3:0}/>
+  </mesh>)}</>;
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -16,7 +16,6 @@
+ import { guideConnectionColor, guideConnectionNumber } from './guideGraphic';
+ import { GuideGraphic } from './GuideGraphic';
+ import { useBreadboardHoverPreview } from './useBreadboardHoverPreview';
+-import { isBreadboard } from '../../utils/breadboardNets';
+ import { STRUCTURE_ID, newStructure, structureParameters, type StructureShape } from './structureObjects';
+ import {physicalModelFor} from './physicalModels';
+ import {restoreAssembly} from './assemblyPlanner';
+@@ -76,14 +75,12 @@
+     historyLength = native((s) => s.history.length),
+     clipboard = native((s) => s.canvasClipboard),
+     wires = native((s) => s.wires),
+-    movableInfrastructure = native((s) => s.infrastructureMoveEnabled),
+     resetNonce = native((s) => s.sensorResetNonce);
+   const component = components.find((c) => c.id === selected),
+     board = boards.find((b) => b.id === selected),
+     wire = wires.find((w) => w.id === selectedNet),
+     registry = ComponentRegistry.getInstance(),
+     meta = component && registry.getById(component.metadataId);
+-  const lockedPosition = !movableInfrastructure && (!!board || !!(component && isBreadboard(component.metadataId)));
+   const structure = component?.metadataId === STRUCTURE_ID ? structureParameters(component.properties) : null;
+   const physicalModel=component&&physicalModelFor(component);
+   const designedObjects=components.filter(c=>c.metadataId===STRUCTURE_ID&&c.properties?.evDesignedStructure);
+@@ -119,11 +116,12 @@
+     if (native.getState().running) return;
+     const state=native.getState(), base=state.boards[0], item=newStructure(shape,(base?.x ?? 120)+260,(base?.y ?? 120)+40);
+     state.recordAddComponent(item);
+-    useStore.setState((s)=>({selected:item.id,selectedNet:null,fitRevision:s.fitRevision+1,message:'구조물을 직접 드래그해 이동하세요. 크기는 오른쪽에서 변경합니다.'}));
++    useStore.setState((s)=>({selected:item.id,selectedNet:null,moveTarget:null,fitRevision:s.fitRevision+1,message:'구조물을 선택했습니다. 이동 활성화 버튼을 켠 뒤 드래그하세요.'}));
+   };
+   const changeStructure = (id:string, key:'width'|'height'|'depth'|'elevation'|'color'|'rotationX'|'rotation'|'rotationZ', value:string) => {
+     const state=native.getState(), item=state.components.find(c=>c.id===id);
+     if (!item || state.running) return;
++    if(key==='elevation'&&useStore.getState().moveTarget!==id){useStore.setState({message:'이동 활성화 버튼을 켠 뒤 높이를 변경하세요.'});return;}
+     if (key!=='color' && (value.trim()==='' || !Number.isFinite(Number(value)))) {
+       useStore.setState({message:'숫자를 입력하세요.'}); return;
+     }
+@@ -131,10 +129,10 @@
+     atomic('구조물 크기 변경',()=>state.updateComponent(id,{properties:{...item.properties,...props}}));
+   };
+   useEffect(() => {
+-    if (moveTarget && (moveTarget !== selected || running || wireMode || lockedPosition || (!component && !board))) {
++    if (moveTarget && (moveTarget !== selected || running || wireMode || (!component && !board))) {
+       useStore.setState({ moveTarget: null });
+     }
+-  }, [moveTarget, selected, running, wireMode, lockedPosition, component, board]);
++  }, [moveTarget, selected, running, wireMode, component, board]);
+   const guideStep = guide.steps[guideIndex];
+   const guideWire = guideStep && findStepWire(guideStep, wires);
+   const guideProblem = guideStep ? guideWarning(guideStep, wires, project) : '';
+@@ -199,7 +197,7 @@
+     else if ((key === 'delete' || key === 'backspace') && selected) deleteSelected(selected);
+     else if ((key === 'delete' || key === 'backspace') && selectedNet)
+       useStore.getState().removeNet(selectedNet);
+-    else if (key === 'escape') useStore.getState().cancelWire();
++    else if (key === 'escape') {useStore.setState({moveTarget:null});useStore.getState().cancelWire();}
+     else handled = false;
+     if (handled) {
+       e.preventDefault();
+@@ -425,14 +423,15 @@
+           </details>
+         </div>
+       )}
+-      {(component || board) && !running && !structure && (
++      {(component || board) && !running && (
+         <button
+           className={guideOpen ? "ev-c3d-move ev-c3d-move-guide" : "ev-c3d-move"}
+-          disabled={lockedPosition || wireMode}
++          disabled={wireMode}
++          aria-label="선택한 오브젝트 이동 활성화"
+           aria-pressed={moveTarget === selected}
+           onClick={() => useStore.setState((s) => ({ moveTarget: s.moveTarget === selected ? null : selected }))}
+         >
+-          {moveTarget === selected ? '이동 완료' : '부품 이동'}
++          {moveTarget === selected ? '이동 완료' : '이동 활성화'}
+         </button>
+       )}
+       {(component || board) && (
+@@ -445,7 +444,7 @@
+           <p>
+             {running
+               ? '실행 중입니다. 버튼·다이얼·센서를 조작할 수 있습니다.'
+-              : structure ? '구조물을 직접 드래그해 이동하세요. 치수는 시각화용이며 회로에 연결되지 않습니다.' : lockedPosition ? '보드·빵판을 이동하려면 상단의 이동 허용 버튼을 켜세요.' : moveTarget === selected ? '부품을 드래그해서 원하는 위치로 옮기세요.' : '오른쪽 아래 이동 버튼을 켜고 부품을 드래그하세요.'}
++              : moveTarget === selected ? '선택한 오브젝트를 드래그해 옮기세요. 이동 완료 또는 Esc를 누르면 다시 고정됩니다.' : '현재 고정되어 있습니다. 오른쪽 아래 이동 활성화 버튼을 켜면 드래그할 수 있습니다.'}
+             {meta?.category === 'displays' && ' 실제 시뮬레이터 화면을 표시합니다.'}
+           </p>
+           {component?.metadataId === 'resistor' && (
+@@ -464,7 +463,7 @@
+             {Boolean(component.properties?.evDesignedStructure)&&<details open><summary>설계 보완 · INFERRED</summary><p>{String((component.properties.evDesignedStructure as {reason:string}).reason)}</p><p>사진에서 확인하지 못한 부분을 완성한 새 설계입니다. 실제 형상과 제작 치수는 미확인입니다.</p></details>}
+             {Boolean(component.properties?.evPhotoStructure)&&<details><summary>사진 근거 · INFERRED</summary><p>{String((component.properties.evPhotoStructure as {observation?:string}).observation||'사진의 보이는 형상을 단순화한 모델입니다.')}</p><p>절대 치수 UNKNOWN · 표시 기준 길이 220 mm는 시각화 가정입니다. 실제 제작 치수가 아닙니다.</p><p>{String(((component.properties.evPhotoStructure as {assumptions?:string[]}).assumptions||[]).join(' '))}</p></details>}
+             {([['width','너비'],['height','높이'],['depth','깊이'],['elevation','바닥 높이']] as const).map(([key,label])=><label key={key}>{label} (mm)
+-              <input type="number" min={key==='elevation'?-500:2} max="500" step="1" disabled={running} aria-label={`구조물 ${label} (mm)`}
++              <input type="number" min={key==='elevation'?-500:2} max="500" step="1" disabled={running||(key==='elevation'&&moveTarget!==selected)} aria-label={`구조물 ${label} (mm)`}
+                 key={`${component.id}:${key}:${structure[key]}`} defaultValue={structure[key]} onBlur={e=>changeStructure(component.id,key,e.target.value)} /></label>)}
+             {([['rotationX','X 회전'],['rotation','평면 회전'],['rotationZ','Z 회전']] as const).map(([key,label])=><label key={key}>{label} (°)<input type="number" min="-360" max="360" step="1" disabled={running} aria-label={`구조물 ${label}`} key={`${component.id}:${key}:${structure[key]}`} defaultValue={structure[key]} onBlur={e=>changeStructure(component.id,key,e.target.value)}/></label>)}
+             <label>색상 <input type="color" disabled={running} aria-label="구조물 색상" value={structure.color} onChange={e=>changeStructure(component.id,'color',e.target.value)} /></label>
+--- a/frontend/src/components/circuitiny/bridge.ts
++++ b/frontend/src/components/circuitiny/bridge.ts
+@@ -7,6 +7,7 @@
+ import {physicalPresentation} from './physicalModels';
+ import {mountedPose,rotate} from './assemblyGeometry';
+ import {assemblyRoutingCache} from './assemblyRoutingCache';
++import {canDragComponent} from './objectMovement';
+ import { ComponentRegistry } from '../../services/ComponentRegistry';
+ import { resolvePin } from './project/pins';
+ import { getRenderedPoints } from '../../utils/wireHitDetection';
+@@ -308,8 +309,9 @@
+           board = s.boards.find((b) => b.id === id),
+           offset = offsets.get(id);
+         if (!offset || (!c && !board)) return;
+-        if ((board || (c && isBreadboard(c.metadataId))) && !s.infrastructureMoveEnabled)
+-          throw new Error('보드·빵판 이동 허용 버튼을 켜면 이동할 수 있습니다.');
++        const movement=useStore.getState();
++        if(!canDragComponent({selected:movement.selected===id,armed:movement.moveTarget===id,simulating:s.running,wireMode:movement.wireMode}))
++          throw new Error('오브젝트를 선택한 뒤 이동 활성화 버튼을 켜세요.');
+         let x = position[0] / PX - offset.x,
+           y = position[2] / PX - offset.y;
+         if (c && !isBreadboard(c.metadataId) && !physicalPresentation(c,geometryFor(c))) {
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -86,7 +86,6 @@
+   const [circuitToolsHost,setCircuitToolsHost]=useState<HTMLDivElement|null>(null);
+   const assemblyView = useCircuitinyStore(s => s.viewMode);
+   const cameraLocked = useCircuitinyStore(s => s.cameraLocked);
+-  const infrastructureMoveEnabled = useSimulatorStore(s => s.infrastructureMoveEnabled);
+   const [importReady, setImportReady] = useState(false);
+   const [autoRunAllowed, setAutoRunAllowed] = useState(false);
+   const [simulationUnavailable, setSimulationUnavailable] = useState<string|undefined>();
+@@ -841,13 +840,13 @@
+           }}
+         >
+          <div className={embedded?'ev-circuit-layout':undefined} style={{display:'flex',flexDirection:'column',flex:1,minHeight:0}}>
+-          {embedded&&<section className="ev-circuit-pane-tools" aria-label="회로 도구 영역" data-action-scope="circuit"><div className="ev-pane-heading"><strong>회로</strong><div className="ev-canvas-actions"><button className="ev-add-part" disabled={circuitRunning} onClick={()=>sharedTool('add')}>＋ 부품 추가</button><div className="ev-dimension-switch" role="group" aria-label="회로 표시 방식"><button aria-pressed={infrastructureMoveEnabled} onClick={()=>useSimulatorStore.setState(s=>({infrastructureMoveEnabled:!s.infrastructureMoveEnabled}))}>{infrastructureMoveEnabled?'보드 이동 해제':'보드 이동 허용'}</button><button aria-pressed={assembly3D&&assemblyView==='top'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'top'});}}>2D 보기</button><button aria-pressed={assembly3D&&assemblyView==='iso'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'iso'});}}>3D 보기</button><button onClick={()=>useCircuitinyStore.setState(s=>({fitRevision:s.fitRevision+1}))}>화면 맞춤</button><button aria-pressed={assembly3D&&cameraLocked} disabled={!assembly3D} onClick={()=>useCircuitinyStore.setState(s=>({cameraLocked:!s.cameraLocked}))}>{cameraLocked?'시점 잠금 해제':'시점 잠금'}</button></div></div></div>
++          {embedded&&<section className="ev-circuit-pane-tools" aria-label="회로 도구 영역" data-action-scope="circuit"><div className="ev-pane-heading"><strong>회로</strong><div className="ev-canvas-actions"><button className="ev-add-part" disabled={circuitRunning} onClick={()=>sharedTool('add')}>＋ 부품 추가</button><div className="ev-dimension-switch" role="group" aria-label="회로 표시 방식"><button aria-pressed={assembly3D&&assemblyView==='top'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'top'});}}>2D 보기</button><button aria-pressed={assembly3D&&assemblyView==='iso'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'iso'});}}>3D 보기</button><button onClick={()=>useCircuitinyStore.setState(s=>({fitRevision:s.fitRevision+1}))}>화면 맞춤</button><button aria-pressed={assembly3D&&cameraLocked} disabled={!assembly3D} onClick={()=>useCircuitinyStore.setState(s=>({cameraLocked:!s.cameraLocked}))}>{cameraLocked?'시점 잠금 해제':'시점 잠금'}</button></div></div></div>
+            <div ref={setCircuitToolsHost} className="ev-circuit-edit-tools"/>
+            <div className="ev-circuit-help"><p>배선 끝을 드래그해 연결하세요. 왼쪽 드래그 이동 · 오른쪽 드래그 회전 · 휠 확대/축소</p><EditorMenuBar scope="circuit"/><details className="ev-native-circuit-tools" onToggle={event=>setToolsOpen(event.currentTarget.open)}><summary>추가 회로 도구</summary><div ref={setCanvasHeaderSlot}/></details></div>
+           </section>}
+           <div className={embedded?'ev-circuit-workspace':undefined} style={{ flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 }}>
+             <div className={embedded&&assembly3D?'ev-canvas-engine ev-hidden-2d':'ev-canvas-engine'} aria-hidden={embedded&&assembly3D?true:undefined}>
+-             <SimulatorCanvas autoFit={embedded} headerSlot={embedded || !isMobile ? canvasHeaderSlot : null} />
++             <SimulatorCanvas requireMoveActivation={embedded&&!assembly3D} autoFit={embedded} headerSlot={embedded || !isMobile ? canvasHeaderSlot : null} />
+             </div>
+             {embedded&&assembly3D&&<Suspense fallback={<p style={{padding:24}}>3D 조립 화면 준비 중…</p>}><Assembly3D toolbarHost={circuitToolsHost} onEdit={()=>setAssembly3D(false)}/></Suspense>}
+             {/* Guarded rather than left to `display: none` on the panel: a
+--- a/frontend/src/components/simulator/SimulatorCanvas.tsx
++++ b/frontend/src/components/simulator/SimulatorCanvas.tsx
+@@ -54,6 +54,8 @@
+ import { isBoardComponent, boardPinToNumber } from '../../utils/boardPinMapping';
+ import { isBreadboard } from '../../utils/breadboardNets';
+ import { isInfrastructureDragLocked } from '../../utils/infrastructureMovement';
++import {useStore as useMovementStore} from '../circuitiny/store';
++import {canDragComponent,movementObjectId} from '../circuitiny/objectMovement';
+ import { pickDropSlot } from '../../utils/dropSlot';
+ import { registerEditorCommand } from '../../lib/editorCommands';
+ import {
+@@ -188,9 +190,12 @@
+    */
+   headerSlot?: HTMLElement | null;
+   autoFit?: boolean;
++  requireMoveActivation?:boolean;
+ }
+ 
+-export const SimulatorCanvas = ({ headerSlot, autoFit = false }: SimulatorCanvasProps = {}) => {
++export const SimulatorCanvas = ({ headerSlot, autoFit = false,requireMoveActivation=false }: SimulatorCanvasProps = {}) => {
++  const requireMoveActivationRef=useRef(requireMoveActivation);requireMoveActivationRef.current=requireMoveActivation;
++  const moveTarget=useMovementStore(s=>s.moveTarget);
+   const { t } = useTranslation();
+   const isTouchDevice = useIsCoarsePointer();
+   // Mirror to a ref so the long-lived touch handler effect (deps deliberately
+@@ -553,6 +558,19 @@
+   runningRef.current = running;
+   const interactionRunningRef = useRef(interactionRunning);
+   interactionRunningRef.current = interactionRunning;
++  const selectedObjectId=selectedWireId?null:[...components,...boards].find(p=>p.id===(selectedComponentId||selectedBoardId))?.id||null;
++  useEffect(()=>{
++    if(!requireMoveActivation)return;
++    useMovementStore.getState().select(selectedObjectId);
++    if(interactionRunning||wireInProgress)useMovementStore.setState({moveTarget:null});
++    return()=>{useMovementStore.setState({moveTarget:null});};
++  },[requireMoveActivation,selectedObjectId,interactionRunning,wireInProgress]);
++  function isNativeDragLocked(dragId:string){
++    const state=useSimulatorStore.getState();
++    if(!requireMoveActivationRef.current)return isInfrastructureDragLocked(dragId,state.components,state.infrastructureMoveEnabled);
++    const id=movementObjectId(dragId,state.activeBoardId),movement=useMovementStore.getState();
++    return !canDragComponent({selected:!!id&&movement.selected===id,armed:!!id&&movement.moveTarget===id,simulating:interactionRunningRef.current,wireMode:!!state.wireInProgress});
++  }
+ 
+   // When a run starts the canvas becomes interact-only — drop any edit
+   // selection so leftover wire/segment handles don't linger over the circuit.
+@@ -1083,8 +1101,7 @@
+         // ── Single finger component/board drag ──
+         const world = toWorld(touch.clientX, touch.clientY);
+         const touchId = touchDraggedComponentIdRef.current;
+-        const state = useSimulatorStore.getState();
+-        if (isInfrastructureDragLocked(touchId, state.components, state.infrastructureMoveEnabled)) return;
++        if (isNativeDragLocked(touchId)) return;
+         if (touchId && touchId.startsWith('__board__:')) {
+           const boardId = touchId.slice('__board__:'.length);
+           const nb = {
+@@ -1293,8 +1310,7 @@
+             }
+           }
+         } else if (touchId !== '__board__' && !touchId.startsWith('__board__:') &&
+-          !isInfrastructureDragLocked(touchId, useSimulatorStore.getState().components,
+-            useSimulatorStore.getState().infrastructureMoveEnabled)) {
++          !isNativeDragLocked(touchId)) {
+           // Real touch drag (not a tap) — seat it properly on release,
+           // same as the mouse path.
+           seatDroppedComponentRef.current(touchId);
+@@ -1869,8 +1885,7 @@
+ 
+     // Handle component/board dragging
+     if (draggedComponentId) {
+-      const state = useSimulatorStore.getState();
+-      if (isInfrastructureDragLocked(draggedComponentId, state.components, state.infrastructureMoveEnabled)) return;
++      if (isNativeDragLocked(draggedComponentId)) return;
+       // Drag-to-front: the FIRST movement of a drag raises the item above
+       // everything else on the canvas (boards over parts and parts over
+       // boards, symmetrically — whatever you dragged last wins). Movement,
+@@ -2244,8 +2259,7 @@
+       const start = dragStartPosRef.current;
+       const isClick = posDiff < 5 && timeDiff < 300;
+       if (!isClick && start && draggedComponentId && !draggedComponentId.startsWith('__board__') &&
+-        !isInfrastructureDragLocked(draggedComponentId, useSimulatorStore.getState().components,
+-          useSimulatorStore.getState().infrastructureMoveEnabled)) {
++        !isNativeDragLocked(draggedComponentId)) {
+         // Seat BEFORE recording the move, so undo restores the pre-drag
+         // position in one step instead of leaving the part mid-seat.
+         seatDroppedComponent(draggedComponentId);
+@@ -2930,6 +2944,9 @@
+ 
+   return (
+     <div className="simulator-canvas-container">
++      {requireMoveActivation&&selectedObjectId&&!interactionRunning&&<button type="button" aria-label="선택한 오브젝트 이동 활성화" aria-pressed={moveTarget===selectedObjectId} disabled={!!wireInProgress}
++       style={{position:'absolute',right:18,bottom:64,zIndex:100,padding:'12px 18px',borderRadius:10,border:'1px solid #448766',background:moveTarget===selectedObjectId?'#287b50':'#fff',color:moveTarget===selectedObjectId?'#fff':'#245d40',cursor:'pointer'}}
++       onMouseDown={e=>e.stopPropagation()} onClick={()=>useMovementStore.setState({moveTarget:moveTarget===selectedObjectId?null:selectedObjectId})}>{moveTarget===selectedObjectId?'이동 완료':'이동 활성화'}</button>}
+       {/* ESP32 crash notification */}
+       {esp32CrashBoardId && (
+         <div
+--- a/frontend/src/__tests__/direct-component-drag.test.ts
++++ b/frontend/src/__tests__/direct-component-drag.test.ts
+@@ -2,6 +2,7 @@
+ import * as THREE from 'three';
+ import { canDragComponent, createComponentDrag } from '../components/circuitiny/directComponentDrag';
+ import { useStore } from '../components/circuitiny/store';
++import {movementObjectId} from '../components/circuitiny/objectMovement';
+ 
+ describe('direct component drag', () => {
+   it('treats a click as selection and commits only after movement', () => {
+@@ -22,17 +23,21 @@
+ });
+ 
+ describe('selected part movement mode', () => {
+-  const base = {selected:true, armed:true, simulating:false, wireMode:false, infrastructure:false, infrastructureMoveEnabled:false};
++  const base = {selected:true, armed:true, simulating:false, wireMode:false};
+   it('requires a selected part and explicit activation', () => {
+     expect(canDragComponent(base)).toBe(true);
+     expect(canDragComponent({...base, armed:false})).toBe(false);
+     expect(canDragComponent({...base, selected:false})).toBe(false);
+   });
+-  it('prevents moving during simulation, wiring, and locked infrastructure', () => {
++  it('prevents moving during simulation and wiring', () => {
+     expect(canDragComponent({...base, simulating:true})).toBe(false);
+     expect(canDragComponent({...base, wireMode:true})).toBe(false);
+-    expect(canDragComponent({...base, infrastructure:true})).toBe(false);
+-    expect(canDragComponent({...base, infrastructure:true, infrastructureMoveEnabled:true})).toBe(true);
++  });
++  it('resolves each legacy board handle to its own object activation',()=>{
++    expect(movementObjectId('__board__:U2','U1')).toBe('U2');
++    expect(movementObjectId('__board__','U1')).toBe('U1');
++    expect(movementObjectId('__board__',null)).toBeNull();
++    expect(movementObjectId('structure-1','U1')).toBe('structure-1');
+   });
+   it('keeps activation while clicking the selected part and clears it on another selection', () => {
+     useStore.setState({selected:'D1',moveTarget:'D1'});
+--- a/frontend/src/__tests__/circuitiny-bridge.test.ts
++++ b/frontend/src/__tests__/circuitiny-bridge.test.ts
+@@ -84,6 +84,7 @@
+     const r = useStore.getState().project.components.find((c) => c.instance === 'R1')!;
+     const p = [...r.position!] as [number, number, number];
+     p[0] += 9.6 * PX;
++    useStore.setState({selected:'R1',moveTarget:'R1',wireMode:false});
+     useStore.getState().moveComponent('R1', p);
+     expect(native.getState().components.find((c) => c.id === 'R1')!.x).toBeCloseTo(
+       fixture.components[1].x + 9.6,
+--- a/frontend/src/__tests__/circuitiny-parity.test.ts
++++ b/frontend/src/__tests__/circuitiny-parity.test.ts
+@@ -43,6 +43,7 @@
+ import { getRenderedPoints } from '../utils/wireHitDetection';
+ import { sharedPinSelected, SHARED_PIN_EVENT } from '../components/circuitiny/sharedTools';
+ import { boardSize } from '../utils/boardGeometry';
++import {newStructure} from '../components/circuitiny/structureObjects';
+ import { PartSimulationRegistry } from '../simulation/parts/PartSimulationRegistry';
+ import '../simulation/parts/BasicParts';
+ let dispose = () => {};
+@@ -232,22 +233,26 @@
+   const expected = calculatePinPosition('U1', '5', board.x, board.y, 90, size)!;
+   expect(endpoint('board.5', native.getState()).x).toBeCloseTo(expected.x);
+   const pose = geometryFor(board).position;
+-  native.setState({ infrastructureMoveEnabled: false });
++  native.setState({ infrastructureMoveEnabled: true });
++  useStore.setState({selected:'U1',moveTarget:null,wireMode:false});
+   useStore.getState().moveComponent('U1', [pose[0] + 10 * PX, pose[1], pose[2]]);
+   expect(native.getState().boards[0].x).toBeCloseTo(board.x);
+-  native.setState({ infrastructureMoveEnabled: true });
++  native.setState({ infrastructureMoveEnabled: false });
++  useStore.setState({selected:'U1',moveTarget:'U1'});
+   useStore.getState().moveComponent('U1', [pose[0] + 10 * PX, pose[1], pose[2]]);
+   expect(native.getState().boards[0].x).toBeCloseTo(board.x + 10);
+   native.setState({ infrastructureMoveEnabled: false });
+ });
+-it('locks breadboard position until enabled, then moves seated parts and supports undo', () => {
++it('requires breadboard activation, then moves seated parts and supports undo', () => {
+   const before = structuredClone({ components:native.getState().components, wires:native.getState().wires });
+   const bb = native.getState().components.find(c => c.id === 'BB1')!;
+   const pose = geometryFor(bb).position;
+-  native.setState({ infrastructureMoveEnabled:false });
++  native.setState({ infrastructureMoveEnabled:true });
++  useStore.setState({selected:'BB1',moveTarget:null,wireMode:false});
+   useStore.getState().moveComponent('BB1', [pose[0] + 10 * PX, pose[1], pose[2]]);
+   expect(native.getState().components).toEqual(before.components);
+-  native.setState({ infrastructureMoveEnabled:true });
++  native.setState({ infrastructureMoveEnabled:false });
++  useStore.setState({selected:'BB1',moveTarget:'BB1'});
+   useStore.getState().moveComponent('BB1', [pose[0] + 10 * PX, pose[1], pose[2]]);
+   for (const id of ['BB1','R1','D1']) {
+     expect(native.getState().components.find(c => c.id === id)!.x)
+@@ -257,6 +262,20 @@
+   expect(native.getState().components).toEqual(before.components);
+   expect(native.getState().wires).toEqual(before.wires);
+   native.setState({ infrastructureMoveEnabled:false });
++});
++it('keeps structures and ordinary parts fixed until that exact selection is armed',()=>{
++  const object=newStructure('box',300,120);native.getState().recordAddComponent(object);
++  useStore.setState({wireMode:false,moveTarget:null,selected:null});
++  for(const id of [object.id,'R1']){
++    const item=native.getState().components.find(p=>p.id===id)!,before=item.x;
++    const pose=geometryFor(item).position,next:[number,number,number]=[pose[0]+8*PX,pose[1],pose[2]];
++    useStore.setState({selected:id,moveTarget:null});useStore.getState().moveComponent(id,next);
++    expect(native.getState().components.find(p=>p.id===id)!.x).toBe(before);
++    useStore.setState({moveTarget:'another-object'});useStore.getState().moveComponent(id,next);
++    expect(native.getState().components.find(p=>p.id===id)!.x).toBe(before);
++    useStore.setState({moveTarget:id});useStore.getState().moveComponent(id,next);
++    expect(native.getState().components.find(p=>p.id===id)!.x).not.toBe(before);
++  }
+ });
+ it('copies native properties and makes component paste undoable', () => {
+   propertyChange('R1', 'value', '1000');
+--- a/frontend/src/__tests__/structure-objects.test.ts
++++ b/frontend/src/__tests__/structure-objects.test.ts
+@@ -38,6 +38,6 @@
+     expect(object.metadataId).toBe(STRUCTURE_ID);
+   });
+   it('clamps imported or malformed visual values',()=>{
+-    expect(structureParameters({width:Infinity,height:-1,depth:99999,color:'url(x)',elevation:-4})).toMatchObject({width:40,height:2,depth:500,color:'#829aaf',elevation:0});
++    expect(structureParameters({width:Infinity,height:-1,depth:99999,color:'url(x)',elevation:-4})).toMatchObject({width:40,height:2,depth:500,color:'#829aaf',elevation:-4});
+   });
+ });
+--- /dev/null
++++ b/frontend/src/components/circuitiny/objectMovement.ts
+@@ -0,0 +1,7 @@
++/** Selection alone never enables movement. The activation is per object. */
++export function canDragComponent(options:{selected:boolean;armed:boolean;simulating:boolean;wireMode:boolean}){
++ return options.selected&&options.armed&&!options.simulating&&!options.wireMode;
++}
++export function movementObjectId(id:string,activeBoardId:string|null|undefined){
++ return id==='__board__'?activeBoardId||null:id.startsWith('__board__:')?id.slice('__board__:'.length):id;
++}

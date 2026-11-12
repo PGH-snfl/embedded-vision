@@ -1,0 +1,345 @@
+--- a/frontend/index.html
++++ b/frontend/index.html
+@@ -339,7 +339,7 @@
+         if (s) s.style.display = 'flex';
+       }
+     </script>
+-    <div id="root"></div>
++    <div id="root"><p role="status" style="margin:32px;font:14px system-ui,sans-serif;color:#587064">편집기 프로그램을 불러오고 있습니다…</p></div>
+     <!--
+       Static pre-rendered content for search engine crawlers.
+       Hidden from users via CSS; React app renders in #root above.
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -12,7 +12,8 @@
+ import {translatedSimulationNotice} from './translatedSimulationNotice';
+ import {withLegacyPhysicalModels} from './circuitiny/physicalModels';
+ import {withPhotoStructures} from './circuitiny/photoStructures';
+-import {withAssembly} from './circuitiny/assemblyPlanner';
++import {requestAssembly} from './circuitiny/assemblyClient';
++import {assemblyRoutingCache} from './circuitiny/assemblyRoutingCache';
+ 
+ export function EmbeddedVisionBridge({onReady,actions}:{onReady?:(ready:boolean,restored:boolean,simulationNotice?:string)=>void;actions?:ReactNode}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+@@ -31,10 +32,16 @@
+  useEffect(()=>{
+   const encoded=new URLSearchParams(location.hash.slice(1)).get('project');
+   if(!encoded)return;
+-  let cancelled=false,unsub1=()=>{},unsub2=()=>{},flush=()=>{},timer:ReturnType<typeof setTimeout>,receiveRevision=(_e:MessageEvent)=>{};
++  const assemblyAbort=new AbortController();
++  let cancelled=false,loadOrigin='',unsub1=()=>{},unsub2=()=>{},flush=()=>{},timer:ReturnType<typeof setTimeout>,receiveRevision=(_e:MessageEvent)=>{};
++  const progress=(text:string,phase='loading')=>{
++   if(cancelled)return;setMessage(text);
++   try{const channel=new URLSearchParams(location.search).get('channel');if(window.parent!==window&&/^[a-f0-9]{32,128}$/i.test(channel||'')&&new URL(document.referrer).origin===loadOrigin)window.parent.postMessage({type:'ev:editor-status',channel,phase,message:text},loadOrigin);}catch{/* standalone editor */}
++  };
+   (async()=>{
+    const original=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded),c=>c.charCodeAt(0))));
+    const source=original.embeddedVision;
++   loadOrigin=source?.analysis_origin||'';progress('저장된 회로를 확인하고 있습니다…');
+    const motion=new URLSearchParams(location.search).get('motion')==='1';
+    if(original.format!=='velxio-project'||!source?.source_graph_sha256)throw new Error('사진 분석에서 내보낸 회로 파일이 아닙니다.');
+    const storageKey='embedded-velxio:'+(hostedWorkspace()?'workspace:'+hostedWorkspace()+':':'')+source.source_graph_sha256+':'+source.inventory_plan+':'+(source.recipe||'legacy')+':'+(source.function_version||'legacy')+':'+(source.assembly?.layout_version||'legacy')+(source.translation_instance?':translation:'+source.translation_instance:'');
+@@ -58,9 +65,13 @@
+    if(motion)payload=ensureRobotCode(payload,source);
+    payload=withLegacyPhysicalModels(payload);
+    payload=withPhotoStructures(payload,original);
+-   payload=withAssembly({...payload,embeddedVision:{...payload.embeddedVision,photo_structure:source.photo_structure}});
++   progress('차체 내부 배치와 배선을 계산하고 있습니다…');
++   const assembly=await requestAssembly({mode:'initial',project:{...payload,embeddedVision:{...payload.embeddedVision,photo_structure:source.photo_structure}}},{signal:assemblyAbort.signal});
++   if(cancelled)return;payload=assembly.project;
++   if(assembly.routing)assemblyRoutingCache.seed([...payload.components,...payload.boards],payload.wires,assembly.routing);
+    if(payload.embeddedVision?.assembly)source.assembly=payload.embeddedVision.assembly;
+    if(payload.embeddedVision?.structure_completion)source.structure_completion=payload.embeddedVision.structure_completion;
++   progress('회로와 3D 화면을 준비하고 있습니다…');
+    await importVlxFile(new File([JSON.stringify(payload)],'embedded.vlx',{type:'application/json'}));
+    if(cancelled)return;
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+@@ -71,11 +82,12 @@
+    setBehavior(initialSimulationBehavior(source));
+    setReturnUrl(analysisReturnUrl(hostedWorkspace(),source.analysis_origin));
+    setNotice(source.simulation_notice||'');
+-   setMessage(restored?'저장한 편집 내용을 복원했습니다.':'사진에서 확인한 부품으로 새로 구성한 회로를 가져왔습니다.');
++   progress(restored?'저장한 편집 내용을 복원했습니다.':'사진에서 확인한 부품으로 새로 구성한 회로를 가져왔습니다.','ready');
+    flush=()=>{if(resetting.current)return;try{
+      const data=buildVlxPayload({name:original.name});
+      localStorage.setItem(storageKey,JSON.stringify({...data,embeddedVision:source}));
+     }catch{setFailed(true);setMessage('자동 저장에 실패했습니다. 파일 → Export .vlx로 저장하세요.');}};
++   flush();
+    const save=()=>{clearTimeout(timer);timer=setTimeout(flush,200);};
+    if(motion){receiveRevision=(event:MessageEvent)=>{
+     const revision=acceptedMotionRevision({search:location.search,referrer:document.referrer,eventOrigin:event.origin,fromParent:event.source===window.parent,data:event.data,source});
+@@ -86,8 +98,8 @@
+    window.addEventListener('pagehide',flush);
+    unsub1=useSimulatorStore.subscribe((s,p)=>{if(s.components!==p.components||s.wires!==p.wires||JSON.stringify(s.boards.map(b=>[b.id,b.x,b.y,b.rotation,b.boardKind,b.name,b.activeFileGroupId]))!==JSON.stringify(p.boards.map(b=>[b.id,b.x,b.y,b.rotation,b.boardKind,b.name,b.activeFileGroupId])))save();});
+    unsub2=useEditorStore.subscribe((s,p)=>{if(s.fileGroups!==p.fileGroups)save();});
+-  })().catch(e=>{setFailed(true);setMessage('가져오기 실패: '+String(e));});
+-  return()=>{cancelled=true;unsub1();unsub2();clearTimeout(timer);window.removeEventListener('pagehide',flush);window.removeEventListener('message',receiveRevision);setMotionSource(undefined);};
++  })().catch(e=>{if(cancelled||e?.name==='AbortError')return;setFailed(true);progress('가져오기 실패: '+String(e),'error');});
++  return()=>{cancelled=true;assemblyAbort.abort();unsub1();unsub2();clearTimeout(timer);window.removeEventListener('pagehide',flush);window.removeEventListener('message',receiveRevision);setMotionSource(undefined);};
+  },[]);
+  return <header className="ev-topbar">
+   <div className="ev-project">
+@@ -110,5 +122,6 @@
+   </div>
+   {actions&&<div className="ev-project-toolbar" role="group" aria-label="회로·코드 공통 도구" data-action-scope="project">{actions}</div>}
+   {failed&&<p className="ev-import-error" role="alert">{message}</p>}
++  {!key&&!failed&&<p role="status" aria-live="polite">{message}</p>}
+  </header>;
+ }
+--- a/frontend/src/components/circuitiny/assemblyRouting.ts
++++ b/frontend/src/components/circuitiny/assemblyRouting.ts
+@@ -1,4 +1,5 @@
+ import {type V,type Box,plus,minus,segmentHits,distance,pathLength,simplify} from './assemblyGeometry';
++import {RouteQueue} from './routeQueue';
+ export type CableRoute={points:V[];lengthMm:number;clear:boolean;reason?:string;binding?:boolean};
+ const orders=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+ const clearPath=(p:V[],obstacles:Box[])=>p.slice(1).every((b,i)=>!obstacles.some(o=>segmentHits(p[i],b,o,1.2)));
+@@ -29,15 +30,17 @@
+   const coords=[0,1,2].map(axis=>[...new Set([aa[axis],bb[axis],...obstacles.flatMap(o=>[o.min[axis]-3,o.max[axis]+3])].map(x=>Math.round(x*100)/100))].sort((a,b)=>a-b));
+   const ix=(p:V)=>p.map((n,i)=>coords[i].indexOf(Math.round(n*100)/100));
+   const start=ix(aa),end=ix(bb),key=(n:number[])=>n.join(','),point=(n:number[])=>n.map((v,i)=>coords[i][v]) as V;
+-  const open=[{n:start,g:0,f:distance(aa,bb),dir:-1}],scores=new Map([[key(start),0]]),parents=new Map<string,string>(),nodes=new Map([[key(start),start]]);
++  const open=new RouteQueue<{n:number[];g:number;f:number;dir:number}>();open.push({n:start,g:0,f:distance(aa,bb),dir:-1});
++  const scores=new Map([[key(start),0]]),parents=new Map<string,string>(),nodes=new Map([[key(start),start]]),endKey=key(end);
+   let visited=0,goal='';
+   while(open.length&&visited++<14000){
+-   open.sort((x,y)=>y.f-x.f);const current=open.pop()!,ck=key(current.n);
++   const current=open.pop()!,ck=key(current.n);
+    if(current.g>(scores.get(ck)??Infinity))continue;
+-   if(ck===key(end)){goal=ck;break;}
++   if(ck===endKey){goal=ck;break;}
++   const p=point(current.n);
+    for(let axis=0;axis<3;axis++)for(const sign of [-1,1]){
+     const n=[...current.n];n[axis]+=sign;if(n[axis]<0||n[axis]>=coords[axis].length)continue;
+-    const p=point(current.n),q=point(n);if(!clearPath([p,q],obstacles))continue;
++    const q=point(n);if(!clearPath([p,q],obstacles))continue;
+     const nk=key(n),g=current.g+distance(p,q)+(current.dir!==-1&&current.dir!==axis?2:0);
+     if(g>=(scores.get(nk)??Infinity))continue;scores.set(nk,g);parents.set(nk,ck);nodes.set(nk,n);open.push({n,g,f:g+Math.abs(q[0]-bb[0])+Math.abs(q[1]-bb[1])+Math.abs(q[2]-bb[2]),dir:axis});
+    }
+--- a/frontend/src/components/circuitiny/assemblyPlanner.ts
++++ b/frontend/src/components/circuitiny/assemblyPlanner.ts
+@@ -137,10 +137,14 @@
+   return {...p,x:old.x,y:old.y,properties};});
+  return {...project,components:restore(project.components||[]),boards:restore(project.boards||[]),embeddedVision:{...project.embeddedVision,assembly:{version:ASSEMBLY_VERSION,status:'USER_RESTORED'}}};
+ }
++export function needsAssembly(project:any){
++ if(!['raspberry_pi_2wd_robot','translated_pi_rover_c','translated_uno_motor_shield_rover'].includes(project.embeddedVision?.recipe)||!project.components?.some((p:any)=>p.metadataId==='ev-structure'))return false;
++ if(project.embeddedVision?.assembly?.status==='USER_RESTORED')return false;
++ // An undo, deletion or deliberate rearrangement must survive reopening.
++ return !(project.embeddedVision?.assembly?.version===ASSEMBLY_VERSION&&project.embeddedVision.assembly.recipe===project.embeddedVision.recipe&&project.embeddedVision.assembly.status==='INFERRED');
++}
+ export function withAssembly(project:any){
+- if(project.embeddedVision?.assembly?.status==='USER_RESTORED')return project;
+- // An undo, deletion or deliberate rearrangement must survive reopening.
+- if(project.embeddedVision?.assembly?.version===ASSEMBLY_VERSION&&project.embeddedVision.assembly.recipe===project.embeddedVision.recipe&&project.embeddedVision.assembly.status==='INFERRED')return project;
++ if(!needsAssembly(project))return project;
+  const result=proposeAssembly(project);
+  if(!result.changed&&!result.error)return project;
+  return result.changed?result.project:{...project,embeddedVision:{...project.embeddedVision,assembly:{version:ASSEMBLY_VERSION,status:'UNKNOWN',error:result.error||'사진 구조에 장착할 수 있는 지원 모델이 없습니다.'}}};
+--- a/frontend/src/components/circuitiny/bridge.ts
++++ b/frontend/src/components/circuitiny/bridge.ts
+@@ -6,7 +6,7 @@
+ import { geometryFor } from './geometry';
+ import {physicalPresentation} from './physicalModels';
+ import {mountedPose,rotate} from './assemblyGeometry';
+-import {routeAssembly} from './assemblyPlanner';
++import {assemblyRoutingCache} from './assemblyRoutingCache';
+ import { ComponentRegistry } from '../../services/ComponentRegistry';
+ import { resolvePin } from './project/pins';
+ import { getRenderedPoints } from '../../utils/wireHitDetection';
+@@ -166,7 +166,7 @@
+     };
+   });
+   if([...s.components,...s.boards].some(p=>p.properties?.evAssembly)){
+-    const routing=routeAssembly([...s.components,...s.boards],s.wires);
++    const routing=assemblyRoutingCache.get([...s.components,...s.boards],s.wires);
+     project.nets=project.nets.map(n=>({...n,physicalRoute:true,connectorBinding:routing.routes[n.id]?.binding,routeBlocked:!routing.routes[n.id]?.clear,
+       route:routing.routes[n.id]?.points.map(p=>p.map(x=>x/1000) as [number,number,number])||[]}));
+     useStore.setState({assemblyRouting:routing});
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -19,7 +19,9 @@
+ import { isBreadboard } from '../../utils/breadboardNets';
+ import { STRUCTURE_ID, newStructure, structureParameters, type StructureShape } from './structureObjects';
+ import {physicalModelFor} from './physicalModels';
+-import {proposeAssembly,restoreAssembly} from './assemblyPlanner';
++import {restoreAssembly} from './assemblyPlanner';
++import {requestAssembly} from './assemblyClient';
++import {assemblyRoutingCache} from './assemblyRoutingCache';
+ import {getMotionSource} from '../embeddedMotionBridge';
+ import {buildVlxPayload} from '../../utils/vlxFile';
+ import {
+@@ -45,6 +47,9 @@
+   const hoverPreview = useBreadboardHoverPreview();
+   const [guide] = useState(() => guideSteps(window.location.hash));
+   const [guideOpen, setGuideOpen] = useState(false);
++  const [optimizing,setOptimizing]=useState(false);
++  const optimizer=useRef<AbortController|null>(null);
++  useEffect(()=>()=>optimizer.current?.abort(),[]);
+   const [guideIndex, setGuideIndex] = useState(0);
+   const [guideFocusRevision, setGuideFocusRevision] = useState(0);
+   const guidePanel = useRef<HTMLElement>(null);
+@@ -85,13 +90,24 @@
+   const photoObjects=components.filter(c=>c.metadataId===STRUCTURE_ID&&c.properties?.evPhotoStructure);
+   const assemblyRouting=useStore(s=>s.assemblyRouting),interiorView=useStore(s=>s.interiorView);
+   const mounted=[...components,...boards].filter(p=>p.properties?.evAssembly);
+-  const optimizeAssembly=()=>{
+-   if(running)return;
+-   const result=proposeAssembly({...buildVlxPayload({name:'차체 내부 배치'}),embeddedVision:getMotionSource()});
++  const optimizeAssembly=async()=>{
++   if(running||optimizing)return;
++   const snapshot={...buildVlxPayload({name:'차체 내부 배치'}),embeddedVision:getMotionSource()};
++   const input=JSON.stringify([snapshot.components,snapshot.boards,snapshot.wires]);
++   const sourceInput=JSON.stringify(snapshot.embeddedVision);
++   const abort=new AbortController();optimizer.current=abort;setOptimizing(true);
++   useStore.setState({message:'화면을 유지하며 배치·배선을 계산하고 있습니다…'});
++   try{
++   const result=await requestAssembly({mode:'optimize',project:snapshot},{signal:abort.signal});
++   const current=buildVlxPayload({});
++   if(native.getState().running||sourceInput!==JSON.stringify(getMotionSource())||input!==JSON.stringify([current.components,current.boards,current.wires])){useStore.setState({message:'계산 중 회로가 변경되어 결과를 적용하지 않았습니다. 다시 최적화해 주세요.'});return;}
+    if(!result.changed){useStore.setState({message:result.error||'배치할 구조물과 부품을 확인하세요.'});return;}
+    const source=getMotionSource();if(source){source.assembly=result.project.embeddedVision.assembly;if(result.project.embeddedVision.structure_completion)source.structure_completion=result.project.embeddedVision.structure_completion;}
++   if(result.routing)assemblyRoutingCache.seed([...result.project.components,...result.project.boards],result.project.wires,result.routing);
+    atomic('구조 내부 배치·배선 계산',()=>native.setState({components:result.project.components,boards:result.project.boards}));
+    useStore.setState(s=>({fitRevision:s.fitRevision+1,message:'부품을 차체에 배치하고 배선 경로를 갱신했습니다. 실제 장착 치수는 확인이 필요합니다.'}));
++   }catch(error){if(!abort.signal.aborted)useStore.setState({message:error instanceof Error?error.message:String(error)});}
++   finally{if(!abort.signal.aborted)setOptimizing(false);}
+   };
+   const restoreLayout=()=>{
+    const result=restoreAssembly({...buildVlxPayload({name:'차체 내부 배치'}),embeddedVision:getMotionSource()});
+@@ -199,7 +215,7 @@
+           <button disabled={running} onClick={()=>addStructure('cylinder')}>원통 추가</button>
+           <small>전기 연결이 없는 가상 구조물입니다.</small>
+         </div></details>
+-        {photoObjects.length>0&&<><button disabled={running} onClick={optimizeAssembly}>배치·배선 최적화</button><button aria-pressed={interiorView} onClick={()=>useStore.setState({interiorView:!interiorView})}>{interiorView?'내부 보기 켜짐':'내부 보기'}</button>{mounted.length>0&&<button disabled={running} onClick={restoreLayout}>이전 배치 복원</button>}</>}
++        {photoObjects.length>0&&<><button disabled={running||optimizing} onClick={optimizeAssembly}>{optimizing?'배치·배선 계산 중…':'배치·배선 최적화'}</button><button aria-pressed={interiorView} onClick={()=>useStore.setState({interiorView:!interiorView})}>{interiorView?'내부 보기 켜짐':'내부 보기'}</button>{mounted.length>0&&<button disabled={running} onClick={restoreLayout}>이전 배치 복원</button>}</>}
+         {designedObjects.length>0&&<details className="ev-c3d-more"><summary>설계 보완 {designedObjects.length}개</summary><div><small>반대편·하부까지 완성한 새 설계 · 원본 형상 미확인</small>{designedObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
+         {mounted.length>0&&<details className="ev-c3d-more"><summary>장착 부품 {mounted.length}개</summary><div>{mounted.map(p=><button key={p.id} onClick={()=>useStore.getState().select(p.id)}>{p.id} · {String(p.properties?.evRoverLabel||('name' in p?p.name:'시스템 부품'))}</button>)}</div></details>}
+         {assemblyRouting&&<details className="ev-c3d-more"><summary>배치·배선 결과</summary><p>케이블 경로 합계 {(assemblyRouting.wireLengthMm/1000).toFixed(2)} m · 경로 미해결 {assemblyRouting.unresolved.length}개</p>{assemblyRouting.unresolved.map(e=><p key={e.id}>{e.id}: {e.reason}</p>)}<p>표시 치수에서 계산한 경로입니다. 실제 절단 길이·고정 홀·케이스 인출구는 확인이 필요합니다.</p></details>}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/routeQueue.ts
+@@ -0,0 +1,20 @@
++/** Lowest cost first; equal scores keep the router's existing newest-first tie. */
++export class RouteQueue<T extends {f:number}>{
++ private heap:Array<{value:T;order:number}>=[];
++ private serial=0;
++ get length(){return this.heap.length;}
++ private earlier(a:{value:T;order:number},b:{value:T;order:number}){return a.value.f<b.value.f||(a.value.f===b.value.f&&a.order>b.order);}
++ push(value:T){
++  const entry={value,order:this.serial++},heap=this.heap;heap.push(entry);let i=heap.length-1;
++  while(i>0){const parent=(i-1)>>1;if(!this.earlier(entry,heap[parent]))break;heap[i]=heap[parent];i=parent;}heap[i]=entry;
++ }
++ pop():T|undefined{
++  const heap=this.heap;if(!heap.length)return;
++  const result=heap[0],tail=heap.pop()!;
++  if(heap.length){let i=0;
++   while(true){const left=i*2+1;if(left>=heap.length)break;const right=left+1,best=right<heap.length&&this.earlier(heap[right],heap[left])?right:left;
++    if(!this.earlier(heap[best],tail))break;heap[i]=heap[best];i=best;
++   }heap[i]=tail;
++  }return result.value;
++ }
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assemblyTask.ts
+@@ -0,0 +1,9 @@
++import {proposeAssembly,withAssembly,routeAssembly} from './assemblyPlanner';
++export type AssemblyTask={mode:'initial'|'optimize';project:any};
++export function computeAssembly(task:AssemblyTask){
++ const result=task.mode==='initial'?{project:withAssembly(task.project),changed:true}:proposeAssembly(task.project);
++ // Warm the first displayed routing result in the worker as well.
++ const project=result.project,parts=[...(project.components||[]),...(project.boards||[])];
++ const routing=parts.some(p=>p.properties?.evAssembly)?routeAssembly(parts,project.wires||[]):undefined;
++ return {...result,routing};
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assembly.worker.ts
+@@ -0,0 +1,5 @@
++import {computeAssembly,type AssemblyTask} from './assemblyTask';
++self.onmessage=(event:MessageEvent<AssemblyTask>)=>{
++ try{self.postMessage({result:computeAssembly(event.data)});}
++ catch(error){self.postMessage({error:error instanceof Error?error.message:'배치·배선 계산에 실패했습니다.'});}
++};
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assemblyClient.ts
+@@ -0,0 +1,19 @@
++import {needsAssembly} from './assemblyPlanner';
++import type {AssemblyTask,computeAssembly} from './assemblyTask';
++export type AssemblyResult=ReturnType<typeof computeAssembly>;
++export function requestAssembly(task:AssemblyTask,options:{signal?:AbortSignal;workerFactory?:()=>Worker;timeoutMs?:number}={}):Promise<AssemblyResult>{
++ if(options.signal?.aborted)return Promise.reject(new DOMException('취소되었습니다.','AbortError'));
++ if(task.mode==='initial'&&!needsAssembly(task.project))return Promise.resolve({project:task.project,changed:false,routing:undefined});
++ return new Promise((resolve,reject)=>{
++  let worker:Worker;
++  try{worker=options.workerFactory?options.workerFactory():new Worker(new URL('./assembly.worker.ts',import.meta.url),{type:'module'});}
++  catch{reject(new Error('배치 계산 작업을 시작하지 못했습니다. 브라우저의 Worker 지원을 확인하세요.'));return;}
++  const cleanup=()=>{clearTimeout(timer);options.signal?.removeEventListener('abort',abort);worker.terminate();};
++  const abort=()=>{cleanup();reject(new DOMException('취소되었습니다.','AbortError'));};
++  const timer=setTimeout(()=>{cleanup();reject(new Error('배치 계산 시간이 초과되었습니다. 다시 열거나 구조물 크기를 확인하세요.'));},options.timeoutMs??45000);
++  worker.onmessage=event=>{cleanup();if(event.data?.error)reject(new Error(String(event.data.error)));else if(event.data?.result)resolve(event.data.result);else reject(new Error('배치 계산 결과를 읽을 수 없습니다.'));};
++  worker.onerror=()=>{cleanup();reject(new Error('배치 계산 작업이 중단되었습니다. 다시 열어 주세요.'));};
++  options.signal?.addEventListener('abort',abort,{once:true});
++  try{worker.postMessage(task);}catch(error){cleanup();reject(error);}
++ });
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/assemblyRoutingCache.ts
+@@ -0,0 +1,10 @@
++import {routeAssembly} from './assemblyPlanner';
++type Routing=ReturnType<typeof routeAssembly>;
++/** Complete part state is intentional: even in-place geometry edits invalidate. */
++const keyFor=(parts:any[],wires:any[])=>JSON.stringify([parts,wires.map(w=>[w.id,w.start.componentId,w.start.pinName,w.end.componentId,w.end.pinName])]);
++export function createAssemblyRoutingCache(compute=routeAssembly){
++ const cache=new Map<string,Routing>();
++ const seed=(parts:any[],wires:any[],value:Routing)=>{const key=keyFor(parts,wires);cache.delete(key);cache.set(key,value);if(cache.size>2)cache.delete(cache.keys().next().value!);return value;};
++ return {seed,get(parts:any[],wires:any[]){const key=keyFor(parts,wires),saved=cache.get(key);return saved||seed(parts,wires,compute(parts,wires));}};
++}
++export const assemblyRoutingCache=createAssemblyRoutingCache();
+--- /dev/null
++++ b/frontend/src/__tests__/assembly-loading.test.ts
+@@ -0,0 +1,46 @@
++import {describe,it,expect,vi} from 'vitest';
++import {RouteQueue} from '../components/circuitiny/routeQueue';
++import {requestAssembly} from '../components/circuitiny/assemblyClient';
++import {createAssemblyRoutingCache} from '../components/circuitiny/assemblyRoutingCache';
++import {ASSEMBLY_VERSION} from '../components/circuitiny/assemblyPlanner';
++
++const project=()=>({components:[{id:'base',metadataId:'ev-structure'}],boards:[],wires:[],embeddedVision:{recipe:'raspberry_pi_2wd_robot'}});
++function harness(){const worker={postMessage:vi.fn(),terminate:vi.fn(),onmessage:null as any,onerror:null as any};return {worker,workerFactory:()=>worker as unknown as Worker};}
++describe('responsive assembly loading',()=>{
++ it('finishes background work and releases its worker',async()=>{
++  const h=harness(),p=project(),pending=requestAssembly({mode:'initial',project:p},h);
++  expect(h.worker.postMessage).toHaveBeenCalledOnce();const result={project:p,changed:true};h.worker.onmessage({data:{result}});
++  expect(await pending).toBe(result);expect(h.worker.terminate).toHaveBeenCalledOnce();
++ });
++ it('reuses a saved layout without starting any computation',async()=>{
++  const p:any=project();p.embeddedVision.assembly={version:ASSEMBLY_VERSION,recipe:p.embeddedVision.recipe,status:'INFERRED'};
++  const workerFactory=vi.fn();const result=await requestAssembly({mode:'initial',project:p},{workerFactory});
++  expect(result.project).toBe(p);expect(workerFactory).not.toHaveBeenCalled();
++ });
++ it('cancels work when the view closes and surfaces worker failures',async()=>{
++  const a=harness(),abort=new AbortController(),pending=requestAssembly({mode:'initial',project:project()},{...a,signal:abort.signal});
++  abort.abort();await expect(pending).rejects.toMatchObject({name:'AbortError'});expect(a.worker.terminate).toHaveBeenCalledOnce();
++  const b=harness(),failed=requestAssembly({mode:'initial',project:project()},b);b.worker.onerror();await expect(failed).rejects.toThrow('중단');expect(b.worker.terminate).toHaveBeenCalledOnce();
++ });
++ it('does not leave a failed worker waiting forever',async()=>{
++  vi.useFakeTimers();try{const h=harness(),pending=requestAssembly({mode:'initial',project:project()},{...h,timeoutMs:100});
++   const check=expect(pending).rejects.toThrow('초과');await vi.advanceTimersByTimeAsync(100);await check;expect(h.worker.terminate).toHaveBeenCalledOnce();
++  }finally{vi.useRealTimers();}
++ });
++});
++describe('routing result reuse',()=>{
++ it('uses warmed paths, ignores wire color and recalculates for moved pins or structures',()=>{
++  const value={routes:{},wireLengthMm:0,unresolved:[]},compute=vi.fn(()=>value),cache=createAssemblyRoutingCache(compute);
++  const parts=[{id:'a',x:0,properties:{elevation:0}}],wires=[{id:'w',start:{componentId:'a',pinName:'1'},end:{componentId:'b',pinName:'2'},color:'red'}];
++  cache.seed(parts,wires,value);expect(cache.get(structuredClone(parts),wires)).toBe(value);expect(compute).not.toHaveBeenCalled();
++  wires[0].color='blue';cache.get(parts,wires);expect(compute).not.toHaveBeenCalled();
++  parts[0].properties.elevation=10;cache.get(parts,wires);expect(compute).toHaveBeenCalledTimes(1);
++  wires[0].end.pinName='3';cache.get(parts,wires);expect(compute).toHaveBeenCalledTimes(2);
++ });
++});
++describe('routing priority queue',()=>{
++ it('takes the lowest cost and preserves deterministic newest-first ties under interleaved work',()=>{
++  const q=new RouteQueue<{f:number;id:string}>();q.push({f:4,id:'slow'});q.push({f:1,id:'first'});q.push({f:1,id:'newest'});
++  expect(q.pop()?.id).toBe('newest');q.push({f:0,id:'urgent'});expect(q.pop()?.id).toBe('urgent');expect(q.pop()?.id).toBe('first');expect(q.pop()?.id).toBe('slow');expect(q.pop()).toBeUndefined();
++ });
++});

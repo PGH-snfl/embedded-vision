@@ -1,0 +1,907 @@
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -12,6 +12,7 @@
+ import {translatedSimulationNotice} from './translatedSimulationNotice';
+ import {withLegacyPhysicalModels} from './circuitiny/physicalModels';
+ import {withPhotoStructures} from './circuitiny/photoStructures';
++import {withFunctionalEnvironment} from './circuitiny/environmentObjects';
+ import {requestAssembly} from './circuitiny/assemblyClient';
+ import {assemblyRoutingCache} from './circuitiny/assemblyRoutingCache';
+ 
+@@ -65,6 +66,8 @@
+    if(motion)payload=ensureRobotCode(payload,source);
+    payload=withLegacyPhysicalModels(payload);
+    payload=withPhotoStructures(payload,original);
++   payload=withFunctionalEnvironment(payload);
++   if(payload.embeddedVision?.environment_design_version)source.environment_design_version=payload.embeddedVision.environment_design_version;
+    progress('차체 내부 배치와 배선을 계산하고 있습니다…');
+    const assembly=await requestAssembly({mode:'initial',project:{...payload,embeddedVision:{...payload.embeddedVision,photo_structure:source.photo_structure}}},{signal:assemblyAbort.signal});
+    if(cancelled)return;payload=assembly.project;
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -1,6 +1,7 @@
+ import { sharedTool } from '../components/circuitiny/sharedTools';
+ import { useStore as useCircuitinyStore } from '../components/circuitiny/store';
+ import { EmbeddedVisionBridge } from '../components/EmbeddedVisionBridge';
++import {EnvironmentRuntime} from '../components/circuitiny/EnvironmentRuntime';
+ import { EmbeddedRobotCode } from '../components/EmbeddedRobotCode';
+ import { EmbeddedSystemConversion } from '../components/EmbeddedCodeTranslation';
+ /**
+@@ -602,6 +603,7 @@
+ 
+   return (
+     <div className={embedded ? `app embedded-workbench ev-side-tools${toolsOpen?' ev-tools-open':''}` : 'app'}>
++      <EnvironmentRuntime/>
+       {embedded ? <>
+        <EmbeddedVisionBridge onReady={(ready,restored,simulationNotice)=>{setSimulationUnavailable(simulationNotice);setAutoRunAllowed(ready&&!restored&&!simulationNotice);setImportReady(ready);}} actions={<>
+         <div className="ev-shared-actions">
+--- a/frontend/src/components/circuitiny/SelectionCard.css
++++ b/frontend/src/components/circuitiny/SelectionCard.css
+@@ -25,4 +25,5 @@
+ .ev-selection-card-content details{margin:8px 0;padding-top:6px;border-top:1px solid #e2e9e4}
+ .ev-selection-card-content summary{cursor:pointer;font-size:10px}
+ .ev-selection-card.with-local-tools{top:70px;max-height:calc(100% - 82px)}
++.ev-environment-actions{display:grid;gap:6px}.ev-water-reading{display:grid;gap:3px;padding:8px;border-radius:7px;background:#eaf6fb;color:#26576b;font-size:11px}.ev-water-reading small{color:#a44d25}.ev-water-buttons{display:flex;gap:4px;flex-wrap:wrap}.ev-water-buttons button{flex:1;padding:6px;border:1px solid #c8dde6;border-radius:6px;background:#f4fafc;color:#26576b;font-size:10px;cursor:pointer}.ev-environment-actions>small{font-size:10px;color:#778780}.ev-environment-fields select{display:block;width:100%;padding:6px;border:1px solid #d3dfd7;border-radius:5px;color:inherit;background:#fff;font:inherit}.ev-environment-fields input[type=checkbox]{display:inline;width:auto;margin-right:5px}
+ @media(max-width:700px){.ev-selection-card{top:8px;right:8px;width:min(212px,calc(100% - 16px));padding:9px;gap:7px}.ev-selection-card-content{max-height:min(230px,calc(100vh - 250px))}}
+--- a/frontend/src/components/circuitiny/bridge.ts
++++ b/frontend/src/components/circuitiny/bridge.ts
+@@ -96,7 +96,7 @@
+         physicalModelId:physical?.model.id,
+         width: physical?physical.model.width/1000:g.size.w * PX,
+         depth: physical?physical.model.depth/1000:g.size.h * PX,
+-        physicalHeight:physical?physical.model.height/1000:structure?((Math.max(Number(structure.width)||40,Number(structure.height)||20,Number(structure.depth)||40)+Math.abs(Number(structure.elevation)||0))/1000):undefined,
++        physicalHeight:physical?physical.model.height/1000:structure?((Math.max(Number(structure.width)||40,(Number(structure.height)||20)*(structure.environmentKind==='planter'?1.6:1),Number(structure.depth)||40)+Math.abs(Number(structure.elevation)||0))/1000):undefined,
+         rotation: g.rotation,
+         bodyCenter: g.bodyCenter,
+         name: metadataId === 'custom-chip' ? displayName : metadata?.name || (isBoard ? ('name' in item ? item.name : metadataId) : metadataId),
+--- a/frontend/src/components/circuitiny/SelectionCard.tsx
++++ b/frontend/src/components/circuitiny/SelectionCard.tsx
+@@ -2,9 +2,9 @@
+ import './SelectionCard.css';
+ 
+ /** Keep the selection and its movement switch together; details are opt-in. */
+-export function SelectionCard({title,reference,info,moving,disabled,status,onMove,onClose,children,className=''}:{
++export function SelectionCard({title,reference,info,moving,disabled,status,onMove,onClose,actions,children,className=''}:{
+  title:string;reference:string;info?:ReactNode;moving:boolean;disabled:boolean;status?:string;
+- onMove?:()=>void;onClose:()=>void;children?:ReactNode;className?:string;
++ onMove?:()=>void;onClose:()=>void;actions?:ReactNode;children?:ReactNode;className?:string;
+ }){
+  return <aside className={'ev-selection-card '+className} aria-label="선택한 오브젝트 정보">
+   <div className="ev-selection-card-heading"><div><strong title={title}>{title}</strong><small title={reference}>{reference}</small></div>
+@@ -12,6 +12,7 @@
+   </div>
+   <div className="ev-selection-card-facts"><span className={moving?'is-moving':''}>{status||(moving?'이동 가능':'고정')}</span>{info&&<small>{info}</small>}</div>
+   {onMove&&<button type="button" className="ev-selection-card-move" aria-label="선택한 오브젝트 이동 활성화" aria-pressed={moving} disabled={disabled} onClick={onMove}>{moving?'이동 완료':'이동 활성화'}</button>}
++  {actions&&<div className="ev-environment-actions">{actions}</div>}
+   {children&&<details className="ev-selection-card-details"><summary>자세히 보기</summary><div className="ev-selection-card-content">{children}</div></details>}
+  </aside>;
+ }
+--- a/frontend/src/components/circuitiny/geometry.ts
++++ b/frontend/src/components/circuitiny/geometry.ts
+@@ -3,6 +3,7 @@
+ import { breadboardHoles } from '../../utils/breadboardSnap';
+ import { boardSize, normalizeRotation } from '../../utils/boardGeometry';
+ import { PX } from './catalog';
++import {STRUCTURE_ID,structureParameters} from './structureObjects';
+ export type NativePin = {
+   name: string;
+   x: number;
+@@ -62,7 +63,8 @@
+   const surface = el?.shadowRoot?.querySelector('svg,canvas') as HTMLElement | SVGSVGElement | null;
+   const measuredWidth = Math.max(el?.offsetWidth || 0, surface?.clientWidth || 0);
+   const measuredHeight = Math.max(el?.offsetHeight || 0, surface?.clientHeight || 0);
+-  const size = board
++  const structure=kind===STRUCTURE_ID?structureParameters(item.properties):null;
++  const size = structure?{w:structure.width/1000/PX,h:structure.depth/1000/PX}:board
+     ? boardSize(kind)
+     : {
+         w: measuredWidth || fallback?.w || Math.max(32, ...raw.map((p) => p.x + 10)),
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -35,6 +35,8 @@
+ import { canDragComponent, createComponentDrag } from './directComponentDrag';
+ import { STRUCTURE_ID, structureParameters } from './structureObjects';
+ import {MechanicalShape} from './MechanicalShape';
++import {environmentKind} from './environmentObjects';
++import {EnvironmentBody,EnvironmentHose} from './EnvironmentBody';
+ type Violation = { severity: 'error' | 'warning'; involves: string[] };
+ const STRIP_LED_N = 8;
+ 
+@@ -384,6 +386,9 @@
+     const rad=Math.PI/180;
+     const orientation=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),p.rotation*rad).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rotationX*rad,-p.rotation*rad,p.rotationZ*rad)));
+     const props=config.structure as Record<string,unknown>|undefined;
++    const environment=environmentKind(props),id=String(config.nativeId||'');
++    if(environment==='hose')return <EnvironmentHose id={id} selected={selected}/>;
++    if(environment)return <group position={[0,(p.elevation+p.height/2)/1000,0]} quaternion={orientation} scale={[w,h,d]}><EnvironmentBody id={id} kind={environment} color={p.color}/></group>;
+     const role=(props?.evPhotoStructure as {role?:string}|undefined)?.role||(props?.evDesignedStructure as {role?:string}|undefined)?.role||'other';
+     const ghost=interior&&['housing','chassis','platform','frame'].includes(role||'');
+     return <group><group position={[0, (p.elevation+p.height/2)/1000, 0]} quaternion={orientation} scale={[w,h,d]}>
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -1,6 +1,8 @@
+ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+ import Viewer3D from './Viewer3D';
+ import {SelectionCard} from './SelectionCard';
++import {EnvironmentPalette,EnvironmentActions,EnvironmentDetails} from './EnvironmentControls';
++import {environmentKind} from './environmentObjects';
+ import {createPortal} from 'react-dom';
+ import { connectCircuitiny, encodePin } from './bridge';
+ import { useStore } from './store';
+@@ -224,6 +226,7 @@
+   const toolbar=(
+       <div className="ev-c3d-tools">
+         <strong>회로 편집</strong>
++        <EnvironmentPalette running={running}/>
+         {photoObjects.length>0&&<button onClick={()=>useStore.setState(s=>({viewMode:'iso',reverseViewRevision:s.reverseViewRevision+1}))}>반대쪽 보기</button>}
+         <details className="ev-c3d-more"><summary>＋ 3D 구조물</summary><div>
+           <button disabled={running} onClick={()=>addStructure('box')}>상자 추가</button>
+@@ -438,6 +441,7 @@
+           info={structure?`${structure.width} × ${structure.depth} × ${structure.height} mm`:component?.properties?.value?String(component.properties.value):board?'개발보드':`${definitions.get([...project.components,...(project.boards||[])].find(c=>c.instance===selected)?.componentId||'')?.pins.length||0}핀`}
+           moving={moveTarget===selected&&!running&&!wireMode} disabled={running||wireMode}
+           status={running?'실행 중':wireMode?'배선 편집 중':undefined}
++          actions={component&&environmentKind(component.properties)?<EnvironmentActions part={component}/>:undefined}
+           onMove={()=>useStore.setState(s=>({moveTarget:s.moveTarget===selected?null:selected}))}
+           onClose={()=>useStore.getState().select(null)}>
+           {physicalModel&&<details><summary>실물 형상 · {physicalModel.name}</summary><p>{physicalModel.source?'제안된 설계 부품의 제품 형상 모델입니다.':'제품 모델이 미확인인 일반형입니다.'} 전기 동작 모델과는 별개입니다.</p><p>{physicalModel.basis}</p>{physicalModel.source&&<><p>외곽 기준: {physicalModel.width} × {physicalModel.depth} mm</p><a href={physicalModel.source} target="_blank" rel="noreferrer">제조사 원문·도면</a></>}{['hat','shield'].includes(physicalModel.kind)&&<p><a href="/physical-models/hat-license.txt" target="_blank" rel="noreferrer">Adafruit PCB 자료 · CC BY-SA 3.0</a></p>}</details>}
+@@ -461,6 +465,7 @@
+             </label>
+           )}
+           {structure && component && <div className="ev-structure-fields">
++            <EnvironmentDetails part={component} running={running}/>
+             {Boolean(component.properties?.evDesignedStructure)&&<details><summary>설계 보완 · INFERRED</summary><p>{String((component.properties.evDesignedStructure as {reason:string}).reason)}</p><p>사진에서 확인하지 못한 부분을 완성한 새 설계입니다. 실제 형상과 제작 치수는 미확인입니다.</p></details>}
+             {Boolean(component.properties?.evPhotoStructure)&&<details><summary>사진 근거 · INFERRED</summary><p>{String((component.properties.evPhotoStructure as {observation?:string}).observation||'사진의 보이는 형상을 단순화한 모델입니다.')}</p><p>절대 치수 UNKNOWN · 표시 기준 길이 220 mm는 시각화 가정입니다. 실제 제작 치수가 아닙니다.</p><p>{String(((component.properties.evPhotoStructure as {assumptions?:string[]}).assumptions||[]).join(' '))}</p></details>}
+             {([['width','너비'],['height','높이'],['depth','깊이'],['elevation','바닥 높이']] as const).map(([key,label])=><label key={key}>{label} (mm)
+--- /dev/null
++++ b/frontend/src/components/circuitiny/environmentObjects.ts
+@@ -0,0 +1,54 @@
++import preset from './environmentPresets.json';
++import {STRUCTURE_ID,structureParameters} from './structureObjects';
++
++export const ENVIRONMENT_KINDS=['planter','container','reservoir','pump','hose'] as const;
++export type EnvironmentKind=typeof ENVIRONMENT_KINDS[number];
++export const ENVIRONMENT_NAMES:Record<EnvironmentKind,string>={planter:'화분',container:'빈 용기',reservoir:'물통',pump:'펌프',hose:'호스'};
++export const ENVIRONMENT_NOTICE=preset.notice;
++export type WaterBinding=typeof preset.binding;
++type Part={id:string;metadataId:string;x:number;y:number;properties:Record<string,unknown>};
++export function environmentKind(props:Record<string,unknown>|undefined):EnvironmentKind|null{
++ return ENVIRONMENT_KINDS.includes(props?.environmentKind as EnvironmentKind)?props!.environmentKind as EnvironmentKind:null;
++}
++export function waterBinding(props:Record<string,unknown>|undefined):WaterBinding|null{
++ if(environmentKind(props)!=='pump'||!props?.waterSystem||typeof props.waterSystem!=='object')return null;
++ const raw=props.waterSystem as Record<string,unknown>,base=preset.binding,result={...base};
++ for(const key of ['boardId','sensorId','outputId','planterId','reservoirId','hoseId'] as const){
++  if(typeof raw[key]!=='string'||! /^[A-Za-z0-9_-]{1,80}$/.test(raw[key]))return null;
++  result[key]=raw[key];
++ }
++ for(const key of ['controlPin','flowMlPerSecond','soilCapacityMl','reservoirCapacityMl','initialReservoirMl','potCapacityMl','absorptionMlPerSecond'] as const){
++  const n=Number(raw[key]);
++  result[key]=Number.isFinite(n)?Math.max(key==='controlPin'?0:1,Math.min(key==='controlPin'?13:10000,n)):base[key];
++ }
++ result.controlPin=Math.round(result.controlPin);
++ result.initialReservoirMl=Math.min(result.initialReservoirMl,result.reservoirCapacityMl);
++ return result;
++}
++export function wateringEnvironmentParts():Part[]{
++ const scale=96/25.4;
++ return preset.objects.map(item=>({id:item.id,metadataId:STRUCTURE_ID,
++  x:((item.center_mm[0]-item.width/2)*scale)-6,y:((item.center_mm[1]-item.depth/2)*scale)-6,
++  properties:{...structureParameters({...item,shape:['pump','hose'].includes(item.kind)?'box':'cylinder'}),
++   label:item.label,environmentKind:item.kind,environmentPreset:'watering-v1',visualOnly:true,
++   designBasis:'authored_functional_environment',
++   ...(item.kind==='pump'?{waterSystem:{...preset.binding}}:{}),...(item.kind==='hose'?{connected:true}:{})}}));
++}
++export function newEnvironmentObject(kind:EnvironmentKind,x:number,y:number):Part{
++ const source=preset.objects.find(p=>p.kind===(kind==='container'?'planter':kind))!;
++ const id='env-'+(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2));
++ return {id,metadataId:STRUCTURE_ID,x,y,properties:{
++  ...structureParameters({...source,shape:['pump','hose'].includes(kind)?'box':'cylinder'}),
++  environmentKind:kind,label:ENVIRONMENT_NAMES[kind],visualOnly:true,designBasis:'user_authored_object',
++  ...(kind==='hose'?{connected:true}:{})}};
++}
++/** Upgrade old watering drafts once; a user's later deletions remain deleted. */
++export function withFunctionalEnvironment<T extends {components?:Part[];embeddedVision?:Record<string,unknown>}>(project:T):T{
++ if(project.embeddedVision?.recipe!==preset.recipe||Number(project.embeddedVision?.environment_design_version)>=preset.version)return project;
++ const existing=project.components||[],ids=new Set(existing.map(p=>p.id));
++ const parts=wateringEnvironmentParts();
++ // Never give a colliding circuit component a new visual role.
++ if(parts.some(p=>ids.has(p.id)&&!environmentKind(existing.find(e=>e.id===p.id)?.properties)))return project;
++ return {...project,components:[...existing,...parts.filter(p=>!ids.has(p.id))],
++  embeddedVision:{...project.embeddedVision,environment_design_version:preset.version}};
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/environmentPresets.json
+@@ -0,0 +1,18 @@
++{
++  "version": 1,
++  "recipe": "arduino_watering_control",
++  "initial_sensor_value": 800,
++  "objects": [
++    {"id":"ENV_PLANTER","kind":"planter","label":"급수 대상 화분","center_mm":[190,-65],"width":80,"height":75,"depth":80,"color":"#c47a54"},
++    {"id":"ENV_TANK","kind":"reservoir","label":"급수용 물통","center_mm":[65,-65],"width":65,"height":90,"depth":65,"color":"#9bcad5"},
++    {"id":"ENV_PUMP","kind":"pump","label":"가상 펌프","center_mm":[115,-10],"width":32,"height":25,"depth":25,"color":"#4c7794"},
++    {"id":"ENV_HOSE","kind":"hose","label":"급수 호스","center_mm":[150,-25],"width":80,"height":8,"depth":30,"color":"#6f9caf"}
++  ],
++  "binding": {
++    "boardId":"U1","sensorId":"S1","outputId":"D1","controlPin":5,
++    "planterId":"ENV_PLANTER","reservoirId":"ENV_TANK","hoseId":"ENV_HOSE",
++    "flowMlPerSecond":30,"soilCapacityMl":100,"reservoirCapacityMl":300,
++    "initialReservoirMl":240,"potCapacityMl":200,"absorptionMlPerSecond":12
++  },
++  "notice":"실행 중인 보드 출력과 연결한 가상 급수 모형입니다. 유량·흡수율·용량은 동작 확인용 모형값이며 실물 펌프의 성능이나 유체 해석 결과가 아닙니다."
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/wateringModel.ts
+@@ -0,0 +1,32 @@
++import type {WaterBinding} from './environmentObjects';
++
++export type WaterState={reservoirMl:number;potWaterMl:number;soilWaterMl:number;deliveredMl:number;
++ flowMlPerSecond:number;flowTimeMs:number;pumpCommand:number;guestMs:number;fault:string;running:boolean};
++const clamp=(n:number,min:number,max:number)=>Math.max(min,Math.min(max,Number.isFinite(n)?n:min));
++export function initialWaterState(binding:WaterBinding,adc:number):WaterState{
++ return {reservoirMl:binding.initialReservoirMl,potWaterMl:0,
++  soilWaterMl:(1-clamp(adc,0,1023)/1023)*binding.soilCapacityMl,deliveredMl:0,
++  flowMlPerSecond:0,flowTimeMs:0,pumpCommand:0,guestMs:0,fault:'',running:false};
++}
++export function soilAdc(state:WaterState,binding:WaterBinding){
++ return Math.round(1023*(1-clamp(state.soilWaterMl/binding.soilCapacityMl,0,1)));
++}
++/** Conservative volume accounting. dt is simulated MCU time, never display time. */
++export function advanceWater(state:WaterState,dtSeconds:number,power:number,binding:WaterBinding,connected=true):WaterState{
++ const dt=Number.isFinite(dtSeconds)?Math.max(0,dtSeconds):0,command=clamp(power,0,1);
++ const rate=connected?binding.flowMlPerSecond*command:0;
++ const soilSpace=Math.max(0,binding.soilCapacityMl-state.soilWaterMl);
++ const possible=Math.min(state.reservoirMl,rate*dt);
++ const absorption=Math.min(soilSpace,binding.absorptionMlPerSecond*dt,state.potWaterMl+possible);
++ const delivered=Math.min(possible,Math.max(0,binding.potCapacityMl-state.potWaterMl)+absorption);
++ const absorbed=Math.min(soilSpace,binding.absorptionMlPerSecond*dt,state.potWaterMl+delivered);
++ const reservoirMl=Math.max(0,state.reservoirMl-delivered);
++ const potWaterMl=clamp(state.potWaterMl+delivered-absorbed,0,binding.potCapacityMl);
++ const flowing=connected&&command>0&&reservoirMl>1e-6&&(potWaterMl<binding.potCapacityMl-1e-6||absorbed>0);
++ return {...state,reservoirMl,potWaterMl,soilWaterMl:state.soilWaterMl+absorbed,
++  deliveredMl:state.deliveredMl+delivered,flowMlPerSecond:flowing?rate:0,
++  flowTimeMs:state.flowTimeMs+(rate>0?delivered/rate*1000:0),pumpCommand:command,
++  guestMs:state.guestMs+dt*1000,running:true,
++  fault:!connected?'급수 대상·물통·호스 연결을 확인하세요.':command>0&&reservoirMl<=1e-6?'물통이 비었습니다.':
++   command>0&&!flowing?'용기가 가득 찼습니다.':''};
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/environmentStore.ts
+@@ -0,0 +1,10 @@
++import {create} from 'zustand';
++import type {WaterBinding} from './environmentObjects';
++import {initialWaterState,type WaterState} from './wateringModel';
++export const useEnvironmentStore=create<{systemId:string|null;binding:WaterBinding|null;water:WaterState|null}>(()=>({systemId:null,binding:null,water:null}));
++export function editWater(action:'dry'|'refill'|'empty'|'reset'){
++ const {binding,water}=useEnvironmentStore.getState();if(!binding||!water)return;
++ useEnvironmentStore.setState({water:action==='reset'?initialWaterState(binding,800):{
++  ...water,...(action==='dry'?{soilWaterMl:binding.soilCapacityMl*0.2,potWaterMl:0}:
++   {reservoirMl:action==='refill'?binding.reservoirCapacityMl:0})}});
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/EnvironmentRuntime.tsx
+@@ -0,0 +1,57 @@
++import {useEffect} from 'react';
++import {useSimulatorStore as native,getBoardSimulator,getBoardPinManager} from '../../store/useSimulatorStore';
++import {getSensorUpdate,getLastSensorValues,dispatchSensorUpdate} from '../../simulation/SensorUpdateRegistry';
++import {lastLedOutput} from '../../simulation/ledOutput';
++import {environmentKind,waterBinding} from './environmentObjects';
++import {useEnvironmentStore} from './environmentStore';
++import {advanceWater,initialWaterState,soilAdc} from './wateringModel';
++
++/** One persistent world per editor. Views consume it; changing the camera never resets it. */
++export function EnvironmentRuntime(){
++ const signature=native(s=>JSON.stringify(s.components.filter(c=>environmentKind(c.properties)==='pump'&&waterBinding(c.properties)).map(c=>[c.id,waterBinding(c.properties)])));
++ const hydration=native(s=>s.hydrationSeq),reset=native(s=>s.sensorResetNonce);
++ useEffect(()=>{
++  const pump=native.getState().components.find(c=>environmentKind(c.properties)==='pump'&&waterBinding(c.properties));
++  const binding=pump&&waterBinding(pump.properties);
++  if(!pump||!binding){useEnvironmentStore.setState({systemId:null,binding:null,water:null});return;}
++  const sensor=native.getState().components.find(c=>c.id===binding.sensorId);
++  useEnvironmentStore.setState({systemId:pump.id,binding,water:initialWaterState(binding,Number(sensor?.properties?.value??800))});
++  let frame=0,previousMs:number|null=null,lastInjected:number|null=null,lastFeedbackMs=-Infinity;
++  const tick=()=>{
++   frame=requestAnimationFrame(tick);
++   const s=native.getState(),board=s.boards.find(b=>b.id===binding.boardId);
++   const sim=getBoardSimulator(binding.boardId),pm=getBoardPinManager(binding.boardId);
++   const ms=sim&&'getCurrentCycles' in sim&&'getClockHz' in sim?Number(sim.getCurrentCycles())/Number(sim.getClockHz())*1000:NaN;
++   let water=useEnvironmentStore.getState().water;if(!water)return;
++   if(!s.running||!board?.running||!Number.isFinite(ms)){
++    previousMs=Number.isFinite(ms)?ms:null;
++    if(water.running||water.flowMlPerSecond)useEnvironmentStore.setState({water:{...water,running:false,flowMlPerSecond:0}});
++    return;
++   }
++   if(previousMs!==null&&ms<previousMs){water=initialWaterState(binding,Number(s.components.find(c=>c.id===binding.sensorId)?.properties?.value??800));lastInjected=null;lastFeedbackMs=-Infinity;}
++   const dt=previousMs===null?0:Math.max(0,(ms-previousMs)/1000);previousMs=ms;
++   const external=Number(getLastSensorValues(binding.sensorId)?.value);
++   if(lastInjected!==null&&Number.isFinite(external)&&external!==lastInjected){
++    water={...water,soilWaterMl:(1-Math.max(0,Math.min(1023,external))/1023)*binding.soilCapacityMl};lastInjected=external;
++   }
++   const parts=s.components,kind=(id:string)=>environmentKind(parts.find(c=>c.id===id)?.properties);
++   const hose=parts.find(c=>c.id===binding.hoseId);
++   const connected=['planter','container'].includes(kind(binding.planterId)||'')&&kind(binding.reservoirId)==='reservoir'&&kind(binding.hoseId)==='hose'&&hose?.properties?.connected!==false;
++   const element=document.getElementById(binding.outputId),sample=element&&lastLedOutput(element);
++   const ready=!!getSensorUpdate(binding.sensorId)&&parts.some(c=>c.id===binding.sensorId);
++   const output=ready&&pm?.getOutputPins().has(binding.controlPin)&&sample&&(sample.guestMs===null||sample.guestMs<=ms+1)
++    ?sample.source==='mcu-pwm'?Math.min(pm.getPwmValue(binding.controlPin),sample.brightness):pm.peekPinState(binding.controlPin)?sample.brightness:0:0;
++   water=advanceWater(water,dt,Number(output)||0,binding,connected);
++   if(!ready)water={...water,flowMlPerSecond:0,fault:'센서 입력 연결을 기다리고 있습니다.'};
++   useEnvironmentStore.setState({water});
++   if(ready&&(ms-lastFeedbackMs>=100||lastInjected===null)){
++    const adc=soilAdc(water,binding);
++    if(adc!==lastInjected){dispatchSensorUpdate(binding.sensorId,{value:adc});lastInjected=adc;}
++    lastFeedbackMs=ms;
++   }
++  };
++  frame=requestAnimationFrame(tick);
++  return()=>{cancelAnimationFrame(frame);useEnvironmentStore.setState({systemId:null,binding:null,water:null});};
++ },[signature,hydration,reset]);
++ return null;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/environmentMeshes.ts
+@@ -0,0 +1,58 @@
++import * as T from 'three';
++import type {EnvironmentKind,WaterBinding} from './environmentObjects';
++import type {WaterState} from './wateringModel';
++
++const material=(color:string,opacity=1)=>new T.MeshStandardMaterial({color,roughness:.62,transparent:opacity<1,opacity,depthWrite:opacity===1,side:T.DoubleSide});
++function mesh(root:T.Group,geometry:T.BufferGeometry,mat:T.Material,at:[number,number,number]=[0,0,0]){
++ const m=new T.Mesh(geometry,mat);m.position.set(...at);root.add(m);return m;
++}
++/** Normalized, open vessels. These are illustrative objects, not recovered product CAD. */
++export function makeEnvironmentMesh(kind:EnvironmentKind,color:string){
++ const root=new T.Group();root.name='environment-'+kind;
++ if(kind==='pump'){
++  mesh(root,new T.BoxGeometry(.75,.65,.72),material(color));
++  const head=mesh(root,new T.CylinderGeometry(.3,.3,.22,24),material('#d9e5e8'),[.22,0,0]);head.rotation.z=Math.PI/2;
++  const rotor=new T.Group();rotor.position.set(.35,0,0);root.add(rotor);
++  for(let i=0;i<4;i++){const blade=mesh(rotor,new T.BoxGeometry(.035,.12,.36),material('#2485ab'));blade.rotation.x=i*Math.PI/2;}
++  root.userData.rotor=rotor;
++  for(const x of [-.46,.46]){const port=mesh(root,new T.CylinderGeometry(.075,.075,.2,12),material('#334b59'),[x,-.15,0]);port.rotation.z=Math.PI/2;}
++  return root;
++ }
++ if(kind==='hose')return root;
++ const tank=kind==='reservoir',plant=kind==='planter';
++ const profile=tank?[[.43,-.5],[.47,-.45],[.47,.45],[.44,.48],[.42,.45],[.42,-.42],[0,-.42]]:
++  [[.3,-.5],[.33,-.46],[.46,.42],[.49,.43],[.49,.49],[.42,.49],[.42,.41],[.29,-.43],[0,-.43]];
++ mesh(root,new T.LatheGeometry(profile.map(([x,y])=>new T.Vector2(x,y)),40),material(color,tank?.22:.5));
++ const rim=mesh(root,new T.TorusGeometry(tank?.455:.455,.025,8,48),material(color),[0,.46,0]);rim.rotation.x=Math.PI/2;
++ const water=mesh(root,new T.CylinderGeometry(.405,.31,1,40),material('#20b8ed',.72));
++ water.name='water-level';root.userData.water=water;
++ if(plant){
++  const soil=mesh(root,new T.CylinderGeometry(.36,.3,.4,32),material('#70503b'),[0,-.24,0]);root.userData.soil=soil;
++  mesh(root,new T.CylinderGeometry(.018,.025,.7,10),material('#557846'),[0,.27,0]);
++  for(let i=0;i<6;i++){
++   const a=i*2.399,leaf=mesh(root,new T.SphereGeometry(1,16,10),material(i%2?'#4a984d':'#72b15c'),[Math.cos(a)*.16,.33+i*.105,Math.sin(a)*.16]);
++   leaf.scale.set(.26,.045,.105);leaf.rotation.set(.3,a,.35);
++  }
++ }
++ const base=mesh(root,new T.CylinderGeometry(tank?.48:.38,tank?.48:.38,.04,32),material(color),[0,-.49,0]);base.name='base';
++ updateEnvironmentMesh(root,kind,null,null);
++ return root;
++}
++export function updateEnvironmentMesh(root:T.Group,kind:EnvironmentKind,state:WaterState|null,binding:WaterBinding|null){
++ const water=root.userData.water as T.Mesh|undefined;
++ if(water){
++  const ratio=kind==='reservoir'?(state&&binding?state.reservoirMl/binding.reservoirCapacityMl:.8):
++   state&&binding?state.potWaterMl/binding.potCapacityMl:0;
++  const bottom=kind==='planter'?-.035:-.42,height=Math.max(.001,Math.min(1,Math.max(0,ratio))*(.43-bottom));
++  water.visible=ratio>.00001;water.scale.y=height;water.position.y=bottom+height/2;
++ }
++ const soil=root.userData.soil as T.Mesh<T.BufferGeometry,T.MeshStandardMaterial>|undefined;
++ if(soil)soil.material.color.set('#8f6b4c').lerp(new T.Color('#30291f'),state&&binding?Math.min(1,state.soilWaterMl/binding.soilCapacityMl):.2);
++ const rotor=root.userData.rotor as T.Group|undefined;
++ if(rotor)rotor.rotation.x=(state?.flowTimeMs||0)*.014;
++}
++export function disposeEnvironmentMesh(root:T.Object3D){
++ const geometries=new Set<T.BufferGeometry>(),materials=new Set<T.Material>();
++ root.traverse(o=>{if(o instanceof T.Mesh){geometries.add(o.geometry);for(const m of Array.isArray(o.material)?o.material:[o.material])materials.add(m);}});
++ geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/EnvironmentBody.tsx
+@@ -0,0 +1,61 @@
++import {useEffect,useMemo,useRef} from 'react';
++import {useFrame} from '@react-three/fiber';
++import * as T from 'three';
++import {environmentKind,type EnvironmentKind} from './environmentObjects';
++import {makeEnvironmentMesh,updateEnvironmentMesh,disposeEnvironmentMesh} from './environmentMeshes';
++import {useEnvironmentStore} from './environmentStore';
++import {useStore} from './store';
++import {structureParameters} from './structureObjects';
++import type {ComponentInstance} from './project/schema';
++
++export function EnvironmentBody({id,kind,color}:{id:string;kind:EnvironmentKind;color:string}){
++ const object=useMemo(()=>makeEnvironmentMesh(kind,color),[kind,color]);
++ useEffect(()=>()=>disposeEnvironmentMesh(object),[object]);
++ useFrame(()=>{
++  const {water,binding,systemId}=useEnvironmentStore.getState();
++  const active=!!binding&&[binding.planterId,binding.reservoirId,systemId].includes(id);
++  updateEnvironmentMesh(object,kind,active?water:null,active?binding:null);
++ });
++ return <primitive object={object}/>;
++}
++/** Attachment points use the exact same center, dimensions and rotations as the body. */
++export function environmentAnchor(part:ComponentInstance,local:[number,number,number]):T.Vector3{
++ const p=structureParameters(part.config?.structure as Record<string,unknown>);
++ return new T.Vector3(local[0]*p.width/1000,local[1]*p.height/1000,local[2]*p.depth/1000)
++  .applyEuler(new T.Euler(p.rotationX*Math.PI/180,-p.rotation*Math.PI/180,p.rotationZ*Math.PI/180))
++  .add(new T.Vector3(part.position?.[0]||0,(part.position?.[1]||0)+(p.elevation+p.height/2)/1000,part.position?.[2]||0));
++}
++export function EnvironmentHose({id,selected}:{id:string;selected:boolean}){
++ const parts=useStore(s=>s.project.components),binding=useEnvironmentStore(s=>s.binding);
++ const own=parts.find(c=>c.instance===id);
++ const geometry=useMemo(()=>{
++  if(!own||!binding||binding.hoseId!==id)return null;
++  const tank=parts.find(c=>c.instance===binding.reservoirId),pot=parts.find(c=>c.instance===binding.planterId);
++  const pump=parts.find(c=>environmentKind(c.config?.structure as Record<string,unknown>)==='pump'&&!!(c.config?.structure as Record<string,unknown>)?.waterSystem);
++  if(!tank||!pot||!pump)return null;
++  const angle=structureParameters(own.config?.structure as Record<string,unknown>).rotation*Math.PI/180;
++  const local=(v:T.Vector3)=>v.sub(new T.Vector3(...(own.position||[0,0,0]))).applyAxisAngle(new T.Vector3(0,1,0),angle);
++  const start=environmentAnchor(tank,[.4,-.35,0]),inlet=environmentAnchor(pump,[-.5,-.15,0]),outlet=environmentAnchor(pump,[.5,-.15,0]);
++  const end=environmentAnchor(pot,[.18,.8,.1]),land=environmentAnchor(pot,[.18,.05,.1]);
++  const via=environmentAnchor(own,[0,0,0]);
++  const paths=[new T.CatmullRomCurve3([start,start.clone().lerp(inlet,.5).add(new T.Vector3(0,.015,0)),inlet].map(local)),
++   new T.CatmullRomCurve3([outlet,via,end.clone().add(new T.Vector3(0,.01,.012)),end].map(local))];
++  return {paths,drop:new T.LineCurve3(local(end.clone()),local(land.clone()))};
++ },[parts,binding,own]);
++ const beads=useRef<Array<T.Mesh|null>>([]),stream=useRef<T.Group>(null);
++ useFrame(()=>{
++  const water=useEnvironmentStore.getState().water,flow=!!water?.running&&water.flowMlPerSecond>0;
++  if(stream.current)stream.current.visible=flow;
++  if(!geometry)return;
++  beads.current.forEach((bead,i)=>{if(!bead)return;bead.visible=flow;
++   const curve=i<8?geometry.paths[1]:geometry.drop;
++   bead.position.copy(curve.getPoint(((water?.flowTimeMs||0)/1400+i/8)%1));
++  });
++ });
++ if(!geometry)return <mesh><torusGeometry args={[.012,.0018,8,32]}/><meshStandardMaterial color="#617d8b"/></mesh>;
++ return <group>
++  {geometry.paths.map((path,i)=><mesh key={i}><tubeGeometry args={[path,40,.0018,8,false]}/><meshStandardMaterial color={selected?'#16a2d4':'#456e86'} transparent opacity={.58} depthWrite={false}/></mesh>)}
++  <group ref={stream} visible={false}><mesh><tubeGeometry args={[geometry.drop,4,.0007,6,false]}/><meshStandardMaterial color="#3dccff" transparent opacity={.6}/></mesh></group>
++  {Array.from({length:12},(_,i)=><mesh key={i} ref={m=>{beads.current[i]=m;}} visible={false}><sphereGeometry args={[i<8?.0014:.002,8,6]}/><meshStandardMaterial color="#27c9ff" emissive="#128db7" emissiveIntensity={.45}/></mesh>)}
++ </group>;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/EnvironmentControls.tsx
+@@ -0,0 +1,79 @@
++import {ENVIRONMENT_KINDS,ENVIRONMENT_NAMES,ENVIRONMENT_NOTICE,environmentKind,newEnvironmentObject,wateringEnvironmentParts,waterBinding,type EnvironmentKind} from './environmentObjects';
++import {useEnvironmentStore,editWater} from './environmentStore';
++import {useSimulatorStore as native} from '../../store/useSimulatorStore';
++import {useStore} from './store';
++import {atomic} from './actions';
++type Part=ReturnType<typeof native.getState>['components'][number];
++const message=(text:string)=>useStore.setState({message:text});
++function setProperty(part:Part,key:string,value:unknown){
++ if(native.getState().running)return;
++ atomic('주변 오브젝트 설정',()=>native.getState().updateComponent(part.id,{properties:{...part.properties,[key]:value}}));
++}
++export function EnvironmentPalette({running}:{running:boolean}){
++ const add=(kind:EnvironmentKind)=>{
++  if(native.getState().running)return;
++  const s=native.getState(),base=s.boards[0],part=newEnvironmentObject(kind,(base?.x??120)+480,(base?.y??120)-150);
++  s.recordAddComponent(part);useStore.setState(s=>({selected:part.id,selectedNet:null,moveTarget:null,fitRevision:s.fitRevision+1,message:'오브젝트를 추가했습니다. 선택 카드에서 모양·크기와 급수 연결을 설정하세요.'}));
++ };
++ const addSet=()=>{
++  if(native.getState().running)return;
++  const existing=native.getState().components,parts=wateringEnvironmentParts(),ids=new Set(existing.map(c=>c.id));
++  if(parts.some(p=>ids.has(p.id)&&!environmentKind(existing.find(c=>c.id===p.id)?.properties))){message('같은 ID의 부품이 있어 세트를 추가하지 않았습니다. 개별 오브젝트를 추가해 주세요.');return;}
++  const added=parts.filter(p=>!ids.has(p.id));
++  if(added.length)atomic('급수 환경 추가',()=>native.setState({components:[...existing,...added]}));
++  useStore.setState(s=>({selected:'ENV_PLANTER',selectedNet:null,moveTarget:null,fitRevision:s.fitRevision+1,message:'화분·물통·펌프·호스를 준비했습니다. 펌프를 선택해 연결 보드와 센서를 확인하세요.'}));
++ };
++ return <details className="ev-c3d-more"><summary>＋ 주변 오브젝트</summary><div>
++  <button disabled={running} onClick={addSet}>급수 환경 세트</button>
++  {ENVIRONMENT_KINDS.map(k=><button key={k} disabled={running} onClick={()=>add(k)}>{ENVIRONMENT_NAMES[k]} 추가</button>)}
++  <small>화분·용기 등 동작을 확인할 주변 사물을 만듭니다. 급수 연동은 펌프 설정에서 확인하세요.</small>
++ </div></details>;
++}
++function relevant(id:string,binding:ReturnType<typeof waterBinding>,systemId:string|null){return !!binding&&[systemId,binding.planterId,binding.reservoirId,binding.hoseId].includes(id);}
++export function EnvironmentActions({part}:{part:Part}){
++ const kind=environmentKind(part.properties);
++ const reading=useEnvironmentStore(s=>{
++  if(!s.water||!s.binding||!relevant(part.id,s.binding,s.systemId))return '';
++  const w=s.water,b=s.binding;
++  return JSON.stringify({soil:Math.round(w.soilWaterMl/b.soilCapacityMl*100),received:Math.round(w.deliveredMl),tank:Math.round(w.reservoirMl),flow:Math.round(w.flowMlPerSecond),command:w.pumpCommand>0,running:w.running,fault:w.fault});
++ });
++ if(!kind)return null;
++ const data=reading?JSON.parse(reading):null;
++ return <>
++  {data?<><div className="ev-water-reading" aria-live="polite">
++   {['planter','container'].includes(kind)?<><strong>받은 물 {data.received} mL</strong><span>토양 모형 습도 {data.soil}%</span></>:kind==='reservoir'?<strong>남은 물 {data.tank} mL</strong>:<><strong>{data.running?(data.command?'펌프 명령 켜짐':'펌프 명령 꺼짐'):'시뮬레이션 정지'}</strong><span>물 흐름 {data.flow} mL/s</span></>}
++   {data.fault&&<small role="status">{data.fault}</small>}
++  </div><div className="ev-water-buttons">
++   {['planter','container'].includes(kind)&&<button onClick={()=>editWater('dry')}>토양 말리기</button>}
++   {kind==='reservoir'&&<><button onClick={()=>editWater('refill')}>물통 채우기</button><button onClick={()=>editWater('empty')}>비우기</button></>}
++   {kind==='pump'&&<button onClick={()=>editWater('reset')}>급수 모형 초기화</button>}
++  </div></>:<small>장식 오브젝트입니다. 펌프 설정에서 급수 대상으로 연결할 수 있습니다.</small>}
++ </>;
++}
++export function EnvironmentDetails({part,running}:{part:Part;running:boolean}){
++ const parts=native(s=>s.components),boards=native(s=>s.boards),kind=environmentKind(part.properties),binding=waterBinding(part.properties);
++ if(!kind)return null;
++ const changeBinding=(key:string,value:unknown)=>binding&&setProperty(part,'waterSystem',{...binding,[key]:value});
++ const bind=()=>{
++  const other=parts.find(p=>p.id!==part.id&&waterBinding(p.properties));
++  if(other){message('현재 급수 환경은 한 세트씩 연결합니다. 기존 펌프의 연동을 해제한 뒤 연결하세요.');return;}
++  const base=wateringEnvironmentParts().find(p=>environmentKind(p.properties)==='pump')!.properties.waterSystem as NonNullable<typeof binding>;
++  const sensor=parts.find(p=>p.metadataId==='potentiometer'),output=parts.find(p=>p.metadataId==='led');
++  const target=parts.find(p=>['planter','container'].includes(environmentKind(p.properties)||'')),tank=parts.find(p=>environmentKind(p.properties)==='reservoir'),hose=parts.find(p=>environmentKind(p.properties)==='hose');
++  const board=boards.find(b=>b.boardKind==='arduino-uno');
++  if(!sensor||!output||!target||!tank||!hose||!board){message('UNO·가변저항 센서·LED 제어 출력과 급수 대상·물통·호스를 먼저 준비하세요.');return;}
++  setProperty(part,'waterSystem',{...base,boardId:board.id,sensorId:sensor.id,outputId:output.id,planterId:target.id,reservoirId:tank.id,hoseId:hose.id});
++ };
++ return <div className="ev-environment-fields">
++  <label>이름<input disabled={running} maxLength={80} defaultValue={String(part.properties.label||ENVIRONMENT_NAMES[kind])} key={part.id+':label'} onBlur={e=>setProperty(part,'label',e.target.value.slice(0,80))}/></label>
++  {['planter','container'].includes(kind)&&<label>급수 대상 모양<select disabled={running} value={kind} onChange={e=>setProperty(part,'environmentKind',e.target.value)}><option value="planter">화분</option><option value="container">빈 용기</option></select></label>}
++  {kind==='hose'&&<label><input type="checkbox" disabled={running} checked={part.properties.connected!==false} onChange={e=>setProperty(part,'connected',e.target.checked)}/> 급수 호스 연결</label>}
++  {kind==='pump'&&(binding?<>
++   <p>실행 중인 보드의 제어 출력과 LED 회로 결과로 물을 이동합니다. 토양 모형이 가변저항 센서 입력으로 돌아갑니다.</p>
++   {([['boardId','보드',boards],['sensorId','센서 입력',parts.filter(p=>p.metadataId==='potentiometer')],['outputId','펌프 명령 표시 LED',parts.filter(p=>p.metadataId==='led')],['planterId','급수 대상',parts.filter(p=>['planter','container'].includes(environmentKind(p.properties)||''))],['reservoirId','물통',parts.filter(p=>environmentKind(p.properties)==='reservoir')],['hoseId','호스',parts.filter(p=>environmentKind(p.properties)==='hose')]] as const).map(([key,label,options])=><label key={key}>{label}<select disabled={running} value={binding[key]} onChange={e=>changeBinding(key,e.target.value)}>{!options.some(p=>p.id===binding[key])&&<option value={binding[key]}>없음: {binding[key]}</option>}{options.map(p=><option value={p.id} key={p.id}>{p.id} · {String(p.properties?.label||('name' in p?p.name:'')||('metadataId' in p?p.metadataId:'보드'))}</option>)}</select></label>)}
++   {([['controlPin','제어 GPIO',0,13],['flowMlPerSecond','가상 유량 (mL/s)',1,1000],['absorptionMlPerSecond','흡수율 (mL/s)',1,1000],['reservoirCapacityMl','물통 용량 (mL)',1,10000],['potCapacityMl','용기 용량 (mL)',1,10000]] as const).map(([key,label,min,max])=><label key={key}>{label}<input type="number" disabled={running} min={min} max={max} defaultValue={binding[key]} key={part.id+key+binding[key]} onBlur={e=>{const n=Number(e.target.value);if(e.target.value&&Number.isFinite(n))changeBinding(key,Math.max(min,Math.min(max,n)));}}/></label>)}
++   <button disabled={running} onClick={()=>setProperty(part,'waterSystem',null)}>급수 연동 해제</button>
++  </>:<button disabled={running} onClick={bind}>현재 회로에 급수 연동</button>)}
++  <p>{ENVIRONMENT_NOTICE}</p>
++ </div>;
++}
+--- /dev/null
++++ b/frontend/src/__tests__/environment-objects.test.ts
+@@ -0,0 +1,58 @@
++// @vitest-environment jsdom
++import {beforeEach,expect,it} from 'vitest';
++import {Box3} from 'three';
++import {wateringEnvironmentParts,withFunctionalEnvironment,newEnvironmentObject,waterBinding} from '../components/circuitiny/environmentObjects';
++import preset from '../components/circuitiny/environmentPresets.json';
++import {geometryFor} from '../components/circuitiny/geometry';
++import {environmentAnchor} from '../components/circuitiny/EnvironmentBody';
++import {makeEnvironmentMesh,updateEnvironmentMesh,disposeEnvironmentMesh} from '../components/circuitiny/environmentMeshes';
++import {initialWaterState} from '../components/circuitiny/wateringModel';
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {buildVlxPayload,importVlxFile} from '../utils/vlxFile';
++import {buildInputFromStore} from '../simulation/spice/storeAdapter';
++
++beforeEach(()=>native.setState({components:[],boards:[],wires:[],activeBoardId:null,history:[],historyIndex:-1}));
++it('upgrades legacy watering projects once while preserving electrical files and later deletions',()=>{
++ const p={components:[{id:'D1',metadataId:'led',x:1,y:2,properties:{}}],wires:[{id:'original'}],fileGroups:{code:'original'},embeddedVision:{recipe:preset.recipe}};
++ const upgraded=withFunctionalEnvironment(p);
++ expect(upgraded.components).toHaveLength(5);expect(upgraded.components[0]).toBe(p.components[0]);
++ expect(upgraded.wires).toBe(p.wires);expect(upgraded.fileGroups).toBe(p.fileGroups);
++ expect(withFunctionalEnvironment(upgraded)).toBe(upgraded);
++ const deleted={...upgraded,components:upgraded.components.filter(p=>p.id!=='ENV_PLANTER')};
++ expect(withFunctionalEnvironment(deleted)).toBe(deleted);
++ const collision={...p,components:[{...p.components[0],id:'ENV_PLANTER'}]};
++ expect(withFunctionalEnvironment(collision)).toBe(collision);
++});
++it('keeps dimensions, movement, bindings and undo through VLX without adding electrical nets',async()=>{
++ const parts=wateringEnvironmentParts();native.setState({components:parts});
++ const part=newEnvironmentObject('container',40,90);native.getState().recordAddComponent(part);
++ expect(native.getState().components).toHaveLength(5);
++ native.getState().undo();expect(native.getState().components).toHaveLength(4);
++ native.getState().redo();expect(native.getState().components).toHaveLength(5);
++ const payload=JSON.parse(JSON.stringify(buildVlxPayload()));
++ await importVlxFile({text:async()=>JSON.stringify(payload)} as File);
++ expect(native.getState().components).toEqual([...parts,part]);
++ expect(buildInputFromStore({components:parts,boards:[],wires:[]} as never).components).toEqual([]);
++ const pot=parts[0],g=geometryFor(pot);
++ expect(g.pins).toEqual([]);expect(g.position[0]).toBeCloseTo(.19,6);expect(g.position[2]).toBeCloseTo(-.065,6);
++ expect(g.size.w*25.4/96).toBeCloseTo(80,6);
++ expect(waterBinding(parts.find(p=>p.id==='ENV_PUMP')!.properties)?.controlPin).toBe(5);
++ expect(waterBinding({...parts[2].properties,waterSystem:{bad:'untrusted'}})).toBeNull();
++});
++it('renders an open vessel, visible filling water, tank depletion and damp soil',()=>{
++ const b=preset.binding,water=initialWaterState(b,800),pot=makeEnvironmentMesh('planter','#c47a54'),tank=makeEnvironmentMesh('reservoir','#9bcad5');
++ const potWater=pot.getObjectByName('water-level')!,tankWater=tank.getObjectByName('water-level')!;
++ expect(potWater.visible).toBe(false);
++ const before=tankWater.scale.y,soilBefore=(pot.userData.soil.material.color).getHex();
++ updateEnvironmentMesh(pot,'planter',{...water,potWaterMl:100,soilWaterMl:80},b);
++ updateEnvironmentMesh(tank,'reservoir',{...water,reservoirMl:50},b);
++ expect(potWater.visible).toBe(true);expect(potWater.scale.y).toBeCloseTo(.465/2);
++ expect(tankWater.scale.y).toBeLessThan(before);expect(pot.userData.soil.material.color.getHex()).not.toBe(soilBefore);
++ expect(new Box3().setFromObject(pot).max.y).toBeGreaterThan(.8);
++ disposeEnvironmentMesh(pot);disposeEnvironmentMesh(tank);
++});
++it('moves hose attachment points with the object including rotation and elevation',()=>{
++ const part={instance:'pot',componentId:'env',pinAssignments:{},position:[.2,0,-.1] as [number,number,number],config:{structure:{width:100,height:100,depth:80,elevation:20,rotation:90}}};
++ const point=environmentAnchor(part,[.5,0,0]);
++ expect(point.x).toBeCloseTo(.2);expect(point.y).toBeCloseTo(.07);expect(point.z).toBeCloseTo(-.05);
++});
+--- /dev/null
++++ b/frontend/src/__tests__/environment-runtime.test.ts
+@@ -0,0 +1,51 @@
++// @vitest-environment jsdom
++import React,{act} from 'react';
++import {createRoot,type Root} from 'react-dom/client';
++import {afterEach,beforeEach,expect,it,vi} from 'vitest';
++const clock=vi.hoisted(()=>({ms:0,high:false,duty:0}));
++vi.mock('../store/useSimulatorStore',async original=>({
++ ...await original<typeof import('../store/useSimulatorStore')>(),
++ getBoardSimulator:()=>({getCurrentCycles:()=>clock.ms*16000,getClockHz:()=>16000000}),
++ getBoardPinManager:()=>({getOutputPins:()=>new Set([5]),peekPinState:()=>clock.high,getPwmValue:()=>clock.duty}),
++}));
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {EnvironmentRuntime} from '../components/circuitiny/EnvironmentRuntime';
++import {wateringEnvironmentParts} from '../components/circuitiny/environmentObjects';
++import {useEnvironmentStore,editWater} from '../components/circuitiny/environmentStore';
++import {registerSensorUpdate,unregisterSensorUpdate} from '../simulation/SensorUpdateRegistry';
++import {emitLedOutput} from '../simulation/ledOutput';
++
++let root:Root,frames:FrameRequestCallback[],led:HTMLElement;const inputs:number[]=[];
++beforeEach(()=>{
++ vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);frames=[];inputs.length=0;clock.ms=0;clock.high=false;clock.duty=0;
++ vi.stubGlobal('requestAnimationFrame',(cb:FrameRequestCallback)=>{frames.push(cb);return frames.length;});
++ vi.stubGlobal('cancelAnimationFrame',()=>{});
++ native.setState({components:[...wateringEnvironmentParts(),{id:'S1',metadataId:'potentiometer',x:0,y:0,properties:{value:800}},{id:'D1',metadataId:'led',x:0,y:0,properties:{}}],boards:[{id:'U1',boardKind:'arduino-uno',running:true}] as never,running:true});
++ led=document.createElement('div');led.id='D1';document.body.appendChild(led);
++ registerSensorUpdate('S1',v=>inputs.push(Number(v.value)));
++ root=createRoot(document.createElement('div'));act(()=>root.render(React.createElement(EnvironmentRuntime)));
++});
++afterEach(()=>{act(()=>root.unmount());unregisterSensorUpdate('S1');led.remove();vi.unstubAllGlobals();});
++const frame=(ms:number)=>act(()=>{clock.ms=ms;frames.shift()!(ms);});
++it('requires live MCU output and solved LED light, pauses on stop, and blocks a missing hose',()=>{
++ frame(0);frame(100);expect(useEnvironmentStore.getState().water?.deliveredMl).toBe(0);
++ clock.high=true;frame(200);expect(useEnvironmentStore.getState().water?.deliveredMl).toBe(0);
++ emitLedOutput(led,'D1',1,200);frame(300);
++ expect(useEnvironmentStore.getState().water?.deliveredMl).toBeCloseTo(3);expect(inputs.length).toBeGreaterThan(0);
++ clock.high=false;frame(400);expect(useEnvironmentStore.getState().water?.deliveredMl).toBeCloseTo(3);
++ native.setState({running:false});frame(5000);const stopped=useEnvironmentStore.getState().water!;
++ expect(stopped.running).toBe(false);expect(stopped.flowMlPerSecond).toBe(0);expect(stopped.deliveredMl).toBeCloseTo(3);
++ act(()=>native.setState(s=>({running:true,components:s.components.filter(c=>c.id!=='ENV_HOSE')})));
++ clock.high=true;frame(5100);expect(useEnvironmentStore.getState().water?.deliveredMl).toBeCloseTo(3);
++ expect(useEnvironmentStore.getState().water?.fault).toContain('연결');
++});
++it('refills and dries the virtual environment; stale PWM cannot pump with current duty zero',()=>{
++ frame(0);clock.high=true;clock.duty=0;
++ emitLedOutput(led,'D1',1,0,{guestMs:0,intervalMs:20,sequence:1,duty:1} as never);
++ frame(100);expect(useEnvironmentStore.getState().water?.deliveredMl).toBe(0);
++ editWater('empty');expect(useEnvironmentStore.getState().water?.reservoirMl).toBe(0);
++ editWater('refill');expect(useEnvironmentStore.getState().water?.reservoirMl).toBe(300);
++ editWater('dry');expect(useEnvironmentStore.getState().water?.soilWaterMl).toBe(20);
++ frame(200);expect(inputs.at(-1)).toBe(818);
++ clock.duty=1;frame(300);expect(useEnvironmentStore.getState().water?.deliveredMl).toBeCloseTo(3);
++});
+--- /dev/null
++++ b/frontend/src/__tests__/watering-model.test.ts
+@@ -0,0 +1,54 @@
++// @vitest-environment jsdom
++import {afterEach,expect,it,vi} from 'vitest';
++import HEX from './fixtures/watering-control.ino.hex?raw';
++import preset from '../components/circuitiny/environmentPresets.json';
++import {advanceWater,initialWaterState,soilAdc} from '../components/circuitiny/wateringModel';
++import {AVRSimulator} from '../simulation/AVRSimulator';
++import {PinManager} from '../simulation/PinManager';
++import {PartSimulationRegistry} from '../simulation/parts/PartSimulationRegistry';
++import {dispatchSensorUpdate} from '../simulation/SensorUpdateRegistry';
++import '../simulation/parts/ComplexParts';
++const b=preset.binding;
++let sim:AVRSimulator|undefined,detach:(()=>void)|undefined;
++afterEach(()=>{detach?.();sim?.stop();vi.unstubAllGlobals();});
++const volume=(s:ReturnType<typeof initialWaterState>)=>s.reservoirMl+s.potWaterMl+s.soilWaterMl;
++it('conserves volume with bounded water levels and follows simulated elapsed time',()=>{
++ const initial=initialWaterState(b,800),one=advanceWater(initial,1,1,b);
++ let split=initial;for(let i=0;i<100;i++)split=advanceWater(split,.01,1,b);
++ expect(one.deliveredMl).toBe(30);expect(one.soilWaterMl-initial.soilWaterMl).toBeCloseTo(12,8);
++ expect(split.deliveredMl).toBeCloseTo(one.deliveredMl,8);expect(volume(one)).toBeCloseTo(volume(initial),8);
++ let full=initial;for(let i=0;i<2000;i++)full=advanceWater(full,.02,1,b);
++ expect(volume(full)).toBeCloseTo(volume(initial),6);expect(full.reservoirMl).toBe(0);
++ expect(full.soilWaterMl).toBeLessThanOrEqual(b.soilCapacityMl);expect(full.potWaterMl).toBeLessThanOrEqual(b.potCapacityMl);
++ expect(full.flowMlPerSecond).toBe(0);expect(full.fault).toContain('비었습니다');
++});
++it('does not deliver water while off, paused, disconnected, empty or full',()=>{
++ const s=initialWaterState(b,800);
++ for(const next of [advanceWater(s,1,0,b),advanceWater(s,0,1,b),advanceWater(s,1,1,b,false)])expect(next.deliveredMl).toBe(0);
++ expect(advanceWater({...s,reservoirMl:0},1,1,b).flowMlPerSecond).toBe(0);
++ expect(advanceWater({...s,potWaterMl:b.potCapacityMl,soilWaterMl:b.soilCapacityMl},1,1,b).deliveredMl).toBe(0);
++ expect(advanceWater(s,1,1,b,false).fault).toContain('연결');
++ expect(soilAdc({...s,soilWaterMl:b.soilCapacityMl},b)).toBe(0);
++});
++it.each([.5,1,2])('compiled UNO code waters dry soil and switches itself off after sensor feedback at %sx',speed=>{
++ const frames:FrameRequestCallback[]=[];
++ vi.stubGlobal('requestAnimationFrame',(cb:FrameRequestCallback)=>{frames.push(cb);return frames.length;});
++ vi.stubGlobal('cancelAnimationFrame',()=>{});
++ const pm=new PinManager();sim=new AVRSimulator(pm);sim.loadHex(HEX);sim.setSpeed(speed);
++ const sensor=document.createElement('div') as unknown as HTMLElement&{value:number};sensor.value=800;
++ detach=PartSimulationRegistry.get('potentiometer')!.attachEvents!(sensor,sim as never,pin=>pin==='SIG'?14:null,'water-sensor')||undefined;
++ let water=initialWaterState(b,800),previous=0,onAt:number|null=null,offAt:number|null=null,hadOn=false;
++ sim.start();frames.shift()!(0);
++ for(let wall=10;wall<=6000/speed;wall+=10){
++  frames.shift()!(wall);
++  const guest=sim.getCurrentCycles()/sim.getClockHz()*1000,power=pm.getPinState(5)?1:0;
++  if(power&&!hadOn){onAt=guest;hadOn=true;}
++  if(!power&&hadOn&&offAt===null)offAt=guest;
++  water=advanceWater(water,(guest-previous)/1000,power,b);previous=guest;
++  dispatchSensorUpdate('water-sensor',{value:soilAdc(water,b)});
++ }
++ expect(pm.getOutputPins().has(5)).toBe(true);expect(onAt).not.toBeNull();expect(offAt).not.toBeNull();
++ expect(offAt!).toBeGreaterThan(2300);expect(offAt!).toBeLessThan(3200);
++ expect(pm.getPinState(5)).toBe(false);expect(water.deliveredMl).toBeGreaterThan(60);expect(water.deliveredMl).toBeLessThan(100);
++ expect(soilAdc(water,b)).toBeLessThan(500);expect(volume(water)).toBeCloseTo(volume(initialWaterState(b,800)),5);
++});
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/watering-control.ino.hex
+@@ -0,0 +1,185 @@
++:100000000C9462000C948A000C948A000C948A0070
++:100010000C948A000C948A000C948A000C948A0038
++:100020000C948A000C948A000C948A000C948A0028
++:100030000C948A000C948A000C948A000C948A0018
++:100040000C94B1030C948A000C941C020C944E0284
++:100050000C948A000C948A000C948A000C948A00F8
++:100060000C948A000C948A00000000080002010031
++:100070000003040700000000000000000102040863
++:100080001020408001020408102001020408102002
++:10009000040404040404040402020202020203032E
++:1000A00003030303000000002300260029000000D2
++:1000B0000000250028002B0000000000240027007D
++:1000C0002A007E0211241FBECFEFD8E0DEBFCDBFD5
++:1000D00011E0A0E0B1E0E4E3FBE002C005900D9286
++:1000E000AC33B107D9F721E0ACE3B1E001C01D9218
++:1000F000A33EB207E1F710E0C2E6D0E004C02197CA
++:10010000FE010E949205C136D107C9F70E94A203E1
++:100110000C9498050C94000061E085E00E94DB04DB
++:1001200060E085E00E94170526E040E052EC61E0C7
++:1001300070E08DE391E00C94B701CF93DF938EE0F4
++:100140000E949704EC01CA3882E0D80724F081E0CD
++:1001500080933C0106C0C53F81E0D80714F410929B
++:100160003C0160913C0185E00E94170561E071E06F
++:100170008DE391E00E94EA024AE050E0BE018DE387
++:1001800091E00E9488036BE071E08DE391E00E94B2
++:10019000EA0285E00E9446054AE050E0BC018DE39A
++:1001A00091E00E948F0368EC70E080E090E0DF91C6
++:1001B000CF910C942004FC01918D228D892F90E029
++:1001C000805C9F4F821B91098F7399270895FC01D2
++:1001D000918D828D981731F0828DE80FF11D858DFC
++:1001E00090E008958FEF9FEF0895FC01918D828D2F
++:1001F000981761F0828DDF01A80FB11D5D968C917B
++:10020000928D9F5F9F73928F90E008958FEF9FEF85
++:100210000895FC01538D448D252F30E0842F90E00C
++:10022000821B930B541710F0CF96089501970895F1
++:1002300084E792E0892B49F080E090E0892B29F057
++:100240000E94740281110C9400000895FC01848DB9
++:10025000DF01A80FB11DA35ABF4F2C91848D90E0F0
++:1002600001968F739927848FA689B7892C93A089CB
++:10027000B1898C91837080648C93938D848D981355
++:1002800006C00288F389E02D80818F7D80830895E8
++:10029000EF92FF920F931F93CF93DF93EC0181E0D6
++:1002A000888F9B8D8C8D981305C0E889F989808192
++:1002B00085FD26C0F62E0B8D10E00F5F1F4F0F73CC
++:1002C0001127E02E8C8DE8120CC00FB607FCFACF78
++:1002D000E889F989808185FFF5CFCE010E9426014A
++:1002E000F1CF8B8DFE01E80FF11DE35AFF4FF08235
++:1002F0009FB7F8940B8FEA89FB89808180620AC0DE
++:100300009FB7F894EE89FF896083E889F989808135
++:100310008370806480839FBF81E090E0DF91CF9104
++:100320001F910F91FF90EF900895CF93DF93EC0111
++:10033000888D8823C9F0EA89FB89808185FD05C005
++:10034000A889B9898C9186FD0FC00FB607FCF5CF3F
++:10035000808185FFF2CFA889B9898C9185FFEDCF87
++:10036000CE010E942601E7CFDF91CF910895CF9271
++:10037000DF92EF92FF921F93CF93DF93EC016A011C
++:100380007B01122FE889F98982E080834115514E63
++:1003900061057105B1F060E079E08DE390E0A701BF
++:1003A00096010E947005DA01C9010197A109B109FE
++:1003B000B695A795979587959C01211580E13807FB
++:1003C000A8F0E889F989108260E874E88EE190E08D
++:1003D000A70196010E947005DA01C9010197A109E0
++:1003E000B109B695A795979587959C01EC85FD85F4
++:1003F0003083EE85FF852083188EEC89FD8910837C
++:10040000EA89FB89808180618083EA89FB89808118
++:1004100088608083EA89FB89808180688083EA899B
++:10042000FB8980818F7D8083DF91CF911F91FF9029
++:10043000EF90DF90CF9008951F920F920FB60F921A
++:1004400011242F938F939F93EF93FF93E0914D018E
++:10045000F0914E018081E0915301F091540182FDB1
++:1004600012C09081809156018F5F8F732091570148
++:10047000821751F0E0915601F0E0E35CFE4F958F5A
++:100480008093560101C08081FF91EF919F918F91E0
++:100490002F910F900FBE0F901F9018951F920F92E3
++:1004A0000FB60F9211242F933F934F935F936F9347
++:1004B0007F938F939F93AF93BF93EF93FF938DE3BE
++:1004C00091E00E942601FF91EF91BF91AF919F9122
++:1004D0008F917F916F915F914F913F912F910F90ED
++:1004E0000FBE0F901F9018958DE391E00E94DB00E6
++:1004F00021E0892B09F420E0822F0895EDE3F1E05B
++:100500001382128288EE93E0A0E0B0E084839583AA
++:10051000A683B7838EE191E09183808385EC90E0A0
++:100520009587848784EC90E09787868780EC90E0BD
++:10053000918B808B81EC90E0938B828B82EC90E0AE
++:10054000958B848B86EC90E0978B868B118E128E28
++:10055000138E148E0895CF92DF92EF92FF920F9335
++:100560001F93CF93DF936C017A018B01C0E0D0E041
++:10057000CE15DF0581F0D8016D918D01D601ED9189
++:10058000FC910190F081E02DC6010995892B11F0B5
++:100590002196EECF7E01C701DF91CF911F910F9180
++:1005A000FF90EF90DF90CF9008956115710579F07D
++:1005B000FB0101900020E9F73197AF01461B570B73
++:1005C000DC01ED91FC910280F381E02D099480E043
++:1005D00090E008950C94D502DC01ED91FC9101901E
++:1005E000F081E02D09946CE271E00C94D5028F92B9
++:1005F0009F92AF92BF92EF92FF920F931F93CF9370
++:10060000DF93CDB7DEB7A1970FB6F894DEBF0FBE6C
++:10061000CDBF7C01FA01CB0119A2223008F42AE0F7
++:100620008E010F5D1F4F822E912CA12CB12CBF018A
++:10063000A50194010E947005F901CA010150110938
++:100640006A3014F4605D01C0695CD8016C93232B9F
++:10065000242B252B61F7B801C7010E94D502A19672
++:100660000FB6F894DEBF0FBECDBFDF91CF911F91C3
++:100670000F91FF90EF90BF90AF909F908F90089553
++:10068000CF92DF92EF92FF920F931F93CF93DF935E
++:100690002115310581F4DC01ED91FC910190F0818F
++:1006A000E02D642FDF91CF911F910F91FF90EF907C
++:1006B000DF90CF9009942A30310501F577FF1DC0F6
++:1006C0006A017B01EC016DE20E94EC028C0144277F
++:1006D0005527BA014C195D096E097F092AE0CE0140
++:1006E0000E94F702800F911FDF91CF911F910F9110
++:1006F000FF90EF90DF90CF9008952AE0DF91CF91A7
++:100700001F910F91FF90EF90DF90CF900C94F70224
++:100710009A01AB01770F660B770B0C9440030F9394
++:100720001F93CF93DF93EC010E9488038C01CE01CD
++:100730000E94F302800F911FDF91CF911F910F91C3
++:10074000089508950E945C040E94A1030E948C00F9
++:10075000C8E1D1E00E949D002097E1F30E941801BA
++:10076000F9CF1F920F920FB60F9211242F933F9340
++:100770008F939F93AF93BF938091DB019091DC01A6
++:10078000A091DD01B091DE013091DA0123E0230F69
++:100790002D3720F40196A11DB11D05C026E8230FB9
++:1007A0000296A11DB11D2093DA018093DB01909385
++:1007B000DC01A093DD01B093DE018091DF01909117
++:1007C000E001A091E101B091E2010196A11DB11DEE
++:1007D0008093DF019093E001A093E101B093E201E7
++:1007E000BF91AF919F918F913F912F910F900FBE2D
++:1007F0000F901F9018953FB7F8948091DF0190916A
++:10080000E001A091E101B091E20126B5A89B05C0ED
++:100810002F3F19F00196A11DB11D3FBFBA2FA92F7F
++:10082000982F8827820F911DA11DB11DBC01CD01FC
++:1008300042E0660F771F881F991F4A95D1F70895E8
++:100840008F929F92AF92BF92CF92DF92EF92FF92E0
++:100850006B017C010E94FB034B015C01C114D104BC
++:10086000E104F10401F10E946F050E94FB03DC0129
++:10087000CB0188199909AA09BB09883E9340A105B3
++:10088000B10560F321E0C21AD108E108F10888EE51
++:10089000880E83E0981EA11CB11CC114D104E10490
++:1008A000F10419F7DBCFFF90EF90DF90CF90BF906E
++:1008B000AF909F908F900895789484B5826084BDA6
++:1008C00084B5816084BD85B5826085BD85B5816054
++:1008D00085BDEEE6F0E0808181608083E1E8F0E0B4
++:1008E0001082808182608083808181608083E0E8E3
++:1008F000F0E0808181608083E1EBF0E080818460C2
++:100900008083E0EBF0E0808181608083EAE7F0E0C3
++:100910008081846080838081826080838081816027
++:1009200080838081806880831092C10008958E301A
++:1009300008F08E502091000190E4299F900111242D
++:100940008770822B80937C0080917A0080648093F2
++:100950007A0080917A0086FDFCCF8091780090919A
++:1009600079000895833081F028F4813099F0823045
++:10097000A1F008958730A9F08830B9F08430D1F41F
++:10098000809180008F7D03C0809180008F7780935D
++:100990008000089584B58F7702C084B58F7D84BDB3
++:1009A00008958091B0008F7703C08091B0008F7D53
++:1009B0008093B0000895CF93DF9390E0FC01E4585A
++:1009C000FF4F2491FC01E057FF4F8491882361F190
++:1009D00090E0880F991FFC01E854FF4FC591D49116
++:1009E000FC01E255FF4FA591B491611109C09FB779
++:1009F000F8948881209582238883EC912E230BC064
++:100A0000623061F49FB7F8948881322F3095832348
++:100A10008883EC912E2B2C939FBF06C08FB7F89440
++:100A2000E8812E2B28838FBFDF91CF9108951F93EC
++:100A3000CF93DF93282F30E0F901E859FF4F8491DD
++:100A4000F901E458FF4FD491F901E057FF4FC491E9
++:100A5000CC23C1F0162F81110E94B204EC2FF0E0DC
++:100A6000EE0FFF1FE255FF4FA591B4919FB7F89489
++:100A7000111104C08C91D095D82302C0EC91DE2BCB
++:100A8000DC939FBFDF91CF911F910895CF93DF93A8
++:100A9000282F30E0F901E859FF4F8491F901E4581B
++:100AA000FF4FD491F901E057FF4FC491CC2391F04F
++:100AB00081110E94B204EC2FF0E0EE0FFF1FEC5505
++:100AC000FF4FA591B491EC91ED2381E090E021F4EA
++:100AD00080E002C080E090E0DF91CF91089508951A
++:100AE000A1E21A2EAA1BBB1BFD010DC0AA1FBB1F32
++:100AF000EE1FFF1FA217B307E407F50720F0A21BA4
++:100B0000B30BE40BF50B661F771F881F991F1A9410
++:100B100069F760957095809590959B01AC01BD013A
++:100B2000CF010895EE0FFF1F0590F491E02D099479
++:040B3000F894FFCF67
++:100B340001736F696C5F6164633D002C70756D7047
++:100B44005F636F6D6D616E643D00000000004801DD
++:100B5400AB0209019501DB00F500E7000D0A006E08
++:0C0B6400616E00696E66006F766600002E
++:00000001FF

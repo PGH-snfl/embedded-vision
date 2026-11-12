@@ -1,0 +1,740 @@
+{
+  "$defs": {
+    "Asset": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "synthetic": {
+          "default": false,
+          "title": "Synthetic",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "sha256",
+        "width",
+        "height",
+        "filename"
+      ],
+      "title": "Asset",
+      "type": "object"
+    },
+    "Claim": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "status": {
+          "$ref": "#/$defs/Status",
+          "default": "UNKNOWN"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "calibrated": {
+          "const": false,
+          "default": false,
+          "title": "Calibrated",
+          "type": "boolean"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "candidates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "reason": {
+          "default": "아직 확인하지 않았습니다.",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "title": "Claim",
+      "type": "object"
+    },
+    "Component": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "board",
+            "breadboard",
+            "led",
+            "resistor",
+            "button",
+            "sensor",
+            "other",
+            "capacitor",
+            "source",
+            "display",
+            "potentiometer"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "catalog_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Id"
+        },
+        "asset_id": {
+          "default": "image",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/$defs/Claim"
+        },
+        "value": {
+          "$ref": "#/$defs/Claim"
+        },
+        "bbox": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Bbox",
+          "type": "array"
+        },
+        "terminals": {
+          "items": {
+            "$ref": "#/$defs/Terminal"
+          },
+          "title": "Terminals",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "bbox"
+      ],
+      "title": "Component",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "synthetic_fixture",
+            "manual_annotation",
+            "user_confirmation",
+            "color_segmentation",
+            "ocr",
+            "geometry",
+            "datasheet",
+            "design_spec",
+            "video_frame",
+            "agent_edit",
+            "vlm"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "title": "Points",
+          "type": "array"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Url"
+        }
+      },
+      "required": [
+        "id",
+        "asset_id",
+        "method",
+        "text"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Link": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "from_terminal": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From Terminal"
+        },
+        "to_terminal": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To Terminal"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "title": "Path",
+          "type": "array"
+        },
+        "connection": {
+          "$ref": "#/$defs/Claim"
+        },
+        "asset_id": {
+          "default": "image",
+          "title": "Asset Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "Link",
+      "type": "object"
+    },
+    "Point": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Point",
+      "type": "object"
+    },
+    "Status": {
+      "enum": [
+        "CONFIRMED",
+        "INFERRED",
+        "UNKNOWN"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "Terminal": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/Claim"
+        },
+        "pin_mapping": {
+          "$ref": "#/$defs/Claim"
+        },
+        "image_position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Point"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "Terminal",
+      "type": "object"
+    },
+    "TextObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "bbox": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Bbox",
+          "type": "array"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "asset_id",
+        "text",
+        "bbox",
+        "score",
+        "evidence_id"
+      ],
+      "title": "TextObservation",
+      "type": "object"
+    },
+    "WireCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "color": {
+          "title": "Color",
+          "type": "string"
+        },
+        "bbox": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Bbox",
+          "type": "array"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "status": {
+          "const": "UNKNOWN",
+          "default": "UNKNOWN",
+          "title": "Status",
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "maxItems": 200,
+          "title": "Path",
+          "type": "array"
+        },
+        "endpoints": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "maxItems": 2,
+          "title": "Endpoints",
+          "type": "array"
+        },
+        "geometry": {
+          "default": "contour",
+          "enum": [
+            "contour",
+            "segment",
+            "ambiguous"
+          ],
+          "title": "Geometry",
+          "type": "string"
+        },
+        "reason": {
+          "default": "실제 전선·끝점·핀 연결을 확인하지 않았습니다.",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "color",
+        "bbox",
+        "evidence_id"
+      ],
+      "title": "WireCandidate",
+      "type": "object"
+    },
+    "WireHypothesis": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "endpoint_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Endpoint Ids",
+          "type": "array"
+        },
+        "visible_paths": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/Point"
+            },
+            "type": "array"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Visible Paths",
+          "type": "array"
+        },
+        "bridge": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Bridge",
+          "type": "array"
+        },
+        "color": {
+          "title": "Color",
+          "type": "string"
+        },
+        "ranking_score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Ranking Score",
+          "type": "number"
+        },
+        "status": {
+          "const": "INFERRED",
+          "default": "INFERRED",
+          "title": "Status",
+          "type": "string"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "link_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Link Id"
+        }
+      },
+      "required": [
+        "id",
+        "asset_id",
+        "evidence_id",
+        "endpoint_ids",
+        "visible_paths",
+        "bridge",
+        "color",
+        "ranking_score",
+        "reasons"
+      ],
+      "title": "WireHypothesis",
+      "type": "object"
+    },
+    "WireReview": {
+      "additionalProperties": false,
+      "description": "User correspondence across views, not an automatic electrical measurement.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "link_id": {
+          "title": "Link Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "from_terminal": {
+          "title": "From Terminal",
+          "type": "string"
+        },
+        "to_terminal": {
+          "title": "To Terminal",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "maxItems": 200,
+          "minItems": 2,
+          "title": "Points",
+          "type": "array"
+        },
+        "entire_wire_visible": {
+          "title": "Entire Wire Visible",
+          "type": "boolean"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "link_id",
+        "asset_id",
+        "from_terminal",
+        "to_terminal",
+        "points",
+        "entire_wire_visible",
+        "evidence_id"
+      ],
+      "title": "WireReview",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0",
+      "default": "0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "title": "Title",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "mode": {
+      "enum": [
+        "synthetic_demo",
+        "photo",
+        "reference_design",
+        "video"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "profile": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profile"
+    },
+    "parameters": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Parameters",
+      "type": "object"
+    },
+    "assets": {
+      "items": {
+        "$ref": "#/$defs/Asset"
+      },
+      "title": "Assets",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "components": {
+      "items": {
+        "$ref": "#/$defs/Component"
+      },
+      "title": "Components",
+      "type": "array"
+    },
+    "links": {
+      "items": {
+        "$ref": "#/$defs/Link"
+      },
+      "title": "Links",
+      "type": "array"
+    },
+    "wire_candidates": {
+      "items": {
+        "$ref": "#/$defs/WireCandidate"
+      },
+      "title": "Wire Candidates",
+      "type": "array"
+    },
+    "text_observations": {
+      "items": {
+        "$ref": "#/$defs/TextObservation"
+      },
+      "title": "Text Observations",
+      "type": "array"
+    },
+    "wire_reviews": {
+      "items": {
+        "$ref": "#/$defs/WireReview"
+      },
+      "title": "Wire Reviews",
+      "type": "array"
+    },
+    "wire_hypotheses": {
+      "items": {
+        "$ref": "#/$defs/WireHypothesis"
+      },
+      "title": "Wire Hypotheses",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "title",
+    "revision",
+    "mode",
+    "assets"
+  ],
+  "title": "Graph",
+  "type": "object"
+}

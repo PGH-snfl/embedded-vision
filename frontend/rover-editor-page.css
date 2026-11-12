@@ -1,0 +1,5 @@
+*{box-sizing:border-box}html,body{margin:0;height:100%;font:14px system-ui,sans-serif;color:#203c2b;background:#f7fbf8}body{display:flex;flex-direction:column}body>header{display:flex;align-items:center;gap:16px;padding:9px 16px;border-bottom:1px solid #d3e2d8}body>header span{color:#c3d8cb;font-size:12px}main{min-height:0;flex:1}[hidden]{display:none!important}#editor-host{width:100%;max-width:none;margin:0;padding:0}#motion-panel{overflow:auto;width:100%}.robot-workbench{display:flex;flex-direction:column;height:100%;margin:0;padding:0;border:0;border-radius:0}.robot-workbench>.preview-heading,.robot-workbench>p:not([role=status]),.robot-workbench>details{display:none}.robot-workbench iframe{flex:1;height:100%;min-height:0;border:0;border-radius:0}.robot-workbench [role=status]{margin:0;padding:3px 12px;min-height:0;font-size:12px}.robot-workbench [role=status]:empty{display:none}
+/* Leave the embedded editor as much vertical space as possible. */
+body>header{padding:4px 12px;min-height:25px;font-size:11px}
+body>header span{display:none}
+.robot-workbench [role=status]{font-size:10px;padding:2px 8px}

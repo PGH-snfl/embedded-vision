@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>로봇 3D 운동 · Embedded Vision</title>
+ <link rel="stylesheet" href="/style.css">
+ <link rel="stylesheet" href="/integrated.css">
+ <link rel="stylesheet" href="/robot-guide.css?v=rover-1">
+ <link rel="stylesheet" href="/rover-simulator.css?v=rover-direction-1">
+ <link rel="stylesheet" href="/rover-motion-page.css?v=1">
+ <script type="module" src="/rover-motion-page.js?v=object-lock-1"></script>
+<script src="/runtime-config.js"></script></head>
+<body class="rover-motion-page">
+ <header class="motion-header"><div><strong>Embedded Vision</strong><span>3D 운동 미리보기</span></div><a id="analysis-link" href="/">사진 분석 화면</a></header>
+ <main class="motion-main">
+  <h1>로봇 3D 운동 미리보기</h1>
+  <p class="motion-context">마지막으로 저장하고 확인한 회로를 기준으로 보여줍니다. 편집기에서 배선을 변경하면 운동 미리보기를 다시 실행해 주세요.</p>
+  <p class="motion-context">이 화면은 가상 운동 모델입니다. 편집한 코드나 회로의 전기적 동작을 실행하지 않습니다.</p>
+  <p id="motion-page-status" role="status">저장된 회로와 구조를 확인하고 있습니다…</p>
+  <div id="motion-simulator"></div>
+  <details class="compact-details motion-guide"><summary>부품과 조립 가이드</summary><div id="motion-guide"></div></details>
+ </main>
+</body>
+</html>

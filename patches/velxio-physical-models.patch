@@ -1,0 +1,450 @@
+diff --git a/frontend/src/components/circuitiny/bridge.ts b/frontend/src/components/circuitiny/bridge.ts
+--- a/frontend/src/components/circuitiny/bridge.ts
++++ b/frontend/src/components/circuitiny/bridge.ts
+@@ -4,6 +4,7 @@
+ import { isBreadboard } from '../../utils/breadboardNets';
+ import { nearestHole, computeSeating } from '../../utils/breadboardSnap';
+ import { geometryFor } from './geometry';
++import {physicalPresentation} from './physicalModels';
+ import { ComponentRegistry } from '../../services/ComponentRegistry';
+ import { resolvePin } from './project/pins';
+ import { getRenderedPoints } from '../../utils/wireHitDetection';
+@@ -26,6 +27,7 @@
+   const make = (item: NativePart | NativeState['boards'][number]): ComponentInstance => {
+     const g = geometryFor(item),
+       isBoard = g.board;
++    const physical='properties' in item?physicalPresentation(item,g):undefined;
+     const metadataId = g.kind,
+       metadata = registry.getById(metadataId);
+     const displayName = metadataId === 'custom-chip' && 'properties' in item && typeof item.properties?.chipName === 'string'
+@@ -33,12 +35,12 @@
+       : metadata?.name || metadataId;
+     const cid = metadataId + '@' + item.id;
+     offsets.set(item.id, g.offset);
+-    const pins = g.pins.map((p) =>
++    const pins = (physical?.pins||g.pins).map((p) =>
+       pin(
+         encodePin(p.name),
+         isBreadboard(metadataId)
+           ? '빵판 ' + p.name.split('.')[1].toUpperCase() + parseInt(p.name)
+-          : p.name,
++          : physical?.model.labels?.[p.name]||p.name,
+         /GND/i.test(p.name)
+           ? 'ground'
+           : isBoard && ['5V', '3.3V', '3V3', 'VIN'].includes(p.name)
+@@ -85,8 +87,10 @@
+         metadataId,
+         nativeId: item.id,
+         isBoard,
+-        width: g.size.w * PX,
+-        depth: g.size.h * PX,
++        physicalModelId:physical?.model.id,
++        width: physical?physical.model.width/1000:g.size.w * PX,
++        depth: physical?physical.model.depth/1000:g.size.h * PX,
++        physicalHeight:physical?physical.model.height/1000:undefined,
+         rotation: g.rotation,
+         bodyCenter: g.bodyCenter,
+         name: metadataId === 'custom-chip' ? displayName : metadata?.name || (isBoard ? ('name' in item ? item.name : metadataId) : metadataId),
+@@ -165,6 +169,17 @@
+   const componentId = owner === 'board' ? primary?.id : owner;
+   const resolved = resolvePin(useStore.getState().project, ref);
+   if (!componentId || !resolved) throw new Error('핀 위치가 아직 확인되지 않았습니다.');
++  const part=s.components.find(p=>p.id===componentId);
++  if(part){
++    const geometry=geometryFor(part);
++    if(physicalPresentation(part,geometry)){
++      // The 3D model uses physical connector positions. Native 2D wires still
++      // retain their original pin coordinates and identities on save/export.
++      const p=geometry.pins.find(p=>p.name===decodePin(pinId));
++      if(!p)throw new Error('원본 편집기의 단자 위치를 확인할 수 없습니다.');
++      return {componentId,pinName:decodePin(pinId),x:(geometry.position[0]+p.position[0])/PX,y:(geometry.position[2]+p.position[2])/PX};
++    }
++  }
+   return {
+     componentId,
+     pinName: decodePin(pinId),
+@@ -286,7 +301,7 @@
+           throw new Error('보드·빵판 이동 허용 버튼을 켜면 이동할 수 있습니다.');
+         let x = position[0] / PX - offset.x,
+           y = position[2] / PX - offset.y;
+-        if (c && !isBreadboard(c.metadataId)) {
++        if (c && !isBreadboard(c.metadataId) && !physicalPresentation(c,geometryFor(c))) {
+           const g = geometryFor({ ...c, x, y }),
+             first = g.pins[0];
+           if (first) {
+diff --git a/frontend/src/components/circuitiny/EmbeddedBodies.tsx b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -7,6 +7,7 @@
+ import { catalog, definitions, PX, UNO_W, UNO_H } from './catalog';
+ import { useStore } from './store';
+ import { NativeFace } from './NativeFace';
++import {PhysicalBody} from './PhysicalBodies';
+ import {
+   UnoModel,
+   LedModel,
+@@ -56,6 +57,7 @@
+     center = (config?.bodyCenter || [0, 0, 0]) as [number, number, number],
+     id = String(config?.nativeId || componentId.split('@')[1]);
+   if (kind === 'arduino-uno') return <UnoBody componentId={componentId} rotation={rotation} />;
++  if (typeof config?.physicalModelId==='string')return <PhysicalBody modelId={config.physicalModelId} id={id}/>;
+   if (kind === 'led')
+     return <LedModel pins={pins} color={String(config?.color || 'red')} brightness={brightness} />;
+   if (kind.startsWith('breadboard'))
+@@ -122,6 +124,7 @@
+       const project = useStore.getState().project,
+         points: T.Vector3[] = [];
+       for (const c of [...project.components, ...(project.boards || [])])
++      {
+         definitions
+           .get(c.componentId)
+           ?.pins.forEach((p) =>
+@@ -129,6 +132,12 @@
+               new T.Vector3(...p.position).add(new T.Vector3(...(c.position || [0, 0, 0]))),
+             ),
+           );
++        const w=Number(c.config?.width)||0,d=Number(c.config?.depth)||0,h=Number(c.config?.physicalHeight)||.01;
++        const a=Number(c.config?.rotation||0)*Math.PI/180;
++        for(const x of [-w/2,w/2])for(const z of [-d/2,d/2])for(const y of [0,h]){
++          points.push(new T.Vector3(x*Math.cos(a)-z*Math.sin(a),y,x*Math.sin(a)+z*Math.cos(a)).add(new T.Vector3(...(c.position||[0,0,0]))));
++        }
++      }
+       const box = new T.Box3().setFromPoints(points).expandByScalar(0.009);
+       if (box.isEmpty()) return;
+       const center = box.getCenter(new T.Vector3()),
+diff --git a/frontend/src/components/circuitiny/CircuitinyEditor.tsx b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -18,6 +18,7 @@
+ import { useBreadboardHoverPreview } from './useBreadboardHoverPreview';
+ import { isBreadboard } from '../../utils/breadboardNets';
+ import { STRUCTURE_ID, newStructure, structureParameters, type StructureShape } from './structureObjects';
++import {physicalModelFor} from './physicalModels';
+ import {
+   rotateSelected,
+   copySelected,
+@@ -76,6 +77,7 @@
+     meta = component && registry.getById(component.metadataId);
+   const lockedPosition = !movableInfrastructure && (!!board || !!(component && isBreadboard(component.metadataId)));
+   const structure = component?.metadataId === STRUCTURE_ID ? structureParameters(component.properties) : null;
++  const physicalModel=component&&physicalModelFor(component);
+   const addStructure = (shape: StructureShape) => {
+     if (native.getState().running) return;
+     const state=native.getState(), base=state.boards[0], item=newStructure(shape,(base?.x ?? 120)+260,(base?.y ?? 120)+40);
+@@ -393,8 +395,9 @@
+       {(component || board) && (
+         <aside className="ev-c3d-properties">
+           <strong>
+-            {selected} · {structure ? (structure.shape==='box'?'구조물 상자':'구조물 원통') : meta?.name || board?.name || board?.boardKind || component?.metadataId}
++            {selected} · {structure ? (structure.shape==='box'?'구조물 상자':'구조물 원통') : physicalModel?.name || meta?.name || board?.name || board?.boardKind || component?.metadataId}
+           </strong>
++          {physicalModel&&<details><summary>실물 형상 · {physicalModel.name}</summary><p>{physicalModel.source?'제안된 설계 부품의 제품 형상 모델입니다.':'제품 모델이 미확인인 일반형입니다.'} 전기 동작 모델과는 별개입니다.</p><p>{physicalModel.basis}</p>{physicalModel.source&&<><p>외곽 기준: {physicalModel.width} × {physicalModel.depth} mm</p><a href={physicalModel.source} target="_blank" rel="noreferrer">제조사 원문·도면</a></>}{['hat','shield'].includes(physicalModel.kind)&&<p><a href="/physical-models/hat-license.txt" target="_blank" rel="noreferrer">Adafruit PCB 자료 · CC BY-SA 3.0</a></p>}</details>}
+           <p>
+             {running
+               ? '실행 중입니다. 버튼·다이얼·센서를 조작할 수 있습니다.'
+diff --git a/frontend/src/components/EmbeddedVisionBridge.tsx b/frontend/src/components/EmbeddedVisionBridge.tsx
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -10,6 +10,7 @@
+ import {acceptedMotionRevision,getMotionSource,matchingCircuitRevision,setMotionSource} from './embeddedMotionBridge';
+ import {ensureRobotCode,findRobotCode} from './embeddedRobotCode';
+ import {translatedSimulationNotice} from './translatedSimulationNotice';
++import {withLegacyPhysicalModels} from './circuitiny/physicalModels';
+ 
+ export function EmbeddedVisionBridge({onReady,actions}:{onReady?:(ready:boolean,restored:boolean,simulationNotice?:string)=>void;actions?:ReactNode}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+@@ -53,6 +54,7 @@
+    else if(cloud.current)setCloudStatus('아직 서버 저장본 없음 · 편집 후 작업공간에 저장하세요.');
+    if(cancelled)return;
+    if(motion)payload=ensureRobotCode(payload,source);
++   payload=withLegacyPhysicalModels(payload);
+    await importVlxFile(new File([JSON.stringify(payload)],'embedded.vlx',{type:'application/json'}));
+    if(cancelled)return;
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+diff --git a/frontend/src/components/circuitiny/Wires3D.tsx b/frontend/src/components/circuitiny/Wires3D.tsx
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -1,6 +1,6 @@
+ import { EndpointHandle } from './EndpointHandle';
+ import { useRef, useMemo, useEffect } from 'react';
+-import { Line, TransformControls } from '@react-three/drei';
++import { Html, Line, TransformControls } from '@react-three/drei';
+ import * as T from 'three';
+ import { useStore } from './store';
+ import { resolvePin } from './project/pins';
+@@ -97,6 +97,8 @@
+             else b.position = drag.point;
+           }
+           const lift = 0.012;
++          // This net represents the whole mating header, never one jumper wire.
++          const headerAssembly = net.endpoints.length === 2 && net.endpoints.every(p => p.endsWith('.GPIO40'));
+           const points: [number, number, number][] = [
+             a.position,
+             [a.position[0], lift, a.position[2]],
+@@ -117,13 +119,16 @@
+           };
+           return (
+             <group key={net.id}>
+-              <JumperCable
++              {headerAssembly ? <>
++                <Line points={points} color={selected === net.id ? '#df923c' : '#59718e'} lineWidth={3} dashed dashSize={0.003} gapSize={0.002} onClick={pick} />
++                <Html center position={[(a.position[0]+b.position[0])/2,0.018,(a.position[2]+b.position[2])/2]} style={{pointerEvents:'none',whiteSpace:'nowrap',fontSize:10,background:'#edf2f8e8',color:'#354d67',border:'1px solid #a9b9ca',borderRadius:4,padding:'3px 6px'}}>40핀 헤더 결합 · 분리 표시</Html>
++              </> : <JumperCable
+                 points={points}
+                 color={net.color || '#328260'}
+                 selected={selected === net.id}
+                 onClick={pick}
+-              />
+-              {!running && !wireMode && (
++              />}
++              {!headerAssembly && !running && !wireMode && (
+                 <>
+                   <EndpointHandle
+                     wireId={net.id}
+diff --git a/frontend/src/components/circuitiny/physicalModels.ts b/frontend/src/components/circuitiny/physicalModels.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/physicalModels.ts
+@@ -0,0 +1,62 @@
++/** Reviewed presentation models. Product choice is a proposed design, not photo evidence. */
++import cad from './physicalBoardData.json';
++export type Pad={element:string;pad:string;at:[number,number];drill:number};
++export type BoardPart={name:string;package:string;kind:string;at:[number,number];rotation:number;pads:Pad[]};
++export type BoardLayout={width:number;depth:number;pads:Pad[];parts:BoardPart[];holes:Array<{at:[number,number];drill:number}>;source:string;source_sha256:string;license:string;author:string};
++export const boardLayouts=cad as unknown as Record<'hat'|'shield',BoardLayout>;
++type Point=[number,number,number];
++export type PhysicalModel={id:string;name:string;kind:'pi'|'hat'|'shield'|'motor'|'dc-power'|'usb-power';width:number;depth:number;height:number;ports:Record<string,Point>;labels?:Record<string,string>;source:string;basis:string};
++function boardPort(board:BoardLayout,element:string,pad:string,height=8):Point{
++ const p=board.pads.find(p=>p.element===element&&p.pad===pad);
++ if(!p)throw Error('제조사 CAD에서 단자 위치를 찾을 수 없습니다: '+element+'.'+pad);
++ return [p.at[0],height,p.at[1]];
++}
++function terminalPort(board:BoardLayout,element:string,pad:string):Point{
++ const p=boardPort(board,element,pad,4.5),angle=(board.parts.find(p=>p.name===element)?.rotation||0)*Math.PI/180;
++ // CAD gives the through-hole pad; the cable enters the front of its block.
++ return [p[0]+3.6*Math.sin(angle),p[1],p[2]+3.6*Math.cos(angle)];
++}
++const hat=boardLayouts.hat,shield=boardLayouts.shield;
++export const physicalModels:Record<string,PhysicalModel>={
++ 'rpi4b':{id:'rpi4b',name:'Raspberry Pi 4 Model B',kind:'pi',width:85,depth:56,height:18,
++  ports:{GPIO40:[-10,8.5,-24.5],USB_C:[-31.3,3,29]},labels:{GPIO40:'40핀 헤더 전체 결합',USB_C:'USB-C 전원'},
++  source:'https://datasheets.raspberrypi.com/rpi4/raspberry-pi-4-mechanical-drawing.pdf',basis:'제조사 외곽 치수·커넥터 위치 기준. 내부 부품과 높이는 간략 모델입니다.'},
++ 'adafruit-motor-hat-2348':{id:'adafruit-motor-hat-2348',name:'Adafruit Motor HAT #2348 · Rev A',kind:'hat',width:hat.width,depth:hat.depth,height:13,
++  ports:{GPIO40:[0,8,-24.25],'M1.left':terminalPort(hat,'J1','5'),'M1.right':terminalPort(hat,'J1','4'),'M2.left':terminalPort(hat,'J1','2'),'M2.right':terminalPort(hat,'J1','1'),'PWR.positive':terminalPort(hat,'MPOWER','2'),'PWR.negative':terminalPort(hat,'MPOWER','1')},
++  labels:{GPIO40:'40핀 헤더 전체 결합','PWR.positive':'모터 전원 +','PWR.negative':'모터 전원 −'},source:'https://github.com/adafruit/Adafruit-DC-Stepper-Motor-HAT-PCB',basis:'공개 Rev A PCB의 패드·부품 배치 기준. 부품 높이와 기판 모서리는 간략 모델입니다.'},
++ 'adafruit-motor-shield-v2':{id:'adafruit-motor-shield-v2',name:'Adafruit Motor Shield V2.3',kind:'shield',width:shield.width,depth:shield.depth,height:13,
++  ports:{SDA:boardPort(shield,'JP3','2',7),SCL:boardPort(shield,'JP3','1',7),'5V':boardPort(shield,'JP2','4',7),GND:boardPort(shield,'JP2','2',7),
++   'M1.left':terminalPort(shield,'J1','5'),'M1.right':terminalPort(shield,'J1','4'),'M2.left':terminalPort(shield,'J1','2'),'M2.right':terminalPort(shield,'J1','1'),'PWR.positive':terminalPort(shield,'MPOWER','2'),'PWR.negative':terminalPort(shield,'MPOWER','1')},
++  labels:{'PWR.positive':'모터 전원 +','PWR.negative':'모터 전원 −'},source:'https://github.com/adafruit/Adafruit-Motor-Shield-V2-PCB',basis:'공개 V2.3 PCB의 패드·부품 배치 기준. 실물은 Uno 위에 장착하며 여기서는 분리해 표시합니다.'},
++ 'adafruit-micro-dc-2941':{id:'adafruit-micro-dc-2941',name:'Adafruit DC 모터 #2941',kind:'motor',width:32.3,depth:12.3,height:29.9,
++  ports:{black:[-21,3,-1.27],red:[-21,3,1.27]},source:'https://www.adafruit.com/product/2941',basis:'제조사 외곽 치수·제품 형상 기준. 서보 케이스의 2선 DC 모터이며 3선 서보가 아닙니다. 케이블은 개략 배치입니다.'},
++ 'dc-supply-generic':{id:'dc-supply-generic',name:'모터 DC 전원 · 일반형',kind:'dc-power',width:40,depth:28,height:22,
++  ports:{red:[22,5,-4],black:[22,5,4]},source:'',basis:'제품 모델과 외형 치수가 미확인인 일반형 표시입니다. 실제 제품 선택·정격 확인이 필요합니다.'},
++ 'usb-c-supply-generic':{id:'usb-c-supply-generic',name:'USB-C 전원 · 일반형',kind:'usb-power',width:34,depth:28,height:24,
++  ports:{USB_C:[25,6,0]},source:'',basis:'제품 모델과 외형 치수가 미확인인 일반형 표시입니다. USB-C 연결만 표현합니다.'},
++};
++type Part={metadataId?:string;properties?:Record<string,unknown>};
++/** Known old conversion exports lacked a model ID. Upgrade only that authored recipe. */
++export function withLegacyPhysicalModels<T extends {components?:Array<Part&{id:string}>;embeddedVision?:{recipe?:string}}>(project:T):T{
++ if(project.embeddedVision?.recipe!=='translated_uno_motor_shield_rover'||!project.components)return project;
++ const known:Record<string,[string,string]>={SHIELD1:['Adafruit Motor Shield V2 (visual only)','adafruit-motor-shield-v2'],MOTOR_L:['왼쪽 DC 모터 (visual only)','adafruit-micro-dc-2941'],MOTOR_R:['오른쪽 DC 모터 (visual only)','adafruit-micro-dc-2941'],BAT1:['모터용 별도 전원 · 정격 미확인 (visual only)','dc-supply-generic']};
++ return {...project,components:project.components.map(p=>{
++  const entry=known[p.id];
++  return entry&&p.metadataId==='custom-chip'&&p.properties?.chipName===entry[0]&&p.properties.evPhysicalModel===undefined?{...p,properties:{...p.properties,evPhysicalModel:entry[1]}}:p;
++ })};
++}
++export function physicalModelFor(part:Part):PhysicalModel|undefined{
++ if(part.metadataId!=='custom-chip')return undefined;
++ const p=part.properties||{},explicit=p.evPhysicalModel;
++ if(explicit!==undefined)return typeof explicit==='string'?physicalModels[explicit]:undefined;
++ const legacy:Record<string,string>={pi4:'rpi4b',motor_hat:'adafruit-motor-hat-2348',motor_left:'adafruit-micro-dc-2941',motor_right:'adafruit-micro-dc-2941',motor_power:'dc-supply-generic',pi_power:'usb-c-supply-generic'};
++ const id=legacy[String(p.evRoverKind)]||(p.chipName==='Adafruit Motor Shield V2 (visual only)'?'adafruit-motor-shield-v2':undefined);
++ return id?physicalModels[id]:undefined;
++}
++export function physicalPresentation(part:Part,geometry:{rotation:number;pins:Array<{name:string;position:Point}>}){
++ const model=physicalModelFor(part);
++ if(!model||!geometry.pins.length||geometry.pins.some(p=>!model.ports[p.name]))return undefined;
++ const angle=geometry.rotation*Math.PI/180,c=Math.cos(angle),s=Math.sin(angle);
++ const pins=geometry.pins.map(pin=>{const [x,y,z]=model.ports[pin.name];return {...pin,position:[(x*c-z*s)/1000,y/1000,(x*s+z*c)/1000] as Point};});
++ return {model,pins};
++}
+diff --git a/frontend/src/components/circuitiny/PhysicalBodies.tsx b/frontend/src/components/circuitiny/PhysicalBodies.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/PhysicalBodies.tsx
+@@ -0,0 +1,96 @@
++/** Procedural product presentation. CAD-derived layout data is CC BY-SA 3.0.
++ * Port identities remain the existing circuit graph's identities. No emulation.
++ */
++import {useEffect,useMemo} from 'react';
++import {Html,RoundedBox} from '@react-three/drei';
++import * as T from 'three';
++import {Lead} from './RealisticBodies';
++import {boardLayouts,physicalModels,type BoardLayout} from './physicalModels';
++type V=[number,number,number];
++const m=(v:number)=>v/1000;
++function Box({at,size,color,metal=0}:{at:V;size:V;color:string;metal?:number}){
++ return <mesh position={at.map(m) as V} castShadow receiveShadow><boxGeometry args={size.map(m) as V}/><meshStandardMaterial color={color} metalness={metal} roughness={metal ? 0.35 : 0.65}/></mesh>;
++}
++function Cylinder({at,radius,height,color,metal=0}:{at:V;radius:number;height:number;color:string;metal?:number}){
++ return <mesh position={at.map(m) as V} castShadow><cylinderGeometry args={[m(radius),m(radius),m(height),24]}/><meshStandardMaterial color={color} metalness={metal} roughness={metal ? 0.3 : 0.65}/></mesh>;
++}
++function BoardPrint({width,depth,items}:{width:number;depth:number;items:Array<[string,number,number,number?]>}){
++ const texture=useMemo(()=>{
++  const canvas=document.createElement('canvas');canvas.width=1536;canvas.height=Math.round(canvas.width*depth/width);
++  const c=canvas.getContext('2d')!;const scale=canvas.width/width;c.textAlign='center';c.textBaseline='middle';c.fillStyle='#edf5e8';
++  for(const [text,x,z,size=2.1] of items){c.font=`600 ${size*scale}px sans-serif`;c.fillText(text,(x+width/2)*scale,(z+depth/2)*scale);}
++  const t=new T.CanvasTexture(canvas);t.colorSpace=T.SRGBColorSpace;t.anisotropy=4;return t;
++ },[width,depth,JSON.stringify(items)]);
++ useEffect(()=>()=>texture.dispose(),[texture]);
++ return <mesh rotation={[-Math.PI/2,0,0]} position={[0,.00265,0]}><planeGeometry args={[m(width),m(depth)]}/><meshBasicMaterial map={texture} transparent depthWrite={false}/></mesh>;
++}
++function Hole({x,z,drill=2.8}:{x:number;z:number;drill?:number}){
++ return <group position={[m(x),.00251,m(z)]} rotation={[-Math.PI/2,0,0]}><mesh><ringGeometry args={[m(drill/2),m(drill/2+.6),20]}/><meshStandardMaterial color="#d4b76a" metalness={.8} roughness={.4}/></mesh><mesh position={[0,0,-.00001]}><circleGeometry args={[m(drill/2),20]}/><meshStandardMaterial color="#17232a"/></mesh></group>;
++}
++function PCB({width,depth,color,holes}:{width:number;depth:number;color:string;holes:Array<{at:[number,number];drill:number}>}){
++ return <group><RoundedBox args={[m(width),.0016,m(depth)]} radius={.0016} smoothness={3} position={[0,.0016,0]} castShadow receiveShadow><meshStandardMaterial color={color} roughness={.55}/></RoundedBox>{holes.map((h,i)=><Hole key={i} x={h.at[0]} z={h.at[1]} drill={h.drill}/>)}</group>;
++}
++function HeaderContact({x,z,female=false}:{x:number;z:number;female?:boolean}){
++ return <group><Box at={[x,3.5,z]} size={[2.5,2.7,2.5]} color="#181e24"/>{female?<><Box at={[x,5.2,z]} size={[2.5,2,2.5]} color="#20262b"/><Box at={[x,6.25,z]} size={[.95,.12,.95]} color="#0b0e10"/></>:<Box at={[x,6.7,z]} size={[.65,4.8,.65]} color="#d8b875" metal={.8}/>}</group>;
++}
++function MetalPort({x,z,width,depth,height,usb=false}:{x:number;z:number;width:number;depth:number;height:number;usb?:boolean}){
++ return <group><Box at={[x,height/2+2,z]} size={[width,height,depth]} color="#b7c0c1" metal={.85}/>
++  {(usb?[-.25,.25]:[0]).map((row,i)=><group key={i}><Box at={[x+width/2+.08,height/2+2+row*height,z]} size={[.2,usb?height*.37:height*.7,depth*.82]} color="#11191d"/><Box at={[x+width/2+.22,height/2+2+row*height-.6,z]} size={[.2,1.1,depth*.58]} color={usb?'#287caf':'#4d5353'}/></group>)}
++ </group>;
++}
++function PiBoard(){
++ const holes=[-39,19].flatMap(x=>[-24.5,24.5].map(z=>({at:[x,z] as [number,number],drill:2.75})));
++ return <group><PCB width={85} depth={56} color="#2b754c" holes={holes}/>
++  <MetalPort x={37.5} z={19} width={18} depth={13.2} height={16} usb/><MetalPort x={37.5} z={1} width={18} depth={13.2} height={16} usb/><MetalPort x={35.5} z={-17.75} width={22} depth={16} height={13.5}/>
++  <Box at={[-13.5,3.3,-4.5]} size={[15,2,15]} color="#b7bdba" metal={.5}/><Box at={[2,3,-4.5]} size={[12,1.4,12]} color="#22272b"/>
++  <Box at={[-31.2,3.6,-16]} size={[10.5,2,12]} color="#bfc6c1" metal={.7}/>
++  {[-31.3,-16.5,-3].map((x,i)=><group key={x}><Box at={[x,3.4,26]} size={[i?7.5:9,3,5]} color="#bbc1c2" metal={.8}/><Box at={[x,3.4,28.6]} size={[i?5.6:7.5,1.6,.2]} color="#1a2225"/></group>)}
++  <Box at={[-38,3.2,-1]} size={[3,2.5,20]} color="#deddd0"/><Box at={[4.8,3.2,14]} size={[3,2.5,20]} color="#deddd0"/>
++  {Array.from({length:20},(_,i)=>[-1,1].map(r=><HeaderContact key={i+':'+r} x={-10+(i-9.5)*2.54} z={-24.5+r*1.27}/>))}
++  {Array.from({length:12},(_,i)=><Box key={i} at={[-34+(i%4)*3,3.1,10+Math.floor(i/4)*3]} size={[1.8,.9,1]} color={i%2?'#393d3d':'#bcad8c'}/>)}
++  <BoardPrint width={85} depth={56} items={[["Raspberry Pi 4B",8,20,2.1],["BCM2711",-13.5,-4.5,1.5],["GPIO 40 PIN",-9,-19,1.6],["USB-C",-31,22,1.4]]}/>
++ </group>;
++}
++function Terminal({x,z,angle}:{x:number;z:number;angle:number}){
++ return <group position={[m(x),0,m(z)]} rotation={[0,angle*Math.PI/180,0]}><Box at={[0,5,0]} size={[3.5,6.7,7]} color="#56a641"/><Cylinder at={[0,8.4,-.4]} radius={1.15} height={.3} color="#b9c2bb" metal={.8}/><Box at={[0,8.61,-.4]} size={[1.5,.12,.22]} color="#59625e"/><Box at={[0,4.5,3.55]} size={[2.1,2,.15]} color="#172925"/></group>;
++}
++function DriverBoard({layout,shield=false}:{layout:BoardLayout;shield?:boolean}){
++ const labelItems:Array<[string,number,number,number?]>=[];
++ const model=physicalModels[shield?'adafruit-motor-shield-v2':'adafruit-motor-hat-2348'];
++ for(const name of ['M1','M2']){const a=model.ports[name+'.left'],b=model.ports[name+'.right'];labelItems.push([name,(a[0]+b[0])/2+(!shield?0:5),(a[2]+b[2])/2+(!shield?-8:0),1.7]);}
++ return <group><PCB width={layout.width} depth={layout.depth} color="#087cb6" holes={layout.holes}/>
++  {layout.pads.map((p,i)=><Hole key={i} x={p.at[0]} z={p.at[1]} drill={p.drill}/>)}
++  {layout.parts.map(p=>{
++   const [x,z]=p.at;
++   if(p.kind==='terminal')return <group key={p.name}>{p.pads.map(pad=><Terminal key={pad.pad} x={pad.at[0]} z={pad.at[1]} angle={p.rotation}/>)}</group>;
++   if(p.kind==='header')return <group key={p.name}>{p.pads.map(pad=><HeaderContact key={pad.pad} x={pad.at[0]} z={pad.at[1]} female/>)}</group>;
++   if(p.kind==='capacitor')return <group key={p.name}><Cylinder at={[x,5,z]} radius={3.1} height={5} color="#b7c0bb" metal={.65}/><Box at={[x,7.55,z]} size={[3.9,.1,.2]} color="#5a6462"/><Box at={[x,7.56,z]} size={[.2,.1,3.9]} color="#5a6462"/></group>;
++   if(p.kind==='smd')return <Box key={p.name} at={[x,2.9,z]} size={[2,.8,1.2]} color={p.name.startsWith('C')?'#baa985':'#292d30'}/>;
++   const length=p.package==='SOIC8_150MIL'?5:9,width=p.package==='SSOP24'?5:6;
++   return <group key={p.name} position={[m(x),0,m(z)]} rotation={[0,p.rotation*Math.PI/180,0]}><Box at={[0,3.2,0]} size={[length,1.5,width]} color="#22282b"/>{Array.from({length:p.package==='SOIC8_150MIL'?4:12},(_,i)=>[-1,1].map(s=><Box key={i+':'+s} at={[-length/2+1+i*(length-2)/(p.package==='SOIC8_150MIL'?3:11),2.8,s*(width/2+.6)]} size={[.3,.3,1.5]} color="#b7c1c2" metal={.8}/>))}</group>;
++  })}
++  <BoardPrint width={layout.width} depth={layout.depth} items={[[shield?'Motor Shield V2.3':'Motor HAT #2348',shield?5:-19,shield?-7:4,2],["Adafruit",shield?6:-23,shield?-3:9,1.7],...labelItems]}/>
++ </group>;
++}
++function MicroMotor(){
++ return <group>
++  <RoundedBox args={[.023,.021,.0123]} radius={.0007} smoothness={2} position={[0,.012,0]} castShadow><meshStandardMaterial color="#0756bf" transparent opacity={.8} roughness={.26}/></RoundedBox>
++  <Box at={[0,18,0]} size={[32.3,2.3,12.3]} color="#1269be"/><Box at={[0,21,0]} size={[22,2,12.2]} color="#246ecb"/>
++  <Cylinder at={[4,23.5,0]} radius={5.4} height={3.5} color="#146bc9"/><Cylinder at={[4,27,0]} radius={2.5} height={5.8} color="#e6e7dc"/>
++  {[-14,14].map(x=><Cylinder key={x} at={[x,19.3,0]} radius={1.3} height={.2} color="#25354b"/>)}
++  {[-1,1].map((s)=><group key={s}><Lead points={[[-.0115,.005,s*.00127],[-.017,.003,s*.00127],[-.021,.003,s*.00127]]} radius={.00055}/><mesh position={[-.016,.003,s*.00127]}><boxGeometry args={[.009,.0011,.0011]}/><meshStandardMaterial color={s>0?'#c83931':'#202429'}/></mesh></group>)}
++  <Box at={[-20,3,0]} size={[4,3,5.2]} color="#202629"/>
++ </group>;
++}
++function PowerBody({usb=false}:{usb?:boolean}){
++ const w=usb?34:40,d=28,h=usb?24:22;
++ return <group><RoundedBox args={[m(w),m(h),m(d)]} radius={.003} smoothness={3} position={[0,m(h/2),0]} castShadow><meshStandardMaterial color={usb?'#e4e7e2':'#343a40'} roughness={.48}/></RoundedBox>
++  {usb?<><Lead points={[[.017,.006,0],[.021,.006,0],[.025,.006,0]]} radius={.0008}/><Box at={[24,6,0]} size={[5,2.7,7.8]} color="#b9c4c4" metal={.8}/></>:[-1,1].map(s=><group key={s}><Box at={[21,5,s*4]} size={[3,5,5]} color={s<0?'#bc3d36':'#191e22'}/></group>)}
++ </group>;
++}
++export function PhysicalBody({modelId,id}:{modelId:string;id:string}){
++ const model=physicalModels[modelId];if(!model)return null;
++ return <group>{model.kind==='pi'?<PiBoard/>:model.kind==='hat'?<DriverBoard layout={boardLayouts.hat}/>:model.kind==='shield'?<DriverBoard layout={boardLayouts.shield} shield/>:model.kind==='motor'?<MicroMotor/>:<PowerBody usb={model.kind==='usb-power'}/>}
++  <Html position={[0,m(model.height+3),m(model.depth/2+3)]} center style={{pointerEvents:'none',fontSize:10,color:'#294d39',whiteSpace:'nowrap',background:'#ffffffc9',padding:'2px 4px',borderRadius:3}}>{id} · {model.name}</Html>
++ </group>;
++}
+diff --git a/frontend/src/components/circuitiny/physicalBoardData.json b/frontend/src/components/circuitiny/physicalBoardData.json
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/physicalBoardData.json
+@@ -0,0 +1 @@
++{"hat":{"width":65,"depth":56.5,"pads":[{"element":"RPI1","pad":"1","at":[-24.13,-22.98],"drill":0.9},{"element":"RPI1","pad":"2","at":[-24.13,-25.52],"drill":0.9},{"element":"RPI1","pad":"3","at":[-21.59,-22.98],"drill":0.9},{"element":"RPI1","pad":"4","at":[-21.59,-25.52],"drill":0.9},{"element":"RPI1","pad":"5","at":[-19.05,-22.98],"drill":0.9},{"element":"RPI1","pad":"6","at":[-19.05,-25.52],"drill":0.9},{"element":"RPI1","pad":"7","at":[-16.51,-22.98],"drill":0.9},{"element":"RPI1","pad":"8","at":[-16.51,-25.52],"drill":0.9},{"element":"RPI1","pad":"9","at":[-13.97,-22.98],"drill":0.9},{"element":"RPI1","pad":"10","at":[-13.97,-25.52],"drill":0.9},{"element":"RPI1","pad":"11","at":[-11.43,-22.98],"drill":0.9},{"element":"RPI1","pad":"12","at":[-11.43,-25.52],"drill":0.9},{"element":"RPI1","pad":"13","at":[-8.89,-22.98],"drill":0.9},{"element":"RPI1","pad":"14","at":[-8.89,-25.52],"drill":0.9},{"element":"RPI1","pad":"15","at":[-6.35,-22.98],"drill":0.9},{"element":"RPI1","pad":"16","at":[-6.35,-25.52],"drill":0.9},{"element":"RPI1","pad":"17","at":[-3.81,-22.98],"drill":0.9},{"element":"RPI1","pad":"18","at":[-3.81,-25.52],"drill":0.9},{"element":"RPI1","pad":"19","at":[-1.27,-22.98],"drill":0.9},{"element":"RPI1","pad":"20","at":[-1.27,-25.52],"drill":0.9},{"element":"RPI1","pad":"21","at":[1.27,-22.98],"drill":0.9},{"element":"RPI1","pad":"22","at":[1.27,-25.52],"drill":0.9},{"element":"RPI1","pad":"23","at":[3.81,-22.98],"drill":0.9},{"element":"RPI1","pad":"24","at":[3.81,-25.52],"drill":0.9},{"element":"RPI1","pad":"25","at":[6.35,-22.98],"drill":0.9},{"element":"RPI1","pad":"26","at":[6.35,-25.52],"drill":0.9},{"element":"RPI1","pad":"27","at":[8.89,-22.98],"drill":0.9},{"element":"RPI1","pad":"28","at":[8.89,-25.52],"drill":0.9},{"element":"RPI1","pad":"29","at":[11.43,-22.98],"drill":0.9},{"element":"RPI1","pad":"30","at":[11.43,-25.52],"drill":0.9},{"element":"RPI1","pad":"31","at":[13.97,-22.98],"drill":0.9},{"element":"RPI1","pad":"32","at":[13.97,-25.52],"drill":0.9},{"element":"RPI1","pad":"33","at":[16.51,-22.98],"drill":0.9},{"element":"RPI1","pad":"34","at":[16.51,-25.52],"drill":0.9},{"element":"RPI1","pad":"35","at":[19.05,-22.98],"drill":0.9},{"element":"RPI1","pad":"36","at":[19.05,-25.52],"drill":0.9},{"element":"RPI1","pad":"37","at":[21.59,-22.98],"drill":0.9},{"element":"RPI1","pad":"38","at":[21.59,-25.52],"drill":0.9},{"element":"RPI1","pad":"39","at":[24.13,-22.98],"drill":0.9},{"element":"RPI1","pad":"40","at":[24.13,-25.52],"drill":0.9},{"element":"CONN1","pad":"1","at":[-29.96,-18.74],"drill":1.0},{"element":"CONN1","pad":"2","at":[-27.42,-18.74],"drill":1.0},{"element":"CONN1","pad":"3","at":[-24.88,-18.74],"drill":1.0},{"element":"CONN1","pad":"4","at":[-22.34,-18.74],"drill":1.0},{"element":"CONN1","pad":"5","at":[-19.8,-18.74],"drill":1.0},{"element":"CONN1","pad":"6","at":[-17.26,-18.74],"drill":1.0},{"element":"CONN1","pad":"7","at":[-14.72,-18.74],"drill":1.0},{"element":"CONN1","pad":"8","at":[-12.18,-18.74],"drill":1.0},{"element":"CONN1","pad":"9","at":[-9.64,-18.74],"drill":1.0},{"element":"CONN1","pad":"10","at":[-7.1,-18.74],"drill":1.0},{"element":"CONN1","pad":"11","at":[-4.56,-18.74],"drill":1.0},{"element":"CONN1","pad":"12","at":[-2.02,-18.74],"drill":1.0},{"element":"CONN1","pad":"13","at":[0.52,-18.74],"drill":1.0},{"element":"CONN1","pad":"14","at":[3.06,-18.74],"drill":1.0},{"element":"CONN1","pad":"15","at":[5.6,-18.74],"drill":1.0},{"element":"CONN1","pad":"16","at":[8.14,-18.74],"drill":1.0},{"element":"CONN1","pad":"17","at":[10.68,-18.74],"drill":1.0},{"element":"CONN1","pad":"18","at":[13.22,-18.74],"drill":1.0},{"element":"CONN1","pad":"19","at":[15.76,-18.74],"drill":1.0},{"element":"CONN1","pad":"20","at":[18.3,-18.74],"drill":1.0},{"element":"CONN1","pad":"21","at":[20.84,-18.74],"drill":1.0},{"element":"CONN1","pad":"22","at":[23.38,-18.74],"drill":1.0},{"element":"CONN1","pad":"23","at":[25.92,-18.74],"drill":1.0},{"element":"CONN1","pad":"24","at":[28.46,-18.74],"drill":1.0},{"element":"CONN1","pad":"25","at":[31.0,-18.74],"drill":1.0},{"element":"J1","pad":"3","at":[-16.498,24.567],"drill":1.0},{"element":"J1","pad":"4","at":[-19.998,24.567],"drill":1.0},{"element":"J1","pad":"2","at":[-12.998,24.567],"drill":1.0},{"element":"J1","pad":"1","at":[-9.498,24.567],"drill":1.0},{"element":"J1","pad":"5","at":[-23.498,24.567],"drill":1.0},{"element":"MPOWER","pad":"1","at":[22.005,24.567],"drill":1.0},{"element":"MPOWER","pad":"2","at":[18.505,24.567],"drill":1.0},{"element":"JP1","pad":"1","at":[-2.02,-3.5],"drill":1.0},{"element":"JP1","pad":"2","at":[-4.56,-3.5],"drill":1.0},{"element":"JP1","pad":"3","at":[-7.1,-3.5],"drill":1.0},{"element":"JP1","pad":"4","at":[-9.64,-3.5],"drill":1.0},{"element":"J3","pad":"3","at":[2.171,24.567],"drill":1.0},{"element":"J3","pad":"4","at":[-1.329,24.567],"drill":1.0},{"element":"J3","pad":"2","at":[5.671,24.567],"drill":1.0},{"element":"J3","pad":"1","at":[9.171,24.567],"drill":1.0},{"element":"J3","pad":"5","at":[-4.829,24.567],"drill":1.0}],"parts":[{"name":"RPI1","package":"PI_HAT_SLOTS","kind":"header","at":[-32.5,28.25],"rotation":0,"pads":[{"element":"RPI1","pad":"1","at":[-24.13,-22.98],"drill":0.9},{"element":"RPI1","pad":"2","at":[-24.13,-25.52],"drill":0.9},{"element":"RPI1","pad":"3","at":[-21.59,-22.98],"drill":0.9},{"element":"RPI1","pad":"4","at":[-21.59,-25.52],"drill":0.9},{"element":"RPI1","pad":"5","at":[-19.05,-22.98],"drill":0.9},{"element":"RPI1","pad":"6","at":[-19.05,-25.52],"drill":0.9},{"element":"RPI1","pad":"7","at":[-16.51,-22.98],"drill":0.9},{"element":"RPI1","pad":"8","at":[-16.51,-25.52],"drill":0.9},{"element":"RPI1","pad":"9","at":[-13.97,-22.98],"drill":0.9},{"element":"RPI1","pad":"10","at":[-13.97,-25.52],"drill":0.9},{"element":"RPI1","pad":"11","at":[-11.43,-22.98],"drill":0.9},{"element":"RPI1","pad":"12","at":[-11.43,-25.52],"drill":0.9},{"element":"RPI1","pad":"13","at":[-8.89,-22.98],"drill":0.9},{"element":"RPI1","pad":"14","at":[-8.89,-25.52],"drill":0.9},{"element":"RPI1","pad":"15","at":[-6.35,-22.98],"drill":0.9},{"element":"RPI1","pad":"16","at":[-6.35,-25.52],"drill":0.9},{"element":"RPI1","pad":"17","at":[-3.81,-22.98],"drill":0.9},{"element":"RPI1","pad":"18","at":[-3.81,-25.52],"drill":0.9},{"element":"RPI1","pad":"19","at":[-1.27,-22.98],"drill":0.9},{"element":"RPI1","pad":"20","at":[-1.27,-25.52],"drill":0.9},{"element":"RPI1","pad":"21","at":[1.27,-22.98],"drill":0.9},{"element":"RPI1","pad":"22","at":[1.27,-25.52],"drill":0.9},{"element":"RPI1","pad":"23","at":[3.81,-22.98],"drill":0.9},{"element":"RPI1","pad":"24","at":[3.81,-25.52],"drill":0.9},{"element":"RPI1","pad":"25","at":[6.35,-22.98],"drill":0.9},{"element":"RPI1","pad":"26","at":[6.35,-25.52],"drill":0.9},{"element":"RPI1","pad":"27","at":[8.89,-22.98],"drill":0.9},{"element":"RPI1","pad":"28","at":[8.89,-25.52],"drill":0.9},{"element":"RPI1","pad":"29","at":[11.43,-22.98],"drill":0.9},{"element":"RPI1","pad":"30","at":[11.43,-25.52],"drill":0.9},{"element":"RPI1","pad":"31","at":[13.97,-22.98],"drill":0.9},{"element":"RPI1","pad":"32","at":[13.97,-25.52],"drill":0.9},{"element":"RPI1","pad":"33","at":[16.51,-22.98],"drill":0.9},{"element":"RPI1","pad":"34","at":[16.51,-25.52],"drill":0.9},{"element":"RPI1","pad":"35","at":[19.05,-22.98],"drill":0.9},{"element":"RPI1","pad":"36","at":[19.05,-25.52],"drill":0.9},{"element":"RPI1","pad":"37","at":[21.59,-22.98],"drill":0.9},{"element":"RPI1","pad":"38","at":[21.59,-25.52],"drill":0.9},{"element":"RPI1","pad":"39","at":[24.13,-22.98],"drill":0.9},{"element":"RPI1","pad":"40","at":[24.13,-25.52],"drill":0.9}]},{"name":"CONN1","package":"1X25_ROUND_70MIL","kind":"header","at":[0.52,-18.74],"rotation":0,"pads":[{"element":"CONN1","pad":"1","at":[-29.96,-18.74],"drill":1.0},{"element":"CONN1","pad":"2","at":[-27.42,-18.74],"drill":1.0},{"element":"CONN1","pad":"3","at":[-24.88,-18.74],"drill":1.0},{"element":"CONN1","pad":"4","at":[-22.34,-18.74],"drill":1.0},{"element":"CONN1","pad":"5","at":[-19.8,-18.74],"drill":1.0},{"element":"CONN1","pad":"6","at":[-17.26,-18.74],"drill":1.0},{"element":"CONN1","pad":"7","at":[-14.72,-18.74],"drill":1.0},{"element":"CONN1","pad":"8","at":[-12.18,-18.74],"drill":1.0},{"element":"CONN1","pad":"9","at":[-9.64,-18.74],"drill":1.0},{"element":"CONN1","pad":"10","at":[-7.1,-18.74],"drill":1.0},{"element":"CONN1","pad":"11","at":[-4.56,-18.74],"drill":1.0},{"element":"CONN1","pad":"12","at":[-2.02,-18.74],"drill":1.0},{"element":"CONN1","pad":"13","at":[0.52,-18.74],"drill":1.0},{"element":"CONN1","pad":"14","at":[3.06,-18.74],"drill":1.0},{"element":"CONN1","pad":"15","at":[5.6,-18.74],"drill":1.0},{"element":"CONN1","pad":"16","at":[8.14,-18.74],"drill":1.0},{"element":"CONN1","pad":"17","at":[10.68,-18.74],"drill":1.0},{"element":"CONN1","pad":"18","at":[13.22,-18.74],"drill":1.0},{"element":"CONN1","pad":"19","at":[15.76,-18.74],"drill":1.0},{"element":"CONN1","pad":"20","at":[18.3,-18.74],"drill":1.0},{"element":"CONN1","pad":"21","at":[20.84,-18.74],"drill":1.0},{"element":"CONN1","pad":"22","at":[23.38,-18.74],"drill":1.0},{"element":"CONN1","pad":"23","at":[25.92,-18.74],"drill":1.0},{"element":"CONN1","pad":"24","at":[28.46,-18.74],"drill":1.0},{"element":"CONN1","pad":"25","at":[31.0,-18.74],"drill":1.0}]},{"name":"U1","package":"SOIC8_150MIL","kind":"ic","at":[14.871,-0.706],"rotation":270,"pads":[]},{"name":"R1","package":"0805-NO","kind":"smd","at":[22.491,-0.452],"rotation":90,"pads":[]},{"name":"R2","package":"0805-NO","kind":"smd","at":[20.459,-1.468],"rotation":90,"pads":[]},{"name":"R3","package":"0805-NO","kind":"smd","at":[17.284,3.104],"rotation":0,"pads":[]},{"name":"IC1","package":"SSOP24","kind":"ic","at":[-17.514,14.28],"rotation":0,"pads":[]},{"name":"IC3","package":"SSOP24","kind":"ic","at":[-0.75,14.153],"rotation":0,"pads":[]},{"name":"J1","package":"1X05-3.5MM","kind":"terminal","at":[-16.498,24.567],"rotation":0,"pads":[{"element":"J1","pad":"3","at":[-16.498,24.567],"drill":1.0},{"element":"J1","pad":"4","at":[-19.998,24.567],"drill":1.0},{"element":"J1","pad":"2","at":[-12.998,24.567],"drill":1.0},{"element":"J1","pad":"1","at":[-9.498,24.567],"drill":1.0},{"element":"J1","pad":"5","at":[-23.498,24.567],"drill":1.0}]},{"name":"R4","package":"0805-NO","kind":"smd","at":[8.14,8.184],"rotation":180,"pads":[]},{"name":"R5","package":"0805-NO","kind":"smd","at":[8.14,5.644],"rotation":180,"pads":[]},{"name":"R6","package":"0805-NO","kind":"smd","at":[8.14,3.104],"rotation":180,"pads":[]},{"name":"MPOWER","package":"1X2-3.5MM","kind":"terminal","at":[20.205,24.567],"rotation":0,"pads":[{"element":"MPOWER","pad":"1","at":[22.005,24.567],"drill":1.0},{"element":"MPOWER","pad":"2","at":[18.505,24.567],"drill":1.0}]},{"name":"C1","package":"0805-NO","kind":"smd","at":[-12.942,8.184],"rotation":180,"pads":[]},{"name":"C3","package":"0805-NO","kind":"smd","at":[-13.069,4.374],"rotation":0,"pads":[]},{"name":"C4","package":"PANASONIC_C","kind":"capacitor","at":[6.997,14.28],"rotation":90,"pads":[]},{"name":"C5","package":"PANASONIC_C","kind":"capacitor","at":[-9.64,14.153],"rotation":90,"pads":[]},{"name":"LED1","package":"CHIPLED_0805_NOOUTLINE","kind":"smd","at":[20.586,6.914],"rotation":270,"pads":[]},{"name":"R7","package":"0805-NO","kind":"smd","at":[20.586,5.009],"rotation":0,"pads":[]},{"name":"Q1","package":"D-PAK_TO252AA","kind":"ic","at":[20.586,14.788],"rotation":0,"pads":[]},{"name":"U2","package":"TSSOP28","kind":"ic","at":[-7.1,3.993],"rotation":90,"pads":[]},{"name":"R8","package":"0805-NO","kind":"smd","at":[8.14,0.564],"rotation":180,"pads":[]},{"name":"R9","package":"0805-NO","kind":"smd","at":[8.14,-2.23],"rotation":180,"pads":[]},{"name":"JP1","package":"1X04_ROUND_76","kind":"header","at":[-5.83,-3.5],"rotation":180,"pads":[{"element":"JP1","pad":"1","at":[-2.02,-3.5],"drill":1.0},{"element":"JP1","pad":"2","at":[-4.56,-3.5],"drill":1.0},{"element":"JP1","pad":"3","at":[-7.1,-3.5],"drill":1.0},{"element":"JP1","pad":"4","at":[-9.64,-3.5],"drill":1.0}]},{"name":"C6","package":"0805-NO","kind":"smd","at":[-1.131,7.676],"rotation":90,"pads":[]},{"name":"C10","package":"0805-NO","kind":"smd","at":[-17.768,7.803],"rotation":90,"pads":[]},{"name":"J3","package":"1X05-3.5MM","kind":"terminal","at":[2.171,24.567],"rotation":0,"pads":[{"element":"J3","pad":"3","at":[2.171,24.567],"drill":1.0},{"element":"J3","pad":"4","at":[-1.329,24.567],"drill":1.0},{"element":"J3","pad":"2","at":[5.671,24.567],"drill":1.0},{"element":"J3","pad":"1","at":[9.171,24.567],"drill":1.0},{"element":"J3","pad":"5","at":[-4.829,24.567],"drill":1.0}]}],"holes":[{"at":[-29.0,24.75],"drill":2.8},{"at":[-29.0,-24.25],"drill":2.8},{"at":[29.0,-24.25],"drill":2.8},{"at":[29.0,24.75],"drill":2.8}],"source":"hat-rev-a.brd","source_sha256":"16fbf5ee9de1b3c840cc6c45144c3cf601ecc5bd8fcb7df33b2fdfa6951e95ab","license":"CC-BY-SA-3.0","author":"Adafruit Industries / Limor Fried"},"shield":{"width":68.58,"depth":53.34,"pads":[{"element":"J1","pad":"3","at":[-30.48,3.81],"drill":1.0},{"element":"J1","pad":"4","at":[-30.48,0.31],"drill":1.0},{"element":"J1","pad":"2","at":[-30.48,7.31],"drill":1.0},{"element":"J1","pad":"1","at":[-30.48,10.81],"drill":1.0},{"element":"J1","pad":"5","at":[-30.48,-3.19],"drill":1.0},{"element":"J2","pad":"3","at":[30.861,12.446],"drill":1.0},{"element":"J2","pad":"4","at":[30.861,8.946],"drill":1.0},{"element":"J2","pad":"2","at":[30.861,15.946],"drill":1.0},{"element":"J2","pad":"1","at":[30.861,19.446],"drill":1.0},{"element":"J2","pad":"5","at":[30.861,5.446],"drill":1.0},{"element":"PWR","pad":"1","at":[-13.716,16.51],"drill":0.9144},{"element":"PWR","pad":"2","at":[-11.176,16.51],"drill":0.9144},{"element":"MPOWER","pad":"1","at":[-12.043,22.733],"drill":1.0},{"element":"MPOWER","pad":"2","at":[-15.543,22.733],"drill":1.0},{"element":"D0-7","pad":"1","at":[29.21,-20.574],"drill":1.016},{"element":"D0-7","pad":"2","at":[26.67,-20.574],"drill":1.016},{"element":"D0-7","pad":"3","at":[24.13,-20.574],"drill":1.016},{"element":"D0-7","pad":"4","at":[21.59,-20.574],"drill":1.016},{"element":"D0-7","pad":"5","at":[19.05,-20.574],"drill":1.016},{"element":"D0-7","pad":"6","at":[16.51,-20.574],"drill":1.016},{"element":"D0-7","pad":"7","at":[13.97,-20.574],"drill":1.016},{"element":"D0-7","pad":"8","at":[11.43,-20.574],"drill":1.016},{"element":"SERVO1","pad":"1","at":[-27.432,-23.495],"drill":1.016},{"element":"SERVO1","pad":"2","at":[-24.892,-23.495],"drill":1.016},{"element":"SERVO1","pad":"3","at":[-22.352,-23.495],"drill":1.016},{"element":"SERVO2","pad":"1","at":[-27.432,-20.955],"drill":1.016},{"element":"SERVO2","pad":"2","at":[-24.892,-20.955],"drill":1.016},{"element":"SERVO2","pad":"3","at":[-22.352,-20.955],"drill":1.016},{"element":"SERPWR","pad":"1","at":[-32.258,-20.298],"drill":1.0},{"element":"SERPWR","pad":"2","at":[-32.258,-23.798],"drill":1.0},{"element":"JP1","pad":"1","at":[26.67,-8.89],"drill":1.0},{"element":"JP1","pad":"2","at":[26.67,-11.43],"drill":1.0},{"element":"JP1","pad":"3","at":[26.67,-13.97],"drill":1.0},{"element":"JP1","pad":"4","at":[26.67,-16.51],"drill":1.0},{"element":"U$1","pad":"D4","at":[19.05,-24.13],"drill":1.0},{"element":"U$1","pad":"A0","at":[16.51,24.13],"drill":1.0},{"element":"U$1","pad":"D3","at":[21.59,-24.13],"drill":1.0},{"element":"U$1","pad":"D2","at":[24.13,-24.13],"drill":1.0},{"element":"U$1","pad":"D1","at":[26.67,-24.13],"drill":1.0},{"element":"U$1","pad":"D0","at":[29.21,-24.13],"drill":1.0},{"element":"U$1","pad":"D5","at":[16.51,-24.13],"drill":1.0},{"element":"U$1","pad":"D6","at":[13.97,-24.13],"drill":1.0},{"element":"U$1","pad":"D7","at":[11.43,-24.13],"drill":1.0},{"element":"U$1","pad":"D8","at":[7.366,-24.13],"drill":1.0},{"element":"U$1","pad":"D9","at":[4.826,-24.13],"drill":1.0},{"element":"U$1","pad":"D10","at":[2.286,-24.13],"drill":1.0},{"element":"U$1","pad":"D11","at":[-0.254,-24.13],"drill":1.0},{"element":"U$1","pad":"D12","at":[-2.794,-24.13],"drill":1.0},{"element":"U$1","pad":"D13","at":[-5.334,-24.13],"drill":1.0},{"element":"U$1","pad":"GND","at":[-7.874,-24.13],"drill":1.0},{"element":"U$1","pad":"AREF","at":[-10.414,-24.13],"drill":1.0},{"element":"U$1","pad":"A1","at":[19.05,24.13],"drill":1.0},{"element":"U$1","pad":"A2","at":[21.59,24.13],"drill":1.0},{"element":"U$1","pad":"A3","at":[24.13,24.13],"drill":1.0},{"element":"U$1","pad":"A4","at":[26.67,24.13],"drill":1.0},{"element":"U$1","pad":"A5","at":[29.21,24.13],"drill":1.0},{"element":"U$1","pad":"VIN","at":[11.43,24.13],"drill":1.0},{"element":"U$1","pad":"GND@1","at":[8.89,24.13],"drill":1.0},{"element":"U$1","pad":"GND@2","at":[6.35,24.13],"drill":1.0},{"element":"U$1","pad":"5V","at":[3.81,24.13],"drill":1.0},{"element":"U$1","pad":"3V","at":[1.27,24.13],"drill":1.0},{"element":"U$1","pad":"RESET","at":[-1.27,24.13],"drill":1.0},{"element":"U$1","pad":"SDA","at":[-12.954,-24.13],"drill":1.0},{"element":"U$1","pad":"SCL","at":[-15.494,-24.13],"drill":1.0},{"element":"U$1","pad":"IOREF","at":[-3.81,24.13],"drill":1.0},{"element":"U$1","pad":"RESERVED","at":[-6.35,24.13],"drill":1.0},{"element":"U$1","pad":"MOSI","at":[31.877,-1.27],"drill":1.0},{"element":"U$1","pad":"SCK","at":[29.337,-1.27],"drill":1.0},{"element":"U$1","pad":"MISO","at":[29.337,-3.81],"drill":1.0},{"element":"U$1","pad":"5V_ICSP","at":[31.877,-3.81],"drill":1.0},{"element":"U$1","pad":"GND@3","at":[31.877,1.27],"drill":1.0},{"element":"U$1","pad":"RESET_ICSP","at":[29.337,1.27],"drill":1.0},{"element":"CN1","pad":"1","at":[24.13,20.701],"drill":1.016},{"element":"CN1","pad":"2","at":[21.59,20.701],"drill":1.016},{"element":"CN1","pad":"3","at":[19.05,20.701],"drill":1.016},{"element":"CN1","pad":"4","at":[16.51,20.701],"drill":1.016},{"element":"JP2","pad":"1","at":[11.43,20.701],"drill":1.016},{"element":"JP2","pad":"2","at":[8.89,20.701],"drill":1.016},{"element":"JP2","pad":"3","at":[6.35,20.701],"drill":1.016},{"element":"JP2","pad":"4","at":[3.81,20.701],"drill":1.016},{"element":"JP2","pad":"5","at":[1.27,20.701],"drill":1.016},{"element":"JP2","pad":"6","at":[-1.27,20.701],"drill":1.016},{"element":"JP2","pad":"7","at":[-3.81,20.701],"drill":1.016},{"element":"JP2","pad":"8","at":[-6.35,20.701],"drill":1.016},{"element":"JP3","pad":"1","at":[-15.494,-20.574],"drill":1.0},{"element":"JP3","pad":"2","at":[-12.954,-20.574],"drill":1.0},{"element":"JP3","pad":"3","at":[-10.414,-20.574],"drill":1.0},{"element":"JP3","pad":"4","at":[-7.874,-20.574],"drill":1.0},{"element":"JP3","pad":"5","at":[-5.334,-20.574],"drill":1.0},{"element":"JP3","pad":"6","at":[-2.794,-20.574],"drill":1.0},{"element":"JP3","pad":"7","at":[-0.254,-20.574],"drill":1.0},{"element":"JP3","pad":"8","at":[2.286,-20.574],"drill":1.0},{"element":"JP3","pad":"9","at":[4.826,-20.574],"drill":1.0},{"element":"JP3","pad":"10","at":[7.366,-20.574],"drill":1.0},{"element":"JP4","pad":"1","at":[24.13,17.526],"drill":1.0},{"element":"JP4","pad":"2","at":[21.59,17.526],"drill":1.0}],"parts":[{"name":"IC1","package":"SSOP24","kind":"ic","at":[-20.32,3.683],"rotation":270,"pads":[]},{"name":"IC3","package":"SSOP24","kind":"ic","at":[20.066,11.811],"rotation":90,"pads":[]},{"name":"J1","package":"1X05-3.5MM","kind":"terminal","at":[-30.48,3.81],"rotation":270,"pads":[{"element":"J1","pad":"3","at":[-30.48,3.81],"drill":1.0},{"element":"J1","pad":"4","at":[-30.48,0.31],"drill":1.0},{"element":"J1","pad":"2","at":[-30.48,7.31],"drill":1.0},{"element":"J1","pad":"1","at":[-30.48,10.81],"drill":1.0},{"element":"J1","pad":"5","at":[-30.48,-3.19],"drill":1.0}]},{"name":"J2","package":"1X05-3.5MM","kind":"terminal","at":[30.861,12.446],"rotation":270,"pads":[{"element":"J2","pad":"3","at":[30.861,12.446],"drill":1.0},{"element":"J2","pad":"4","at":[30.861,8.946],"drill":1.0},{"element":"J2","pad":"2","at":[30.861,15.946],"drill":1.0},{"element":"J2","pad":"1","at":[30.861,19.446],"drill":1.0},{"element":"J2","pad":"5","at":[30.861,5.446],"drill":1.0}]},{"name":"R1","package":"0805-NO","kind":"smd","at":[3.81,11.43],"rotation":270,"pads":[]},{"name":"R2","package":"0805-NO","kind":"smd","at":[1.27,11.43],"rotation":270,"pads":[]},{"name":"R3","package":"0805-NO","kind":"smd","at":[-1.27,11.43],"rotation":270,"pads":[]},{"name":"MPOWER","package":"1X2-3.5MM","kind":"terminal","at":[-13.843,22.733],"rotation":0,"pads":[{"element":"MPOWER","pad":"1","at":[-12.043,22.733],"drill":1.0},{"element":"MPOWER","pad":"2","at":[-15.543,22.733],"drill":1.0}]},{"name":"D0-7","package":"1X08-CLEANBIG","kind":"header","at":[20.32,-20.574],"rotation":180,"pads":[{"element":"D0-7","pad":"1","at":[29.21,-20.574],"drill":1.016},{"element":"D0-7","pad":"2","at":[26.67,-20.574],"drill":1.016},{"element":"D0-7","pad":"3","at":[24.13,-20.574],"drill":1.016},{"element":"D0-7","pad":"4","at":[21.59,-20.574],"drill":1.016},{"element":"D0-7","pad":"5","at":[19.05,-20.574],"drill":1.016},{"element":"D0-7","pad":"6","at":[16.51,-20.574],"drill":1.016},{"element":"D0-7","pad":"7","at":[13.97,-20.574],"drill":1.016},{"element":"D0-7","pad":"8","at":[11.43,-20.574],"drill":1.016}]},{"name":"C1","package":"0805-NO","kind":"smd","at":[-10.668,6.604],"rotation":180,"pads":[]},{"name":"C2","package":"0805-NO","kind":"smd","at":[-9.779,2.794],"rotation":0,"pads":[]},{"name":"C3","package":"0805-NO","kind":"smd","at":[12.319,12.065],"rotation":180,"pads":[]},{"name":"C4","package":"PANASONIC_C","kind":"capacitor","at":[14.097,4.953],"rotation":0,"pads":[]},{"name":"C5","package":"PANASONIC_C","kind":"capacitor","at":[-20.574,11.303],"rotation":0,"pads":[]},{"name":"SERVO1","package":"1X03","kind":"header","at":[-24.892,-23.495],"rotation":0,"pads":[{"element":"SERVO1","pad":"1","at":[-27.432,-23.495],"drill":1.016},{"element":"SERVO1","pad":"2","at":[-24.892,-23.495],"drill":1.016},{"element":"SERVO1","pad":"3","at":[-22.352,-23.495],"drill":1.016}]},{"name":"SERVO2","package":"1X03","kind":"header","at":[-24.892,-20.955],"rotation":0,"pads":[{"element":"SERVO2","pad":"1","at":[-27.432,-20.955],"drill":1.016},{"element":"SERVO2","pad":"2","at":[-24.892,-20.955],"drill":1.016},{"element":"SERVO2","pad":"3","at":[-22.352,-20.955],"drill":1.016}]},{"name":"SERPWR","package":"1X2-3.5MM","kind":"terminal","at":[-32.258,-22.098],"rotation":270,"pads":[{"element":"SERPWR","pad":"1","at":[-32.258,-20.298],"drill":1.0},{"element":"SERPWR","pad":"2","at":[-32.258,-23.798],"drill":1.0}]},{"name":"C9","package":"PANASONIC_C","kind":"capacitor","at":[-26.924,-15.367],"rotation":180,"pads":[]},{"name":"LED1","package":"CHIPLED_0805_NOOUTLINE","kind":"smd","at":[-18.923,16.383],"rotation":270,"pads":[]},{"name":"R4","package":"0805-NO","kind":"smd","at":[-14.732,11.303],"rotation":180,"pads":[]},{"name":"Q1","package":"D-PAK_TO252AA","kind":"ic","at":[-27.94,18.288],"rotation":90,"pads":[]},{"name":"U2","package":"TSSOP28","kind":"ic","at":[0.508,4.064],"rotation":90,"pads":[]},{"name":"R5","package":"0805-NO","kind":"smd","at":[-3.81,11.43],"rotation":270,"pads":[]},{"name":"R6","package":"0805-NO","kind":"smd","at":[-6.604,11.43],"rotation":270,"pads":[]},{"name":"JP1","package":"1X04_ROUND_76","kind":"header","at":[26.67,-12.7],"rotation":90,"pads":[{"element":"JP1","pad":"1","at":[26.67,-8.89],"drill":1.0},{"element":"JP1","pad":"2","at":[26.67,-11.43],"drill":1.0},{"element":"JP1","pad":"3","at":[26.67,-13.97],"drill":1.0},{"element":"JP1","pad":"4","at":[26.67,-16.51],"drill":1.0}]},{"name":"R7","package":"0805-NO","kind":"smd","at":[-14.224,-18.542],"rotation":180,"pads":[]},{"name":"R8","package":"0805-NO","kind":"smd","at":[-18.923,-19.05],"rotation":180,"pads":[]},{"name":"CN1","package":"1X04-CLEANBIG","kind":"header","at":[20.32,20.701],"rotation":180,"pads":[{"element":"CN1","pad":"1","at":[24.13,20.701],"drill":1.016},{"element":"CN1","pad":"2","at":[21.59,20.701],"drill":1.016},{"element":"CN1","pad":"3","at":[19.05,20.701],"drill":1.016},{"element":"CN1","pad":"4","at":[16.51,20.701],"drill":1.016}]},{"name":"JP2","package":"1X08-CLEANBIG","kind":"header","at":[2.54,20.701],"rotation":180,"pads":[{"element":"JP2","pad":"1","at":[11.43,20.701],"drill":1.016},{"element":"JP2","pad":"2","at":[8.89,20.701],"drill":1.016},{"element":"JP2","pad":"3","at":[6.35,20.701],"drill":1.016},{"element":"JP2","pad":"4","at":[3.81,20.701],"drill":1.016},{"element":"JP2","pad":"5","at":[1.27,20.701],"drill":1.016},{"element":"JP2","pad":"6","at":[-1.27,20.701],"drill":1.016},{"element":"JP2","pad":"7","at":[-3.81,20.701],"drill":1.016},{"element":"JP2","pad":"8","at":[-6.35,20.701],"drill":1.016}]},{"name":"JP3","package":"1X10_ROUND70","kind":"header","at":[-4.064,-20.574],"rotation":0,"pads":[{"element":"JP3","pad":"1","at":[-15.494,-20.574],"drill":1.0},{"element":"JP3","pad":"2","at":[-12.954,-20.574],"drill":1.0},{"element":"JP3","pad":"3","at":[-10.414,-20.574],"drill":1.0},{"element":"JP3","pad":"4","at":[-7.874,-20.574],"drill":1.0},{"element":"JP3","pad":"5","at":[-5.334,-20.574],"drill":1.0},{"element":"JP3","pad":"6","at":[-2.794,-20.574],"drill":1.0},{"element":"JP3","pad":"7","at":[-0.254,-20.574],"drill":1.0},{"element":"JP3","pad":"8","at":[2.286,-20.574],"drill":1.0},{"element":"JP3","pad":"9","at":[4.826,-20.574],"drill":1.0},{"element":"JP3","pad":"10","at":[7.366,-20.574],"drill":1.0}]},{"name":"C6","package":"0805-NO","kind":"smd","at":[-14.605,8.763],"rotation":0,"pads":[]},{"name":"C10","package":"0805-NO","kind":"smd","at":[13.081,16.383],"rotation":180,"pads":[]},{"name":"JP4","package":"1X02_ROUND","kind":"header","at":[22.86,17.526],"rotation":180,"pads":[{"element":"JP4","pad":"1","at":[24.13,17.526],"drill":1.0},{"element":"JP4","pad":"2","at":[21.59,17.526],"drill":1.0}]},{"name":"U$6","package":"ADAFRUIT_3.5MM","kind":"terminal","at":[6.096,15.748],"rotation":0,"pads":[]}],"holes":[{"at":[-19.05,-24.13],"drill":3.2},{"at":[31.75,-8.89],"drill":3.2},{"at":[-20.32,24.13],"drill":3.2}],"source":"shield-v2.3.brd","source_sha256":"f4857ea288f022d48d4b91baca10aa388cab2063eed16279fe70e7ac6c277534","license":"CC-BY-SA-3.0","author":"Adafruit Industries / Limor Fried"}}
+diff --git a/frontend/src/__tests__/physical-models.test.ts b/frontend/src/__tests__/physical-models.test.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/__tests__/physical-models.test.ts
+@@ -0,0 +1,68 @@
++// @vitest-environment jsdom
++import {afterEach,describe,it,expect} from 'vitest';
++import {physicalModels,physicalModelFor,boardLayouts,physicalPresentation,withLegacyPhysicalModels} from '../components/circuitiny/physicalModels';
++import {registerProject,endpoint,connectCircuitiny} from '../components/circuitiny/bridge';
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {useStore} from '../components/circuitiny/store';
++import {geometryFor} from '../components/circuitiny/geometry';
++import {PX,definitions} from '../components/circuitiny/catalog';
++
++let dispose=()=>{};
++afterEach(()=>{dispose();document.body.innerHTML='';});
++describe('physical part presentation',()=>{
++ it('uses manufacturer PCB coordinates, a 40-contact header, and separate motor power terminals',()=>{
++  expect(boardLayouts.hat.pads.filter(p=>p.element==='RPI1')).toHaveLength(40);
++  expect(physicalModels.rpi4b.width).toBe(85);
++  expect(physicalModels.rpi4b.depth).toBe(56);
++  const shield=physicalModels['adafruit-motor-shield-v2'];
++  expect(shield.ports.SDA).not.toEqual(shield.ports.SCL);
++  expect(shield.ports['PWR.positive']).not.toEqual(shield.ports['5V']);
++  const plus=boardLayouts.shield.pads.find(p=>p.element==='MPOWER'&&p.pad==='2')!;
++  expect(shield.ports['PWR.positive'][0]).toBeCloseTo(plus.at[0]);
++  expect(shield.ports['PWR.positive'][2]).toBeCloseTo(plus.at[1]+3.6);
++  expect(physicalModels['adafruit-micro-dc-2941'].ports).not.toHaveProperty('signal');
++ });
++ it('does not assign a specific product to an arbitrary or unknown part',()=>{
++  expect(physicalModelFor({metadataId:'custom-chip',properties:{chipName:'a board'}})).toBeUndefined();
++  expect(physicalModelFor({metadataId:'custom-chip',properties:{evPhysicalModel:'unknown',evRoverKind:'pi4'}})).toBeUndefined();
++  expect(physicalModelFor({metadataId:'resistor',properties:{evPhysicalModel:'rpi4b'}})).toBeUndefined();
++  expect(physicalModelFor({metadataId:'custom-chip',properties:{evRoverKind:'pi4'}})?.id).toBe('rpi4b');
++  expect(physicalModels['dc-supply-generic'].source).toBe('');
++ });
++ it('upgrades known old conversion drawings while preserving code and electrical connections',()=>{
++  const project={embeddedVision:{recipe:'translated_uno_motor_shield_rover'},components:[{id:'MOTOR_L',metadataId:'custom-chip',properties:{chipName:'왼쪽 DC 모터 (visual only)'}}],wires:[{id:'TR5'}],fileGroups:{uno:[{name:'sketch.ino',content:'edited'}]}};
++  const upgraded=withLegacyPhysicalModels(project);
++  expect(upgraded.components[0].properties).toHaveProperty('evPhysicalModel','adafruit-micro-dc-2941');
++  expect(project.components[0].properties).not.toHaveProperty('evPhysicalModel');
++  expect(upgraded.wires).toBe(project.wires);expect(upgraded.fileGroups).toBe(project.fileGroups);
++  expect(withLegacyPhysicalModels({...project,embeddedVision:{recipe:'unknown'}}).components[0].properties).not.toHaveProperty('evPhysicalModel');
++ });
++ it('changes only presentation geometry; native saved pins, wires, dragging and undo retain their coordinates',()=>{
++  document.body.innerHTML='';
++  const pins=[{name:'GPIO40',x:160,y:20},{name:'USB_C',x:0,y:42}];
++  const element=document.createElement('div');element.id='U1';(element as any).pinInfo=pins;document.body.append(element);
++  const hat=document.createElement('div');hat.id='HAT1';(hat as any).pinInfo=[{name:'GPIO40',x:0,y:20}];document.body.append(hat);
++  native.getState().loadProjectState({boards:[],activeBoardId:null,fileGroups:{},
++   wires:[{id:'C1',start:{componentId:'U1',pinName:'GPIO40',x:286,y:176},end:{componentId:'HAT1',pinName:'GPIO40',x:436,y:176},color:'#168b5b',waypoints:[],autoRouted:true}],
++   components:[{id:'U1',metadataId:'custom-chip',x:120,y:150,properties:{evRoverKind:'pi4'}},{id:'HAT1',metadataId:'custom-chip',x:430,y:150,properties:{evRoverKind:'motor_hat'}}]} as any);
++  const before=JSON.stringify([native.getState().components,native.getState().wires]);
++  const p=registerProject(native.getState());useStore.setState({project:p});
++  const pi=p.components[0],def=definitions.get(pi.componentId)!;
++  expect(pi.config?.width).toBe(.085);
++  expect(pi.config?.physicalModelId).toBe('rpi4b');
++  expect(def.pins.find(p=>p.id==='GPIO40')?.position).toEqual([-.01,.0085,-.0245]);
++  expect(def.pins.find(p=>p.id==='GPIO40')?.label).toContain('전체');
++  expect(p.nets[0].endpoints).toEqual(['U1.GPIO40','HAT1.GPIO40']);
++  expect(JSON.stringify([native.getState().components,native.getState().wires])).toBe(before);
++  const end=endpoint('U1.GPIO40',native.getState());
++  expect(end).toMatchObject({componentId:'U1',pinName:'GPIO40'});
++  expect(end.x).toBeCloseTo(120+6+160);expect(end.y).toBeCloseTo(150+6+20);
++  dispose=connectCircuitiny();
++  const old=useStore.getState().project.components[0].position!;
++  useStore.getState().moveComponent('U1',[old[0]+.01,old[1],old[2]]);
++  expect(native.getState().components[0].x).toBeCloseTo(120+.01/PX);
++  native.getState().undo();expect(JSON.stringify([native.getState().components,native.getState().wires])).toBe(before);
++  const g=geometryFor(native.getState().components[0]);
++  expect(physicalPresentation(native.getState().components[0],{...g,rotation:90})?.pins[0].position[0]).toBeCloseTo(.0245);
++ });
++});

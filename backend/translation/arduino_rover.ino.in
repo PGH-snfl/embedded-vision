@@ -1,0 +1,67 @@
+/* Arduino Uno + Adafruit Motor Shield V2 (separate hardware), 0x60.
+ * Derived from the reviewed Raspberry Pi MotorKit example. Hardware untested.
+ * Wire the left motor to M1, the right motor to M2 and use a separate motor supply.
+ * In Serial Monitor (115200 baud), send e.g. forward 1 with newline.
+ * Motor power must have an independent switch accessible at all times.
+ */
+#include <Wire.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct Command { const char *name; double left, right; };
+static const Command commands[] = {
+$command_rows
+};
+static const byte address=0x60;
+static bool wr(byte reg,byte val) {
+  Wire.beginTransmission(address);Wire.write(reg);Wire.write(val);return Wire.endTransmission()==0;
+}
+static bool pwm(byte channel,int duty) {
+  Wire.beginTransmission(address);Wire.write((byte)(0x06+4*channel));Wire.write((byte)0);
+  Wire.write((byte)(duty>=4096?0x10:0));
+  Wire.write((byte)(duty>0&&duty<4096?duty&255:0));
+  Wire.write((byte)(duty<=0?0x10:(duty>=4096?0:duty>>8)));
+  return Wire.endTransmission()==0;
+}
+static bool initHat() {
+  if(!wr(0x00,0x10)||!wr(0xfe,3)||!wr(0x00,0x20))return false;
+  delay(5);if(!wr(0x00,0xa0))return false;
+  return pwm(8,0)&&pwm(13,0)&&pwm(9,0)&&pwm(10,0)&&pwm(11,0)&&pwm(12,0);
+}
+static bool motor(byte enable,byte positive,byte negative,double value) {
+  unsigned long raw=(unsigned long)(65535.0*fabs(value));
+  int duty=raw >= 65535UL ? 4096 : (int)(raw >> 4);
+  if(value==0) {if(!pwm(positive,4096)||!pwm(negative,4096))return false;}
+  else if(value>0) {if(!pwm(negative,0)||!pwm(positive,duty))return false;}
+  else {if(!pwm(positive,0)||!pwm(negative,duty))return false;}
+  return pwm(enable,4096);
+}
+static bool stopMotors() {
+  bool a=motor(8,9,10,0), b=motor(13,11,12,0);return a&&b;
+}
+static void runLine(char *line) {
+  char *name=strtok(line," \t\r"),*duration=strtok(NULL," \t\r"),*extra=strtok(NULL," \t\r");
+  const Command *selected=NULL;
+  if(name)for(unsigned i=0;i<sizeof commands/sizeof commands[0];i++)if(!strcmp(name,commands[i].name))selected=&commands[i];
+  double seconds=1.0;
+  if(duration) {char *end;seconds=strtod(duration,&end);if(end==duration||*end)selected=NULL;}
+  if(!selected||extra||!isfinite(seconds)||seconds<0||seconds>2) {Serial.println("Invalid command or seconds (0..2)");return;}
+  bool ok=motor(8,9,10,selected->left)&&motor(13,11,12,selected->right);
+  if(ok) delay((unsigned long)(seconds*1000.0));
+  if(!stopMotors()||!ok)Serial.println("I2C/stop error: switch motor power off");
+  else Serial.println("Stopped");
+}
+void setup() {
+  Serial.begin(115200);Wire.begin();
+  if(!initHat()||!stopMotors()) {Serial.println("I2C error: switch motor power off");while(true)delay(1000);}
+  Serial.println("Enter command and optional seconds (0..2), e.g. forward 1");
+}
+void loop() {
+  static char input[80];static byte size=0;static bool overflow=false;
+  while(Serial.available()) {
+    char c=(char)Serial.read();
+    if(c=='\n') {input[size]='\0';if(overflow)Serial.println("Command too long");else runLine(input);size=0;overflow=false;}
+    else if(size<sizeof input-1) input[size++]=c;else overflow=true;
+  }
+}

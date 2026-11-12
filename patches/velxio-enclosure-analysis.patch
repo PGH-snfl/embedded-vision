@@ -1,0 +1,690 @@
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -16,7 +16,7 @@
+ import {requestAssembly} from './circuitiny/assemblyClient';
+ import {assemblyRoutingCache} from './circuitiny/assemblyRoutingCache';
+ 
+-export function EmbeddedVisionBridge({onReady,actions}:{onReady?:(ready:boolean,restored:boolean,simulationNotice?:string)=>void;actions?:ReactNode}){
++export function EmbeddedVisionBridge({onReady,actions}:{onReady?:(ready:boolean,restored:boolean,simulationNotice?:string,inspection?:boolean)=>void;actions?:ReactNode}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+  const [key,setKey]=useState('');
+  const [notice,setNotice]=useState('');
+@@ -24,6 +24,7 @@
+  const [behavior,setBehavior]=useState('');
+  const [returnUrl,setReturnUrl]=useState(()=>analysisReturnUrl(hostedWorkspace(),undefined));
+  const [failed,setFailed]=useState(false);
++ const [inspection,setInspection]=useState(false);
+  const resetting=useRef(false);
+  const cloud=useRef<Awaited<ReturnType<typeof openCloudDraft>>>(null);
+  const [cloudStatus,setCloudStatus]=useState('');
+@@ -42,6 +43,7 @@
+   (async()=>{
+    const original=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded),c=>c.charCodeAt(0))));
+    const source=original.embeddedVision;
++   const isInspection=source?.recipe==='enclosure_hypothesis_view';setInspection(isInspection);
+    loadOrigin=source?.analysis_origin||'';progress('저장된 회로를 확인하고 있습니다…');
+    const motion=new URLSearchParams(location.search).get('motion')==='1';
+    if(original.format!=='velxio-project'||!source?.source_graph_sha256)throw new Error('사진 분석에서 내보낸 회로 파일이 아닙니다.');
+@@ -82,12 +84,12 @@
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+    setKey(storageKey);
+    setMotionSource(source);
+-   onReady?.(true,restored,translatedSimulationNotice(source.recipe));
++   onReady?.(true,restored,translatedSimulationNotice(source.recipe),isInspection);
+    setTitle(source.function?.summary||original.name||'새 회로');
+-   setBehavior(initialSimulationBehavior(source));
++   setBehavior(isInspection?'':initialSimulationBehavior(source));
+    setReturnUrl(analysisReturnUrl(hostedWorkspace(),source.analysis_origin));
+    setNotice(source.simulation_notice||'');
+-   progress(restored?'저장한 편집 내용을 복원했습니다.':'사진에서 확인한 부품으로 새로 구성한 회로를 가져왔습니다.','ready');
++   progress(restored?'저장한 편집 내용을 복원했습니다.':isInspection?'외장과 내부 추정 구성을 준비했습니다.':'사진에서 확인한 부품으로 새로 구성한 회로를 가져왔습니다.','ready');
+    flush=()=>{if(resetting.current)return;try{
+      const data=buildVlxPayload({name:original.name});
+      localStorage.setItem(storageKey,JSON.stringify({...data,embeddedVision:source}));
+@@ -108,13 +110,13 @@
+  },[]);
+  return <header className="ev-topbar">
+   <div className="ev-project">
+-   <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">← 사진 분석</a><span>EMBEDDED VISION / SIMULATOR</span></div>
++   <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">← 사진 분석</a><span>EMBEDDED VISION / {inspection?'INTERNAL HYPOTHESES':'SIMULATOR'}</span></div>
+    <h1>{title}</h1>{behavior&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
+   </div>
+   <div className="ev-project-actions">
+    {hostedWorkspace()&&<button className="ev-cloud-save" disabled={!key||!cloud.current||cloudSaving} onClick={async()=>{if(!cloud.current)return;setCloudSaving(true);try{const payload={...buildVlxPayload({name:'embedded-circuit'}),embeddedVision:getMotionSource()};const revision=await cloud.current.save(payload);setCloudStatus('서버에 저장됨 · r'+revision);}catch(e){setCloudStatus(String(e));}finally{setCloudSaving(false);}}}>{cloudSaving?'저장 중…':'작업공간에 저장'}</button>}
+    {cloudStatus&&<span className="ev-cloud-status" role="status">{cloudStatus}</span>}
+-   <span className="ev-badge">가상 회로 · 실물 미검증</span>
++   <span className="ev-badge">{inspection?'내부 구성 추정 · 실물 내부 미확인':'가상 회로 · 실물 미검증'}</span>
+    <button className="ev-download" disabled={!key} onClick={()=>triggerDownloadVlx({name:'embedded-circuit'})}>↓ 프로젝트 저장</button>
+    <details className="ev-info"><summary>설계 정보·저장 안내</summary><div>
+     <strong>사진 분석에서 만든 새 설계</strong><p>{notice||'원본 배선을 복원한 결과가 아닙니다. 실제 부품과 핀을 대조하세요.'}</p>
+--- a/frontend/src/components/translatedSimulationNotice.ts
++++ b/frontend/src/components/translatedSimulationNotice.ts
+@@ -1,5 +1,6 @@
+ /** Converted rover boards expose their wiring, but custom chips are drawings. */
+ export function translatedSimulationNotice(recipe: unknown): string | undefined {
++ if(recipe==='enclosure_hypothesis_view')return '내부 구성 추론을 확인하는 분해 모형입니다. 실제 내부 관측·전기 회로가 아니며 사용자가 최종 확인합니다.';
+  if(recipe==='translated_uno_motor_shield_rover')return '이 회로의 모터 실드·모터·전원은 시각 전용입니다. 모터 주행과 코드 실행을 시뮬레이션할 수 없습니다. 회로와 코드는 편집할 수 있습니다.';
+  if(recipe==='translated_pi_rover_c')return '이 회로의 Raspberry Pi·모터 HAT·모터는 시각 전용입니다. C 코드와 모터 주행은 시뮬레이션할 수 없습니다. 회로와 코드는 편집할 수 있습니다.';
+  return undefined;
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -90,6 +90,7 @@
+   const [importReady, setImportReady] = useState(false);
+   const [autoRunAllowed, setAutoRunAllowed] = useState(false);
+   const [simulationUnavailable, setSimulationUnavailable] = useState<string|undefined>();
++  const [inspection, setInspection] = useState(false);
+   const [resultsOpen, setResultsOpen] = useState(false);
+   const [toolsOpen, setToolsOpen] = useState(false);
+   useEffect(() => {
+@@ -605,22 +606,22 @@
+     <div className={embedded ? `app embedded-workbench ev-side-tools${toolsOpen?' ev-tools-open':''}` : 'app'}>
+       <EnvironmentRuntime/>
+       {embedded ? <>
+-       <EmbeddedVisionBridge onReady={(ready,restored,simulationNotice)=>{setSimulationUnavailable(simulationNotice);setAutoRunAllowed(ready&&!restored&&!simulationNotice);setImportReady(ready);}} actions={<>
++       <EmbeddedVisionBridge onReady={(ready,restored,simulationNotice,inspectionMode)=>{setInspection(!!inspectionMode);setSimulationUnavailable(simulationNotice);setAutoRunAllowed(ready&&!restored&&!simulationNotice);setImportReady(ready);}} actions={<>
+         <div className="ev-shared-actions">
+-         <EmbeddedSystemConversion/>
++         {!inspection&&<EmbeddedSystemConversion/>}
+          <EditorMenuBar scope="project"/>
+         </div>
+-        <div className="ev-shared-execution">
++        {!inspection&&<div className="ev-shared-execution">
+          {!importReady?<small>회로를 불러오는 중입니다.</small>:simulationUnavailable?<small>이 변환 회로에서는 실행할 수 없습니다.</small>:<EditorToolbar compact ready={importReady} autoRunAllowed={autoRunAllowed} consoleOpen={consoleOpen} setConsoleOpen={setConsoleOpen} compileLogs={compileLogs} setCompileLogs={setCompileLogs}/>}
+          <button className="ev-output-toggle" disabled={!!simulationUnavailable} aria-expanded={resultsOpen} onClick={()=>{setResultsOpen(!resultsOpen);setConsoleOpen(false);if(isMobile)setMobileView('circuit');}}>보드 출력 {resultsOpen?'접기':'보기'}</button>
++        </div>}
++        <div className="ev-view-switch" role="group" aria-label="작업 화면">
++         <button aria-pressed={isMobile ? mobileView==='circuit' : viewMode==='circuit'} onClick={()=>{setViewMode('circuit');setMobileView('circuit');}}>{inspection?'3D 구성 보기':'회로 보기'}</button>
++         {!inspection&&<button aria-pressed={isMobile ? mobileView==='code' : viewMode==='both'} onClick={()=>{setViewMode('both');setMobileView('code');}}>{isMobile?'코드 편집':'코드 함께 보기'}</button>}
+         </div>
+-        <div className="ev-view-switch" role="group" aria-label="작업 화면">
+-         <button aria-pressed={isMobile ? mobileView==='circuit' : viewMode==='circuit'} onClick={()=>{setViewMode('circuit');setMobileView('circuit');}}>회로 보기</button>
+-         <button aria-pressed={isMobile ? mobileView==='code' : viewMode==='both'} onClick={()=>{setViewMode('both');setMobileView('code');}}>{isMobile?'코드 편집':'코드 함께 보기'}</button>
+-        </div>
+-        <details className="ev-progress-summary"><summary>진행 상태</summary><p>{!importReady?'회로를 불러오는 중입니다.':circuitRunning?'가상 보드가 실행 중입니다.':resultsOpen?'보드 출력을 확인하고 있습니다.':'회로와 코드를 편집할 수 있습니다.'}</p></details>
++        <details className="ev-progress-summary"><summary>진행 상태</summary><p>{!importReady?'불러오는 중입니다.':inspection?'외장·내부 분해 메뉴에서 표시 방식을 선택하세요.':circuitRunning?'가상 보드가 실행 중입니다.':resultsOpen?'보드 출력을 확인하고 있습니다.':'회로와 코드를 편집할 수 있습니다.'}</p></details>
+        </>} />
+-       {simulationUnavailable&&<div className="ev-simulation-unavailable" role="status"><strong>모터 시뮬레이션 미지원</strong><span>{simulationUnavailable}</span></div>}
++       {simulationUnavailable&&<div className="ev-simulation-unavailable" role="status"><strong>{inspection?'기능 기반 내부 구성 추정':'모터 시뮬레이션 미지원'}</strong><span>{simulationUnavailable}</span></div>}
+       </> : <AppHeader editorMenu={!isMobile ? <EditorMenuBar /> : undefined} editorToolbar={unifiedToolbar}/> }
+ 
+       {/* ── Mobile tab bar (top, above panels) ── */}
+--- a/frontend/src/components/circuitiny/store.ts
++++ b/frontend/src/components/circuitiny/store.ts
+@@ -3,6 +3,7 @@
+ import type { LedOutputSample } from '../../simulation/ledOutput';
+ import type { Project } from './project/schema';
+ export type ViewerState = {
++  enclosureView:'assembled'|'inside'|'exploded';
+   interiorView:boolean;
+   assemblyRouting:{wireLengthMm:number;unresolved:Array<{id:string;reason?:string}>}|null;
+   project: Project;
+@@ -49,6 +50,7 @@
+   releaseButton: (p: string) => void;
+ };
+ export const useStore = create<ViewerState>((set) => ({
++  enclosureView:'inside',
+   interiorView:true,
+   assemblyRouting:null,
+   project: {
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -124,6 +124,7 @@
+   const sceneKey = useStore((s) => s.sceneKey),
+     hasScene = useStore((s) => !!(s.project.components.length || s.project.boards?.length)),
+     fitRevision = useStore((s) => s.fitRevision);
++  const enclosureView=useStore(s=>s.enclosureView);
+   useEffect(() => {
+     const timer = setTimeout(() => {
+       const root = scene.getObjectByName('circuitiny-design');
+@@ -140,7 +141,8 @@
+               new T.Vector3(...p.position).add(new T.Vector3(...(c.position || [0, 0, 0]))),
+             ),
+           );
+-        const w=Number(c.config?.width)||0,d=Number(c.config?.depth)||0,h=Number(c.config?.physicalHeight)||.01;
++        const expand=!!(c.config?.structure as Record<string,unknown>|undefined)?.evEnclosure&&enclosureView==='exploded';
++        const w=(Number(c.config?.width)||0)*(expand?2.3:1),d=(Number(c.config?.depth)||0)*(expand?2.3:1),h=(Number(c.config?.physicalHeight)||.01)*(expand?1.6:1);
+         const a=Number(c.config?.rotation||0)*Math.PI/180;
+         for(const x of [-w/2,w/2])for(const z of [-d/2,d/2])for(const y of [0,h]){
+           points.push(new T.Vector3(x*Math.cos(a)-z*Math.sin(a),y,x*Math.sin(a)+z*Math.cos(a)).add(new T.Vector3(...(c.position||[0,0,0]))));
+@@ -176,6 +178,6 @@
+       }
+     }, 120);
+     return () => clearTimeout(timer);
+-  }, [sceneKey, hasScene, fitRevision, size.width, size.height, camera, scene, controls]);
++  }, [sceneKey, hasScene, fitRevision, enclosureView, size.width, size.height, camera, scene, controls]);
+   return null;
+ }
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -35,6 +35,7 @@
+ import { canDragComponent, createComponentDrag } from './directComponentDrag';
+ import { STRUCTURE_ID, structureParameters } from './structureObjects';
+ import {MechanicalShape} from './MechanicalShape';
++import {EnclosureShell} from './EnclosureView';
+ import {environmentKind} from './environmentObjects';
+ import {EnvironmentBody,EnvironmentHose} from './EnvironmentBody';
+ type Violation = { severity: 'error' | 'warning'; involves: string[] };
+@@ -381,19 +382,21 @@
+   simActive?: boolean;
+ }) {
+   const interior=useStore(s=>s.interiorView&&s.project.components.some(c=>!!c.config?.evAssembly));
++  const enclosureView=useStore(s=>s.enclosureView);
+   if (config?.metadataId === STRUCTURE_ID) {
+     const p = structureParameters(config.structure as Record<string,unknown> | undefined), w=p.width/1000, h=p.height/1000, d=p.depth/1000;
+     const rad=Math.PI/180;
+     const orientation=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),p.rotation*rad).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rotationX*rad,-p.rotation*rad,p.rotationZ*rad)));
+     const props=config.structure as Record<string,unknown>|undefined;
++    if(props?.evInternalHypothesis&&enclosureView==='assembled')return null;
+     const environment=environmentKind(props),id=String(config.nativeId||'');
+     if(environment==='hose')return <EnvironmentHose id={id} selected={selected}/>;
+     if(environment)return <group position={[0,(p.elevation+p.height/2)/1000,0]} quaternion={orientation} scale={[w,h,d]}><EnvironmentBody id={id} kind={environment} color={p.color}/></group>;
+     const role=(props?.evPhotoStructure as {role?:string}|undefined)?.role||(props?.evDesignedStructure as {role?:string}|undefined)?.role||'other';
+     const ghost=interior&&['housing','chassis','platform','frame'].includes(role||'');
+     return <group><group position={[0, (p.elevation+p.height/2)/1000, 0]} quaternion={orientation} scale={[w,h,d]}>
+-      <MechanicalShape id={String(config.nativeId||'')} role={role} shape={p.shape} color={p.color} ghost={ghost} selected={selected}/>
+-    </group>{typeof props?.label==='string'&&selected&&<Html center position={[0,(p.elevation+p.height+8)/1000,0]} style={{pointerEvents:'none',whiteSpace:'nowrap',background:'#ffffffd9',borderRadius:3,padding:'2px 4px',fontSize:10,color:'#435b6e'}}>{props.label} · {props.evDesignedStructure?'설계 보완':'사진 추정'}</Html>}</group>;
++      {props?.evEnclosure?<EnclosureShell view={enclosureView} color={p.color}/>:<MechanicalShape id={String(config.nativeId||'')} role={role} shape={p.shape} color={p.color} ghost={ghost} selected={selected}/>}
++    </group>{typeof props?.label==='string'&&selected&&<Html center position={[0,(p.elevation+p.height+8)/1000,0]} style={{pointerEvents:'none',whiteSpace:'nowrap',background:'#ffffffd9',borderRadius:3,padding:'2px 4px',fontSize:10,color:'#435b6e'}}>{props.label} · {props.evInternalHypothesis?'내부 구성 추정':props.evEnclosure?'외장 모형':props.evDesignedStructure?'설계 보완':'사진 추정'}</Html>}</group>;
+   }
+   if (config?.metadataId)
+     return (
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -1,6 +1,7 @@
+ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+ import Viewer3D from './Viewer3D';
+ import {SelectionCard} from './SelectionCard';
++import {EnclosureControls,EnclosureDetails} from './EnclosureView';
+ import {EnvironmentPalette,EnvironmentActions,EnvironmentDetails} from './EnvironmentControls';
+ import {environmentKind} from './environmentObjects';
+ import {createPortal} from 'react-dom';
+@@ -226,6 +227,7 @@
+   const toolbar=(
+       <div className="ev-c3d-tools">
+         <strong>회로 편집</strong>
++        <EnclosureControls/>
+         <EnvironmentPalette running={running}/>
+         {photoObjects.length>0&&<button onClick={()=>useStore.setState(s=>({viewMode:'iso',reverseViewRevision:s.reverseViewRevision+1}))}>반대쪽 보기</button>}
+         <details className="ev-c3d-more"><summary>＋ 3D 구조물</summary><div>
+@@ -440,7 +442,7 @@
+           reference={selected!}
+           info={structure?`${structure.width} × ${structure.depth} × ${structure.height} mm`:component?.properties?.value?String(component.properties.value):board?'개발보드':`${definitions.get([...project.components,...(project.boards||[])].find(c=>c.instance===selected)?.componentId||'')?.pins.length||0}핀`}
+           moving={moveTarget===selected&&!running&&!wireMode} disabled={running||wireMode}
+-          status={running?'실행 중':wireMode?'배선 편집 중':undefined}
++          status={component?.properties?.evInternalHypothesis?'내부 추정':component?.properties?.evEnclosure?'외장 모형':running?'실행 중':wireMode?'배선 편집 중':undefined}
+           actions={component&&environmentKind(component.properties)?<EnvironmentActions part={component}/>:undefined}
+           onMove={()=>useStore.setState(s=>({moveTarget:s.moveTarget===selected?null:selected}))}
+           onClose={()=>useStore.getState().select(null)}>
+@@ -465,6 +467,7 @@
+             </label>
+           )}
+           {structure && component && <div className="ev-structure-fields">
++            <EnclosureDetails part={component}/>
+             <EnvironmentDetails part={component} running={running}/>
+             {Boolean(component.properties?.evDesignedStructure)&&<details><summary>설계 보완 · INFERRED</summary><p>{String((component.properties.evDesignedStructure as {reason:string}).reason)}</p><p>사진에서 확인하지 못한 부분을 완성한 새 설계입니다. 실제 형상과 제작 치수는 미확인입니다.</p></details>}
+             {Boolean(component.properties?.evPhotoStructure)&&<details><summary>사진 근거 · INFERRED</summary><p>{String((component.properties.evPhotoStructure as {observation?:string}).observation||'사진의 보이는 형상을 단순화한 모델입니다.')}</p><p>절대 치수 UNKNOWN · 표시 기준 길이 220 mm는 시각화 가정입니다. 실제 제작 치수가 아닙니다.</p><p>{String(((component.properties.evPhotoStructure as {assumptions?:string[]}).assumptions||[]).join(' '))}</p></details>}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/enclosureMeshes.ts
+@@ -0,0 +1,17 @@
++import * as T from 'three';
++export type EnclosureView='assembled'|'inside'|'exploded';
++/** Illustrative six-panel enclosure, not a recovered CAD surface or an X-ray. */
++export function enclosureMesh(view:EnclosureView,color:string){
++ const root=new T.Group();root.name='inferred-enclosure';
++ const faces:[string,[number,number,number],[number,number,number]][]=[
++  ['base',[1,.025,1],[0,-.49,0]],['lid',[1,.025,1],[0,view==='exploded'?.95:.49,0]],
++  ['left',[.025,1,1],[view==='exploded'?-1.05:-.49,0,0]],['right',[.025,1,1],[view==='exploded'?1.05:.49,0,0]],
++  ['front',[1,1,.025],[0,0,view==='exploded'?1.05:.49]],['back',[1,1,.025],[0,0,view==='exploded'?-1.05:-.49]],
++ ];
++ for(const [name,size,position] of faces){
++  const opacity=view==='inside'?(name==='base'?.6:.13):view==='exploded'?.85:1;
++  const mesh=new T.Mesh(new T.BoxGeometry(...size),new T.MeshStandardMaterial({color,roughness:.66,metalness:.08,transparent:opacity<1,opacity,depthWrite:opacity===1}));
++  mesh.name=name;mesh.position.set(...position);mesh.visible=view!=='inside'||!['lid','front'].includes(name);root.add(mesh);
++ }
++ return root;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/EnclosureView.tsx
+@@ -0,0 +1,31 @@
++import {useMemo,useEffect} from 'react';
++import {enclosureMesh,type EnclosureView as View} from './enclosureMeshes';
++import {disposeEnvironmentMesh} from './environmentMeshes';
++import {useStore} from './store';
++import {useSimulatorStore as native} from '../../store/useSimulatorStore';
++type Part=ReturnType<typeof native.getState>['components'][number];
++export function EnclosureShell({view,color}:{view:View;color:string}){
++ const mesh=useMemo(()=>enclosureMesh(view,color),[view,color]);
++ useEffect(()=>()=>disposeEnvironmentMesh(mesh),[mesh]);
++ return <primitive object={mesh}/>;
++}
++export function EnclosureControls(){
++ const parts=native(s=>s.components),mode=useStore(s=>s.enclosureView),selected=useStore(s=>s.selected);
++ const shells=parts.filter(p=>!!p.properties?.evEnclosure),modules=parts.filter(p=>!!p.properties?.evInternalHypothesis);
++ if(!shells.length)return null;
++ const change=(view:View)=>useStore.setState(s=>({enclosureView:view,selected:null,selectedNet:null,moveTarget:null,fitRevision:s.fitRevision+1}));
++ return <details className="ev-c3d-more"><summary>외장·내부 분해</summary><div>
++  {([['assembled','외장 보기'],['inside','내부 추정 보기'],['exploded','분해도']] as const).map(([view,label])=><button key={view} aria-pressed={mode===view} onClick={()=>change(view)}>{label}</button>)}
++  <small>외부 단서로 추론한 내부 후보 {modules.length}개 · 실물 내부 미확인</small>
++  <label>추정 부품 선택<select value={modules.some(m=>m.id===selected)?selected!:''} onChange={e=>{if(e.target.value)useStore.setState({enclosureView:'inside',selected:e.target.value,selectedNet:null,moveTarget:null});}}><option value="">모듈·부품 선택</option>{modules.map(p=><option value={p.id} key={p.id}>{String(p.properties.label||p.id)}</option>)}</select></label>
++ </div></details>;
++}
++export function EnclosureDetails({part}:{part:Part}){
++ const internal=part.properties?.evInternalHypothesis as {purpose?:string;rationale?:string;candidate_parts?:string[];alternatives?:string[];confidence?:'low'|'medium'|'high';photo_presence?:string}|undefined;
++ const shell=part.properties?.evEnclosure as {rationale?:string;assumptions?:string[];unknowns?:string[]}|undefined;
++ if(!internal&&!shell)return null;
++ return <div><p><strong>{internal?'내부 구성 추정 · 실제 존재 미확인':'외장 표시 모형 · 실제 내부 미확인'}</strong></p>
++  {internal?<><p>{internal.purpose}</p><p>후보: {internal.candidate_parts?.join(' / ')||'정확한 모델 미확인'}</p><p>{internal.rationale}</p><p>다른 가능성: {internal.alternatives?.join(' / ')||'추가 확인 필요'}</p><p>확신도: {internal.confidence?({low:'낮음',medium:'보통',high:'높음'})[internal.confidence]:'미확인'}</p></>:<><p>{shell?.rationale}</p><p>가정: {shell?.assumptions?.join(' / ')}</p><p>미확인: {shell?.unknowns?.join(' / ')}</p></>}
++  <p>위치·크기는 설명용 배치입니다. 실제 내부 사진이나 제작 도면이 아니며 최종 확인은 사용자가 진행합니다.</p>
++ </div>;
++}
+--- /dev/null
++++ b/frontend/src/__tests__/enclosure-view.test.ts
+@@ -0,0 +1,66 @@
++// @vitest-environment jsdom
++import {beforeEach,describe,expect,it} from 'vitest';
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import * as T from 'three';
++import {renderToStaticMarkup} from 'react-dom/server';
++import {enclosureMesh} from '../components/circuitiny/enclosureMeshes';
++import {EnclosureControls,EnclosureDetails} from '../components/circuitiny/EnclosureView';
++import {disposeEnvironmentMesh} from '../components/circuitiny/environmentMeshes';
++import {useStore} from '../components/circuitiny/store';
++import {registerProject} from '../components/circuitiny/bridge';
++import {geometryFor} from '../components/circuitiny/geometry';
++import {useSimulatorStore} from '../store/useSimulatorStore';
++import {buildVlxPayload,importVlxFile} from '../utils/vlxFile';
++import {buildInputFromStore} from '../simulation/spice/storeAdapter';
++import {translatedSimulationNotice} from '../components/translatedSimulationNotice';
++import fixture from './fixtures/enclosure-study.json';
++
++beforeEach(()=>{
++ sessionStorage.clear();
++ useSimulatorStore.setState({components:[],boards:[],wires:[],activeBoardId:null} as never);
++ useStore.setState({enclosureView:'inside',selected:null,moveTarget:null});
++});
++describe('functional hypotheses inside an opaque housing',()=>{
++ it('removes front/lid in cutaway and separates six panels in exploded view',()=>{
++  const assembled=enclosureMesh('assembled','#8c9ca7'),inside=enclosureMesh('inside','#8c9ca7'),exploded=enclosureMesh('exploded','#8c9ca7');
++  expect(assembled.children).toHaveLength(6);
++  expect(assembled.children.every(c=>c.visible)).toBe(true);
++  expect(inside.getObjectByName('lid')?.visible).toBe(false);
++  expect(inside.getObjectByName('front')?.visible).toBe(false);
++  expect((inside.getObjectByName('left') as T.Mesh).material).toMatchObject({transparent:true,depthWrite:false,opacity:.13});
++  const a=new T.Box3().setFromObject(assembled).getSize(new T.Vector3()),b=new T.Box3().setFromObject(exploded).getSize(new T.Vector3());
++  expect(b.x).toBeGreaterThan(a.x*1.9);expect(b.z).toBeGreaterThan(a.z*1.9);
++  [assembled,inside,exploded].forEach(disposeEnvironmentMesh);
++ });
++ it('round-trips the separate study with no MCU, wires or electrical input',async()=>{
++  await importVlxFile({text:async()=>JSON.stringify(fixture)} as File);
++  const state=useSimulatorStore.getState();
++  expect(state.boards).toEqual([]);expect(state.components).toHaveLength(5);expect(state.wires).toEqual([]);
++  expect(state.components.every(p=>geometryFor(p).pins.length===0)).toBe(true);
++  expect(buildInputFromStore({...state,boards:[]}).components).toEqual([]);
++  const project=registerProject(state);expect(project.board).toBe('none');expect(project.nets).toEqual([]);
++  expect(buildVlxPayload().components).toEqual(fixture.components);
++  const before=JSON.stringify(state.components);
++  useStore.setState({enclosureView:'exploded'});
++  expect(JSON.stringify(useSimulatorStore.getState().components)).toBe(before);
++  expect(translatedSimulationNotice(fixture.embeddedVision.recipe)).toContain('추론');
++ });
++ it('offers three views and reports unknown presence on selection without a generic detail overlay',async()=>{
++  expect(renderToStaticMarkup(createElement(EnclosureControls))).toBe('');
++  expect(renderToStaticMarkup(createElement(EnclosureDetails,{part:{id:'x',metadataId:'led',x:0,y:0,properties:{}}}))).toBe('');
++  await importVlxFile({text:async()=>JSON.stringify(fixture)} as File);
++  const host=document.createElement('div'),root=createRoot(host);
++  (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
++  await act(async()=>root.render(createElement(EnclosureControls)));
++  const controls=host.innerHTML;
++  expect(controls).toContain('외장 보기');expect(controls).toContain('내부 추정 보기');expect(controls).toContain('분해도');
++  const card=renderToStaticMarkup(createElement(EnclosureDetails,{part:useSimulatorStore.getState().components[1]}));
++  expect(card).toContain('실제 존재 미확인');expect(card).toContain('설명용 배치');
++  expect(useStore.getState().selected).toBeNull();expect(useStore.getState().moveTarget).toBeNull();
++  const buttons=host.querySelectorAll('button');
++  await act(async()=>buttons[2].click());expect(useStore.getState().enclosureView).toBe('exploded');
++  expect(useStore.getState().moveTarget).toBeNull();
++  await act(async()=>root.unmount());
++ });
++});
+--- /dev/null
++++ b/frontend/src/__tests__/fixtures/enclosure-study.json
+@@ -0,0 +1,339 @@
++{
++  "format": "velxio-project",
++  "version": 1,
++  "exportedAt": "2026-11-05T06:52:57.499264+00:00",
++  "name": "외장 내부 구성 · AI 추정 분해도",
++  "boards": [],
++  "components": [
++    {
++      "id": "case-housing",
++      "metadataId": "ev-structure",
++      "x": -308.3622047244095,
++      "y": -223.3228346456693,
++      "properties": {
++        "label": "예시 제어기 외장",
++        "shape": "box",
++        "width": 160,
++        "height": 90,
++        "depth": 115,
++        "elevation": 0.0,
++        "rotation": 0,
++        "rotationX": 0,
++        "rotationZ": 0,
++        "color": "#8c9ca7",
++        "visualOnly": true,
++        "dimensionsStatus": "UNKNOWN",
++        "evEnclosure": {
++          "id": "housing",
++          "name": "예시 제어기 외장",
++          "rationale": "외장과 외부 LCD를 근거로 내부 제어 및 전원부를 가정합니다.",
++          "assumptions": [
++            "외장 내부에 제어 회로가 있다고 가정"
++          ],
++          "unknowns": [
++            "실제 IC 모델·배선·치수"
++          ],
++          "observed_part_ids": [
++            "case",
++            "lcd"
++          ]
++        },
++        "designBasis": "illustrative_enclosure_proxy"
++      }
++    },
++    {
++      "id": "inside-housing-control",
++      "metadataId": "ev-structure",
++      "x": -229.35496062992124,
++      "y": -141.28346456692913,
++      "properties": {
++        "label": "제어부",
++        "shape": "box",
++        "width": 51.791999999999994,
++        "height": 5,
++        "depth": 71.58749999999999,
++        "elevation": 8.299999999999999,
++        "rotation": 0,
++        "rotationX": 0,
++        "rotationZ": 0,
++        "color": "#397a61",
++        "visualOnly": true,
++        "dimensionsStatus": "UNKNOWN",
++        "evInternalHypothesis": {
++          "id": "control",
++          "parent_id": null,
++          "name": "제어부",
++          "role": "controller",
++          "candidate_parts": [
++            "MCU 모듈 예시"
++          ],
++          "required_part_ids": [],
++          "purpose": "제어부 기능",
++          "rationale": "외부 표시 기능을 구현하기 위한 후보",
++          "confidence": "medium",
++          "status": "INFERRED",
++          "photo_presence": "UNKNOWN",
++          "alternatives": [
++            "다른 통합 모듈 가능"
++          ],
++          "enclosure_id": "housing",
++          "enclosure_component_id": "case-housing",
++          "depth": 0,
++          "hypothesis_ids": [
++            "top"
++          ]
++        },
++        "designBasis": "function_based_internal_hypothesis"
++      }
++    },
++    {
++      "id": "inside-housing-mcu",
++      "metadataId": "ev-structure",
++      "x": -218.5887496062992,
++      "y": -107.46259842519686,
++      "properties": {
++        "label": "마이크로컨트롤러",
++        "shape": "box",
++        "width": 20.19888,
++        "height": 5,
++        "depth": 53.690625,
++        "elevation": 23.6,
++        "rotation": 0,
++        "rotationX": 0,
++        "rotationZ": 0,
++        "color": "#397a61",
++        "visualOnly": true,
++        "dimensionsStatus": "UNKNOWN",
++        "evInternalHypothesis": {
++          "id": "mcu",
++          "parent_id": "control",
++          "name": "마이크로컨트롤러",
++          "role": "controller",
++          "candidate_parts": [
++            "ATmega 계열 예시"
++          ],
++          "required_part_ids": [],
++          "purpose": "마이크로컨트롤러 기능",
++          "rationale": "외부 표시 기능을 구현하기 위한 후보",
++          "confidence": "medium",
++          "status": "INFERRED",
++          "photo_presence": "UNKNOWN",
++          "alternatives": [
++            "다른 통합 모듈 가능"
++          ],
++          "enclosure_id": "housing",
++          "enclosure_component_id": "case-housing",
++          "depth": 1,
++          "hypothesis_ids": [
++            "top"
++          ]
++        },
++        "designBasis": "function_based_internal_hypothesis"
++      }
++    },
++    {
++      "id": "inside-housing-supply",
++      "metadataId": "ev-structure",
++      "x": 21.605669291338607,
++      "y": -141.28346456692913,
++      "properties": {
++        "label": "전원부",
++        "shape": "box",
++        "width": 51.791999999999994,
++        "height": 5,
++        "depth": 71.58749999999999,
++        "elevation": 8.299999999999999,
++        "rotation": 0,
++        "rotationX": 0,
++        "rotationZ": 0,
++        "color": "#c19d44",
++        "visualOnly": true,
++        "dimensionsStatus": "UNKNOWN",
++        "evInternalHypothesis": {
++          "id": "supply",
++          "parent_id": null,
++          "name": "전원부",
++          "role": "power",
++          "candidate_parts": [
++            "DC 전압 변환 모듈 예시"
++          ],
++          "required_part_ids": [],
++          "purpose": "전원부 기능",
++          "rationale": "외부 표시 기능을 구현하기 위한 후보",
++          "confidence": "medium",
++          "status": "INFERRED",
++          "photo_presence": "UNKNOWN",
++          "alternatives": [
++            "다른 통합 모듈 가능"
++          ],
++          "enclosure_id": "housing",
++          "enclosure_component_id": "case-housing",
++          "depth": 0,
++          "hypothesis_ids": [
++            "top"
++          ]
++        },
++        "designBasis": "function_based_internal_hypothesis"
++      }
++    },
++    {
++      "id": "inside-housing-cap",
++      "metadataId": "ev-structure",
++      "x": 32.37188031496064,
++      "y": -107.46259842519686,
++      "properties": {
++        "label": "평활 커패시터",
++        "shape": "box",
++        "width": 20.19888,
++        "height": 5,
++        "depth": 53.690625,
++        "elevation": 23.6,
++        "rotation": 0,
++        "rotationX": 0,
++        "rotationZ": 0,
++        "color": "#b29476",
++        "visualOnly": true,
++        "dimensionsStatus": "UNKNOWN",
++        "evInternalHypothesis": {
++          "id": "cap",
++          "parent_id": "supply",
++          "name": "평활 커패시터",
++          "role": "passive",
++          "candidate_parts": [
++            "커패시터 · 값 미확인"
++          ],
++          "required_part_ids": [],
++          "purpose": "평활 커패시터 기능",
++          "rationale": "외부 표시 기능을 구현하기 위한 후보",
++          "confidence": "medium",
++          "status": "INFERRED",
++          "photo_presence": "UNKNOWN",
++          "alternatives": [
++            "다른 통합 모듈 가능"
++          ],
++          "enclosure_id": "housing",
++          "enclosure_component_id": "case-housing",
++          "depth": 1,
++          "hypothesis_ids": [
++            "top"
++          ]
++        },
++        "designBasis": "function_based_internal_hypothesis"
++      }
++    }
++  ],
++  "wires": [],
++  "fileGroups": {},
++  "embeddedVision": {
++    "source_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++    "inventory_plan": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++    "source_graph_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
++    "recipe": "enclosure_hypothesis_view",
++    "enclosure_analysis": {
++      "summary": "예시 외장 내부의 기능 기반 가설",
++      "enclosures": [
++        {
++          "id": "housing",
++          "name": "예시 제어기 외장",
++          "observed_part_ids": [
++            "case",
++            "lcd"
++          ],
++          "structure_object_id": null,
++          "hypothesis_ids": [
++            "top"
++          ],
++          "rationale": "외장과 외부 LCD를 근거로 내부 제어 및 전원부를 가정합니다.",
++          "modules": [
++            {
++              "id": "control",
++              "parent_id": null,
++              "name": "제어부",
++              "role": "controller",
++              "candidate_parts": [
++                "MCU 모듈 예시"
++              ],
++              "required_part_ids": [],
++              "purpose": "제어부 기능",
++              "rationale": "외부 표시 기능을 구현하기 위한 후보",
++              "confidence": "medium",
++              "status": "INFERRED",
++              "photo_presence": "UNKNOWN",
++              "alternatives": [
++                "다른 통합 모듈 가능"
++              ]
++            },
++            {
++              "id": "mcu",
++              "parent_id": "control",
++              "name": "마이크로컨트롤러",
++              "role": "controller",
++              "candidate_parts": [
++                "ATmega 계열 예시"
++              ],
++              "required_part_ids": [],
++              "purpose": "마이크로컨트롤러 기능",
++              "rationale": "외부 표시 기능을 구현하기 위한 후보",
++              "confidence": "medium",
++              "status": "INFERRED",
++              "photo_presence": "UNKNOWN",
++              "alternatives": [
++                "다른 통합 모듈 가능"
++              ]
++            },
++            {
++              "id": "supply",
++              "parent_id": null,
++              "name": "전원부",
++              "role": "power",
++              "candidate_parts": [
++                "DC 전압 변환 모듈 예시"
++              ],
++              "required_part_ids": [],
++              "purpose": "전원부 기능",
++              "rationale": "외부 표시 기능을 구현하기 위한 후보",
++              "confidence": "medium",
++              "status": "INFERRED",
++              "photo_presence": "UNKNOWN",
++              "alternatives": [
++                "다른 통합 모듈 가능"
++              ]
++            },
++            {
++              "id": "cap",
++              "parent_id": "supply",
++              "name": "평활 커패시터",
++              "role": "passive",
++              "candidate_parts": [
++                "커패시터 · 값 미확인"
++              ],
++              "required_part_ids": [],
++              "purpose": "평활 커패시터 기능",
++              "rationale": "외부 표시 기능을 구현하기 위한 후보",
++              "confidence": "medium",
++              "status": "INFERRED",
++              "photo_presence": "UNKNOWN",
++              "alternatives": [
++                "다른 통합 모듈 가능"
++              ]
++            }
++          ],
++          "assumptions": [
++            "외장 내부에 제어 회로가 있다고 가정"
++          ],
++          "unknowns": [
++            "실제 IC 모델·배선·치수"
++          ]
++        }
++      ],
++      "limitations": [
++        "불투명 외장 안의 실물 구성은 관측되지 않았습니다."
++      ]
++    },
++    "enclosure_analysis_version": "80b31b17f47f5a8dcce98ab591e4cf03b2a736b1149082d1cb97eb716033dc49",
++    "function_version": "80b31b17f47f5a8dcce98ab591e4cf03b2a736b1149082d1cb97eb716033dc49",
++    "physical_verified": false,
++    "original_wiring_reused": false,
++    "simulation_notice": "외장을 근거로 기능상 가능한 내부 구성을 추론한 분해도입니다. 실제 내부 관측·제작 치수·전기 회로가 아니며 사용자가 최종 확인합니다."
++  }
++}

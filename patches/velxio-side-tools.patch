@@ -1,0 +1,325 @@
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -83,6 +83,7 @@
+   const embedded = new URLSearchParams(window.location.search).get('embedded') === '1';
+   const motion = embedded && new URLSearchParams(window.location.search).get('motion') === '1';
+   const [assembly3D,setAssembly3D]=useState(embedded);
++  const [circuitToolsHost,setCircuitToolsHost]=useState<HTMLDivElement|null>(null);
+   const assemblyView = useCircuitinyStore(s => s.viewMode);
+   const cameraLocked = useCircuitinyStore(s => s.cameraLocked);
+   const infrastructureMoveEnabled = useSimulatorStore(s => s.infrastructureMoveEnabled);
+@@ -117,7 +118,6 @@
+   const resizingRef = useRef(false);
+   const serialMonitorOpen = useSimulatorStore((s) => s.serialMonitorOpen);
+   const circuitRunning = useSimulatorStore((s) => s.running);
+-  const [workflowCollapsed,setWorkflowCollapsed] = useState(()=>typeof window !== 'undefined' && window.innerWidth < 760);
+   const activeBoardId = useSimulatorStore((s) => s.activeBoardId);
+   const oscilloscopeOpen = useOscilloscopeStore((s) => s.open);
+   const [consoleOpen, setConsoleOpen] = useState(false);
+@@ -602,11 +602,11 @@
+   ) : undefined;
+ 
+   return (
+-    <div className={embedded ? `app embedded-workbench${toolsOpen?' ev-tools-open':''}${workflowCollapsed?' ev-workflow-collapsed':''}` : 'app'}>
++    <div className={embedded ? `app embedded-workbench ev-side-tools${toolsOpen?' ev-tools-open':''}` : 'app'}>
+       {embedded ? <>
+        <EmbeddedVisionBridge onReady={(ready,restored,simulationNotice)=>{setSimulationUnavailable(simulationNotice);setAutoRunAllowed(ready&&!restored&&!simulationNotice);setImportReady(ready);}} actions={<>
+         <div className="ev-shared-actions">
+-         {motion&&<EmbeddedSystemConversion/>}
++         <EmbeddedSystemConversion/>
+          <EditorMenuBar scope="project"/>
+         </div>
+         <div className="ev-shared-execution">
+@@ -617,20 +617,9 @@
+          <button aria-pressed={isMobile ? mobileView==='circuit' : viewMode==='circuit'} onClick={()=>{setViewMode('circuit');setMobileView('circuit');}}>회로 보기</button>
+          <button aria-pressed={isMobile ? mobileView==='code' : viewMode==='both'} onClick={()=>{setViewMode('both');setMobileView('code');}}>{isMobile?'코드 편집':'코드 함께 보기'}</button>
+         </div>
++        <details className="ev-progress-summary"><summary>진행 상태</summary><p>{!importReady?'회로를 불러오는 중입니다.':circuitRunning?'가상 보드가 실행 중입니다.':resultsOpen?'보드 출력을 확인하고 있습니다.':'회로와 코드를 편집할 수 있습니다.'}</p></details>
+        </>} />
+        {simulationUnavailable&&<div className="ev-simulation-unavailable" role="status"><strong>모터 시뮬레이션 미지원</strong><span>{simulationUnavailable}</span></div>}
+-       <nav className="ev-workflow" aria-label="시뮬레이터 사용 순서">
+-        <button className="ev-flow-toggle" aria-expanded={!workflowCollapsed} aria-label={workflowCollapsed?'진행 단계 펼치기':'진행 단계 접기'} onClick={()=>setWorkflowCollapsed(!workflowCollapsed)}><span>{workflowCollapsed?'☰':'진행 단계'}</span><span aria-hidden="true">{workflowCollapsed?'':'‹'}</span></button>
+-        <section data-active={!circuitRunning&&!resultsOpen}><div className="ev-step-title"><span>1</span><strong>회로 확인</strong></div>
+-         <small>회로 영역에서 부품과 배선을 확인하세요.</small>
+-        </section>
+-        <section data-active={circuitRunning&&!resultsOpen}><div className="ev-step-title"><span>2</span><strong>실행하기</strong></div>
+-         <small>{simulationUnavailable?'이 회로의 실행 결과는 지원하지 않습니다.':circuitRunning?'가상 보드 실행 중 · 상단에서 정지할 수 있습니다.':'상단의 실행 버튼으로 회로와 코드를 함께 시험하세요.'}</small>
+-        </section>
+-        <section data-active={resultsOpen}><div className="ev-step-title"><span>3</span><strong>결과 확인</strong></div>
+-         <small>{simulationUnavailable?'이 회로의 실행 결과는 지원하지 않습니다.':'LED 반응과 보드가 보낸 메시지를 확인하세요.'}</small>
+-        </section>
+-       </nav>
+       </> : <AppHeader editorMenu={!isMobile ? <EditorMenuBar /> : undefined} editorToolbar={unifiedToolbar}/> }
+ 
+       {/* ── Mobile tab bar (top, above panels) ── */}
+@@ -733,6 +722,7 @@
+ 
+           {/* Editor main area */}
+           <div
++            className={embedded?'ev-code-workspace':undefined}
+             style={{
+               flex: 1,
+               display: 'flex',
+@@ -850,19 +840,22 @@
+             flexDirection: 'column',
+           }}
+         >
+-          {embedded&&<section className="ev-circuit-pane-tools" aria-label="회로 도구 영역" data-action-scope="circuit"><div className="ev-pane-heading"><strong>보드·부품·빵판 배선</strong><div className="ev-canvas-actions"><button className="ev-add-part" disabled={circuitRunning} onClick={()=>sharedTool('add')}>＋ 부품 추가</button><div className="ev-dimension-switch" role="group" aria-label="회로 표시 방식"><button aria-pressed={infrastructureMoveEnabled} onClick={()=>useSimulatorStore.setState(s=>({infrastructureMoveEnabled:!s.infrastructureMoveEnabled}))}>{infrastructureMoveEnabled?'보드·빵판 이동 허용 중':'보드·빵판 이동 허용'}</button><button aria-pressed={assembly3D&&assemblyView==='top'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'top'});}}>2D 위에서 보기</button><button aria-pressed={assembly3D&&assemblyView==='iso'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'iso'});}}>3D 입체 보기</button><button aria-pressed={assembly3D&&cameraLocked} disabled={!assembly3D} onClick={()=>useCircuitinyStore.setState(s=>({cameraLocked:!s.cameraLocked}))}>{cameraLocked?'화면 이동 잠금 해제':'화면 이동 잠금'}</button></div></div></div>
++         <div className={embedded?'ev-circuit-layout':undefined} style={{display:'flex',flexDirection:'column',flex:1,minHeight:0}}>
++          {embedded&&<section className="ev-circuit-pane-tools" aria-label="회로 도구 영역" data-action-scope="circuit"><div className="ev-pane-heading"><strong>회로</strong><div className="ev-canvas-actions"><button className="ev-add-part" disabled={circuitRunning} onClick={()=>sharedTool('add')}>＋ 부품 추가</button><div className="ev-dimension-switch" role="group" aria-label="회로 표시 방식"><button aria-pressed={infrastructureMoveEnabled} onClick={()=>useSimulatorStore.setState(s=>({infrastructureMoveEnabled:!s.infrastructureMoveEnabled}))}>{infrastructureMoveEnabled?'보드 이동 해제':'보드 이동 허용'}</button><button aria-pressed={assembly3D&&assemblyView==='top'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'top'});}}>2D 보기</button><button aria-pressed={assembly3D&&assemblyView==='iso'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'iso'});}}>3D 보기</button><button onClick={()=>useCircuitinyStore.setState(s=>({fitRevision:s.fitRevision+1}))}>화면 맞춤</button><button aria-pressed={assembly3D&&cameraLocked} disabled={!assembly3D} onClick={()=>useCircuitinyStore.setState(s=>({cameraLocked:!s.cameraLocked}))}>{cameraLocked?'시점 잠금 해제':'시점 잠금'}</button></div></div></div>
++           <div ref={setCircuitToolsHost} className="ev-circuit-edit-tools"/>
+            <div className="ev-circuit-help"><p>배선 끝을 드래그해 연결하세요. 왼쪽 드래그 이동 · 오른쪽 드래그 회전 · 휠 확대/축소</p><EditorMenuBar scope="circuit"/><details className="ev-native-circuit-tools" onToggle={event=>setToolsOpen(event.currentTarget.open)}><summary>추가 회로 도구</summary><div ref={setCanvasHeaderSlot}/></details></div>
+           </section>}
+-          <div style={{ flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 }}>
++          <div className={embedded?'ev-circuit-workspace':undefined} style={{ flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 }}>
+             <div className={embedded&&assembly3D?'ev-canvas-engine ev-hidden-2d':'ev-canvas-engine'} aria-hidden={embedded&&assembly3D?true:undefined}>
+              <SimulatorCanvas autoFit={embedded} headerSlot={embedded || !isMobile ? canvasHeaderSlot : null} />
+             </div>
+-            {embedded&&assembly3D&&<Suspense fallback={<p style={{padding:24}}>3D 조립 화면 준비 중…</p>}><Assembly3D onEdit={()=>setAssembly3D(false)}/></Suspense>}
++            {embedded&&assembly3D&&<Suspense fallback={<p style={{padding:24}}>3D 조립 화면 준비 중…</p>}><Assembly3D toolbarHost={circuitToolsHost} onEdit={()=>setAssembly3D(false)}/></Suspense>}
+             {/* Guarded rather than left to `display: none` on the panel: a
+                 hidden copy still keeps its 100ms timer running and duplicates
+                 the aria-live region a screen reader reads out. */}
+             {!simulatorHidden && <CompileProgressCard onShowOutput={() => setConsoleOpen(true)} />}
+           </div>
++         </div>
+           {(embedded ? resultsOpen : serialMonitorOpen) && (
+             <>
+               <div
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -57,7 +57,7 @@
+    if(cancelled)return;
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+    setKey(storageKey);
+-   if(motion)setMotionSource(source);
++   setMotionSource(source);
+    onReady?.(true,restored,translatedSimulationNotice(source.recipe));
+    setTitle(source.function?.summary||original.name||'새 회로');
+    setBehavior(initialSimulationBehavior(source));
+--- a/frontend/src/components/EmbeddedCodeTranslation.tsx
++++ b/frontend/src/components/EmbeddedCodeTranslation.tsx
+@@ -4,6 +4,8 @@
+ import {buildVlxPayload} from '../utils/vlxFile';
+ import {useEditorStore} from '../store/useEditorStore';
+ import {findRobotCode} from './embeddedRobotCode';
++import {hostedWorkspace} from './embeddedCloud';
++import {originalSystemUrl} from './embeddedSystemConversion';
+ import {acceptedTranslationResult,makeTranslationRequest,translationContext,type TranslationResult,type TranslationTarget} from './embeddedTranslationBridge';
+ 
+ type Pending={id:string;source:string;target:TranslationTarget;fingerprint:string;timer:ReturnType<typeof setTimeout>};
+@@ -26,6 +28,8 @@
+  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
+  const pending=useRef<Pending|null>(null),latestSource=useRef(source),latestTarget=useRef(target);
+  latestSource.current=source;latestTarget.current=target;
++ const ctx=translationContext(location.search,document.referrer,getMotionSource(),window.parent!==window);
++ const originalUrl=originalSystemUrl(hostedWorkspace(),getMotionSource());
+  useEffect(()=>{
+   if(!open)return;
+   closeButton.current?.focus();
+@@ -79,11 +83,13 @@
+   try{await navigator.clipboard.writeText(result.value.code);setMessage('번역 코드를 복사했습니다.');}
+   catch{setMessage('자동 복사를 사용할 수 없습니다. 결과를 선택하고 Ctrl+C를 누르세요.');}
+  };
+- return <><button type="button" className="ev-translation-trigger" ref={trigger} onClick={()=>setOpen(true)}>시스템 변환</button>{open&&createPortal(<div className="ev-translation-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setOpen(false);}}>
++ return <><button type="button" className="ev-translation-trigger" ref={trigger} onClick={()=>setOpen(true)}>시스템 전환</button>{open&&createPortal(<div className="ev-translation-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setOpen(false);}}>
+  <div className="ev-code-translation ev-translation-dialog" role="dialog" aria-modal="true" aria-labelledby="ev-translation-title" ref={dialog}>
+   <div className="ev-translation-heading"><h2 id="ev-translation-title">보드·회로·코드 변환</h2><button type="button" ref={closeButton} aria-label="번역 창 닫기" onClick={()=>setOpen(false)}>닫기 ✕</button></div>
+   <p>2륜 로봇 예제의 명령별 모터 출력값을 변환합니다. 현재 회로를 검사하며 지원하지 않는 수정은 알려드립니다. 원본 초안은 보존하고 이 탭에서 새 회로를 엽니다.</p>
+-  <div className="ev-robot-code-row"><label>대상 <select value={target} onChange={e=>setTarget(e.target.value as TranslationTarget)}><option value="raspberry_pi_c">Raspberry Pi · C</option><option value="arduino_cpp">Arduino · C++</option></select></label><button type="button" onClick={translate} disabled={busy||!source}>{busy?'변환 중…':'회로와 코드 변환'}</button></div>
++  {!ctx&&<p role="status">{originalUrl?'이 회로는 전환된 편집 초안입니다. 다른 대상으로 전환하려면 원본 시스템을 여세요. 현재 초안은 브라우저에 자동 저장됩니다.':'현재 자동 전환은 Raspberry Pi 2륜 로봇 예제를 지원합니다. 이 회로의 자동 전환은 아직 지원하지 않습니다.'}</p>}
++  {originalUrl&&!ctx&&<a href={originalUrl} target="_top" className="ev-translation-open">원본 시스템에서 다시 전환 →</a>}
++  <div className="ev-robot-code-row"><label>대상 <select value={target} onChange={e=>setTarget(e.target.value as TranslationTarget)}><option value="raspberry_pi_c">Raspberry Pi · C</option><option value="arduino_cpp">Arduino · C++</option></select></label><button type="button" onClick={translate} disabled={busy||!source||!ctx}>{busy?'변환 중…':'회로와 코드 변환'}</button></div>
+   {result&&result.source===source&&result.target===target&&<div><p><strong>{result.value.filename}</strong> · {result.value.notice}</p>{result.value.circuit_notice&&<p>{result.value.circuit_notice}</p>}{target==='arduino_cpp'&&<p>Arduino Uno와 Motor Shield V2, 모터와 별도 전원으로 회로를 구성합니다. 실드·모터는 시각 전용으로 실제 모터 동작을 시뮬레이션하지 않습니다. 기존 3D 운동도 이 코드의 실행 결과가 아닙니다.</p>}{result.value.workbench&&<a href={projectUrl(result.value.workbench)} target="_top" className="ev-translation-open" onClick={event=>{if(result.source!==latestSource.current||result.target!==latestTarget.current||result.fingerprint!==fingerprint(currentSnapshot())){event.preventDefault();setMessage('원본 코드 또는 회로가 바뀌었습니다. 다시 변환하세요.');}}}>변환된 회로·코드 적용 →</a>}<button type="button" onClick={()=>void copy()}>번역 코드 복사</button><textarea aria-label="번역된 코드" readOnly value={result.value.code}/><details><summary>변경된 부품·배선과 실행 방법</summary>{result.value.changes?.map((item,i)=><p key={'change'+i}>{item}</p>)}{result.value.details.map((item,i)=><p key={i}>{item}</p>)}</details></div>}
+   <span role="status">{message}</span>
+  </div></div>,document.body)}</>;
+--- a/frontend/src/components/EmbeddedRobotCode.tsx
++++ b/frontend/src/components/EmbeddedRobotCode.tsx
+@@ -21,8 +21,7 @@
+  };
+  return <div className="ev-robot-code-help">
+   <div className="ev-robot-code-row"><strong>Raspberry Pi 코드 · pi_rover.py</strong><button type="button" onClick={showCode}>코드 열기</button><button type="button" onClick={()=>void copy()} disabled={!found}>코드 복사</button></div>
+-  <p>기본 배선 기준입니다. 배선을 바꿨다면 코드와 연결을 대조하세요. 3D 운동은 이 코드를 실행하지 않습니다.</p>
+-  <details><summary>복사·실행 방법</summary><p>Raspberry Pi에서 I²C를 켜고 터미널에서 아래 설치 명령을 실행하세요. 코드를 복사해 <code>pi_rover.py</code> 파일에 붙여넣은 뒤 실행합니다.</p>
++  <details><summary>실행 방법</summary><p>기본 배선 기준입니다. 배선을 바꿨다면 코드와 연결을 대조하세요. 3D 운동은 이 코드를 실행하지 않습니다.</p><p>Raspberry Pi에서 I²C를 켜고 터미널에서 아래 설치 명령을 실행하세요. 코드를 복사해 <code>pi_rover.py</code> 파일에 붙여넣은 뒤 실행합니다.</p>
+    <p>{info?.dependencies}</p><pre>{info?.install}</pre><pre>{info?.run}</pre><p>{info?.commands}</p>
+   </details><span role="status">{status}</span>
+  </div>;
+--- a/frontend/src/components/EmbeddedWorkbench.css
++++ b/frontend/src/components/EmbeddedWorkbench.css
+@@ -170,3 +170,63 @@
+ .embedded-workbench .editor-panel .ev-logs{height:170px;min-height:85px;margin:0;border-radius:0;border-left:0;border-right:0;border-bottom:0;}
+ @media(max-width:1100px){.ev-project-toolbar{gap:10px;}.ev-shared-execution{margin-left:0;}.ev-project-toolbar .ev-runtime{max-width:210px;}.ev-code-actions{gap:5px;}}
+ @media(max-width:767px){.ev-project-toolbar{padding-top:8px;gap:8px;}.ev-project-toolbar .ev-translation-trigger{padding:10px 14px;}.ev-shared-execution{flex:1 1 100%;}.ev-project-toolbar .ev-runtime{flex-basis:100%;max-width:none;}.ev-project-toolbar .ev-run-controls{flex:1;}.ev-project-toolbar .ev-view-switch{margin-left:auto;}.ev-code-actions>button,.ev-scoped-menu .emb-trigger{font-size:11px;padding:8px;}.ev-simulation-unavailable{flex-wrap:wrap;padding:8px 12px;gap:4px;font-size:11px;}}
++
++/* Full-height workspaces with tools beside, rather than over, the content. */
++.app.embedded-workbench.ev-side-tools{grid-template-columns:128px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"header notice" "header canvas";}
++.ev-side-tools>.ev-topbar{padding:10px 7px;gap:12px;flex-direction:column;align-items:stretch;justify-content:flex-start;flex-wrap:nowrap;overflow-y:auto;overflow-x:visible;border-right:1px solid #dce6df;border-bottom:0;z-index:120;}
++.ev-side-tools .ev-project{flex:0 0 auto;width:100%;}
++.ev-side-tools .ev-eyebrow{margin:0 0 8px;letter-spacing:0;}
++.ev-side-tools .ev-eyebrow span,.ev-side-tools .ev-project>p,.ev-side-tools .ev-project>small{display:none;}
++.ev-side-tools .ev-project h1{font-size:12px;line-height:1.5;letter-spacing:0;margin:0;overflow-wrap:anywhere;}
++.ev-side-tools .ev-project-actions{order:3;display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%;margin-top:4px;border-top:1px solid #dce6df;padding-top:10px;}
++.ev-side-tools .ev-badge{display:none;}
++.ev-side-tools .ev-download,.ev-side-tools .ev-cloud-save{font-size:11px;padding:9px 4px;width:100%;white-space:normal;}
++.ev-side-tools .ev-info{text-align:left;font-size:11px;}
++.ev-side-tools .ev-info>div{position:static;width:100%;max-width:100%;padding:8px;margin-top:8px;font-size:10px;box-shadow:none;max-height:none;}
++.ev-side-tools .ev-project-toolbar{order:2;flex:0 0 auto;display:flex;flex-direction:column;align-items:stretch;gap:10px;border:0;padding:0;width:100%;}
++.ev-side-tools .ev-shared-actions,.ev-side-tools .ev-shared-execution,.ev-side-tools .ev-run-controls,.ev-side-tools .ev-project-toolbar .ev-view-switch{display:flex;flex-direction:column;align-items:stretch;gap:7px;width:100%;margin:0;}
++.ev-side-tools .ev-project-toolbar button,.ev-side-tools .ev-scoped-menu .emb-trigger{min-width:0;width:100%;white-space:normal;font-size:11px;line-height:1.4;padding:9px 5px;}
++.ev-side-tools .ev-project-toolbar .ev-translation-trigger{font-size:13px;padding:12px 4px;box-shadow:0 2px 5px #193c231a;}
++.ev-side-tools .ev-project-toolbar .ev-runtime{font-size:10px;line-height:1.4;flex-basis:auto;}
++.ev-side-tools .ev-project-toolbar .ev-run-controls .ev-run{min-width:0;width:100%;padding:10px 4px;}
++.ev-side-tools .ev-shared-execution{padding:10px 0;border-top:1px solid #e0e9e2;border-bottom:1px solid #e0e9e2;}
++.ev-side-tools .ev-project-toolbar .ev-view-switch{padding:3px;}
++.ev-progress-summary{font-size:11px;color:#5c7565;}
++.ev-progress-summary summary{cursor:pointer;padding:7px 3px;}
++.ev-progress-summary p{font-size:10px;line-height:1.5;}
++.ev-side-tools>.app-container{margin:0;min-height:0;border:0;border-radius:0;}
++.ev-side-tools .ev-simulation-unavailable{padding:7px 12px;font-size:11px;gap:8px;}
++.ev-side-tools .ev-code-workspace{display:grid!important;grid-template-columns:minmax(0,1fr) 96px;grid-template-rows:minmax(0,1fr) auto;grid-template-areas:"code tools" "logs tools";min-height:0;}
++.ev-side-tools .ev-code-workspace>.editor-wrapper{grid-area:code;}
++.ev-side-tools .ev-code-workspace>.ev-logs{grid-area:logs;}
++.ev-side-tools .ev-code-pane-tools{grid-area:tools;overflow:auto;background:#f8fbf8;border-left:1px solid #dce6df;padding:7px 5px;}
++.ev-side-tools .ev-code-pane-tools .ev-pane-heading,.ev-side-tools .ev-circuit-pane-tools .ev-pane-heading{display:flex;flex-direction:column;align-items:stretch;gap:9px;margin:0;padding:0;min-height:0;border:0;background:transparent;}
++.ev-side-tools .ev-code-actions{flex-direction:column;align-items:stretch;gap:7px;}
++.ev-side-tools .ev-code-actions>button{font-size:11px;padding:8px 4px;width:100%;}
++.ev-side-tools .ev-robot-code-help{padding:10px 0;border:0;border-top:1px solid #dce6df;margin-top:10px;background:transparent;font-size:10px;}
++.ev-side-tools .ev-robot-code-row{display:flex;flex-direction:column;align-items:stretch;gap:7px;}
++.ev-side-tools .ev-robot-code-row strong{margin:0;font-size:10px;overflow-wrap:anywhere;}
++.ev-side-tools .ev-robot-code-row button{font-size:11px;padding:8px 4px;}
++.ev-side-tools .ev-robot-code-help details{max-height:none;overflow:visible;}
++.ev-side-tools .ev-circuit-layout{display:grid!important;grid-template-columns:minmax(0,1fr) 112px;grid-template-rows:minmax(0,1fr);grid-template-areas:"canvas tools";overflow:hidden;}
++.ev-side-tools .ev-circuit-workspace{grid-area:canvas;min-width:0;}
++.ev-side-tools .ev-circuit-pane-tools{grid-area:tools;overflow:auto;min-height:0;padding:7px 5px;background:#f8fbf8;border-left:1px solid #dce6df;}
++.ev-side-tools .ev-canvas-actions,.ev-side-tools .ev-dimension-switch{display:flex;flex-direction:column;align-items:stretch;gap:6px;width:100%;}
++.ev-side-tools .ev-pane-heading .ev-add-part{font-size:11px;padding:9px 4px;}
++.ev-side-tools .ev-dimension-switch button{font-size:11px;padding:8px 4px;}
++.ev-side-tools .ev-circuit-help{display:flex;flex-direction:column;align-items:stretch;padding:8px 0;border:0;border-top:1px solid #dce6df;margin-top:8px;background:transparent;}
++.ev-side-tools .ev-circuit-help>p{display:none;}
++.ev-side-tools .ev-native-circuit-tools>div{display:flex;flex-direction:column;max-height:none;overflow:visible;}
++.ev-side-tools .ev-native-circuit-tools summary{white-space:normal;font-size:10px;padding:8px 4px;}
++.ev-side-tools .ev-circuit-edit-tools .ev-c3d-tools{position:static;inset:auto;display:flex;flex-direction:column;align-items:stretch;gap:6px;border:0;border-top:1px solid #dce6df;border-radius:0;box-shadow:none;background:transparent;margin-top:10px;padding:10px 0 0;}
++.ev-side-tools .ev-circuit-edit-tools .ev-c3d-tools>strong{display:none;}
++.ev-side-tools .ev-circuit-edit-tools .ev-c3d-tools button,.ev-side-tools .ev-circuit-edit-tools .ev-c3d-tools summary{font:inherit;font-size:11px;line-height:1.4;padding:8px 4px;width:100%;white-space:normal;background:#fff;color:#41684f;border:1px solid #d4e2d8;border-radius:7px;cursor:pointer;}
++.ev-side-tools .ev-circuit-edit-tools button:disabled{opacity:.45;cursor:not-allowed;}
++.ev-side-tools .ev-circuit-edit-tools button[aria-pressed=true]{background:#d8eddf;border-color:#7aaa8b;}
++.ev-side-tools .ev-circuit-edit-tools .ev-c3d-more{margin:0;width:100%;}
++.ev-side-tools .ev-circuit-edit-tools .ev-c3d-more>div{position:static;width:100%;min-width:0;margin-top:4px;padding:4px 0;border:0;box-shadow:none;}
++.ev-side-tools .ev-circuit-edit-tools .ev-c3d-color{justify-content:space-between;}
++.ev-side-tools .ev-scoped-menu{width:100%;}
++.ev-side-tools .ev-scoped-menu .emb-menu{position:fixed;top:70px;left:132px;right:auto;max-height:calc(100dvh - 90px);overflow:auto;}
++.ev-side-tools .ev-code-actions .emb-menu,.ev-side-tools .ev-circuit-help .emb-menu{left:auto;right:116px;}
++@media(max-width:767px){.app.embedded-workbench.ev-side-tools{grid-template-columns:104px minmax(0,1fr);}.ev-side-tools .ev-code-workspace{grid-template-columns:minmax(0,1fr) 82px;}.ev-side-tools .ev-circuit-layout{grid-template-columns:minmax(0,1fr) 94px;}.ev-side-tools .ev-project h1{font-size:10px;}.ev-side-tools .ev-scoped-menu .emb-menu{left:108px;max-width:calc(100vw - 116px);min-width:180px;}.ev-side-tools .ev-code-actions .emb-menu,.ev-side-tools .ev-circuit-help .emb-menu{left:auto;right:98px;}}
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -1,5 +1,6 @@
+ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+ import Viewer3D from './Viewer3D';
++import {createPortal} from 'react-dom';
+ import { connectCircuitiny, encodePin } from './bridge';
+ import { useStore } from './store';
+ import { definitions } from './catalog';
+@@ -36,7 +37,7 @@
+ } from './actions';
+ import './CircuitinyEditor.css';
+ 
+-export function CircuitinyEditor({ onEdit }: { onEdit: () => void }) {
++export function CircuitinyEditor({ onEdit, toolbarHost }: { onEdit: () => void; toolbarHost?:HTMLElement|null }) {
+   const hoverPreview = useBreadboardHoverPreview();
+   const [guide] = useState(() => guideSteps(window.location.hash));
+   const [guideOpen, setGuideOpen] = useState(false);
+@@ -166,22 +167,7 @@
+       e.stopPropagation();
+     }
+   };
+-  return (
+-    <section
+-      className="ev-circuitiny"
+-      aria-label="Circuitiny 회로 편집기"
+-      tabIndex={0}
+-      onKeyDownCapture={keys}
+-      onPointerDownCapture={(e) => {
+-        if (
+-          !(e.target as HTMLElement).closest('input,textarea,select,button,summary,[role="dialog"]')
+-        )
+-          e.currentTarget.focus({ preventScroll: true });
+-      }}
+-    >
+-      <div className={guideOpen ? 'ev-3d-viewport ev-3d-viewport-guide' : 'ev-3d-viewport'}>
+-        <Viewer3D guideConnections={guideOpen && guideStep && !guideProblem ? guideStep.connections : []} guideFocusRevision={guideFocusRevision} />
+-      </div>
++  const toolbar=(
+       <div className="ev-c3d-tools">
+         <strong>회로 편집</strong>
+         <details className="ev-c3d-more"><summary>＋ 3D 구조물</summary><div>
+@@ -272,6 +258,24 @@
+           </div>
+         </details>
+       </div>
++  );
++  return (
++    <section
++      className="ev-circuitiny"
++      aria-label="Circuitiny 회로 편집기"
++      tabIndex={0}
++      onKeyDownCapture={keys}
++      onPointerDownCapture={(e) => {
++        if (
++          !(e.target as HTMLElement).closest('input,textarea,select,button,summary,[role="dialog"]')
++        )
++          e.currentTarget.focus({ preventScroll: true });
++      }}
++    >
++      <div className={guideOpen ? 'ev-3d-viewport ev-3d-viewport-guide' : 'ev-3d-viewport'}>
++        <Viewer3D guideConnections={guideOpen && guideStep && !guideProblem ? guideStep.connections : []} guideFocusRevision={guideFocusRevision} />
++      </div>
++      {toolbarHost?createPortal(toolbar,toolbarHost):toolbar}
+       {guideOpen && guideStep && <aside ref={guidePanel} className="ev-c3d-guide" aria-label="단계별 조립 가이드">
+         <div className="ev-guide-header"><strong>조립 가이드</strong><button disabled={!!guideProblem} onClick={() => setGuideFocusRevision(n => n + 1)}>3D 연결 위치 확대</button><span>{guideIndex + 1} / {guide.steps.length}</span></div>
+         <p className="ev-guide-safety">실제 조립 전 전원을 분리하세요. 이 안내는 사진 원본이 아닌 새 설계 기준입니다.</p>
+--- /dev/null
++++ b/frontend/src/components/embeddedSystemConversion.ts
+@@ -0,0 +1,12 @@
++import {analysisReturnUrl} from './embeddedAnalysisReturn';
++
++/** Reopen the original reviewed system without discarding a translated draft. */
++export function originalSystemUrl(workspace:string|undefined,source:Record<string,unknown>|undefined){
++ if(workspace&&!/^[a-f0-9]{32}$/.test(workspace))return undefined;
++ if(!source?.translation_target)return undefined;
++ const project=source.source_project,plan=source.inventory_plan,version=source.function_version;
++ if(typeof project!=='string'||!/^[a-f0-9]{32}$/.test(project)||typeof plan!=='string'||!/^[a-f0-9]{32}$/.test(plan)||typeof version!=='string'||!/^[a-f0-9]{64}$/.test(version))return undefined;
++ const base=analysisReturnUrl(workspace,source.analysis_origin);
++ if(!workspace){try{if(typeof source.analysis_origin!=='string'||new URL(base).origin!==new URL(source.analysis_origin).origin)return undefined;}catch{return undefined;}}
++ return base+'rover-editor.html?'+new URLSearchParams({project,plan,function_version:version});
++}
+--- /dev/null
++++ b/frontend/src/__tests__/embedded-system-conversion.test.ts
+@@ -0,0 +1,16 @@
++import {describe,it,expect} from 'vitest';
++import {originalSystemUrl} from '../components/embeddedSystemConversion';
++
++const source={translation_target:'arduino_cpp',source_project:'a'.repeat(32),inventory_plan:'b'.repeat(32),function_version:'c'.repeat(64),analysis_origin:'http://127.0.0.1:8897'};
++describe('system conversion entry',()=>{
++ it('reopens the original system after translation and keeps hosted links in their workspace',()=>{
++  expect(originalSystemUrl(undefined,source)).toBe('http://127.0.0.1:8897/rover-editor.html?project='+source.source_project+'&plan='+source.inventory_plan+'&function_version='+source.function_version);
++  expect(originalSystemUrl('d'.repeat(32),source)).toMatch(/^\/w\/d{32}\/rover-editor.html\?/);
++ });
++ it('refuses unrelated projects and untrusted or malformed return addresses',()=>{
++  expect(originalSystemUrl(undefined,{...source,translation_target:undefined})).toBeUndefined();
++  expect(originalSystemUrl(undefined,{...source,analysis_origin:'https://attacker.example'})).toBeUndefined();
++  expect(originalSystemUrl(undefined,{...source,source_project:'invalid'})).toBeUndefined();
++  expect(originalSystemUrl('invalid',source)).toBeUndefined();
++ });
++});
+--- a/frontend/src/__tests__/embedded-code-translation.test.ts
++++ b/frontend/src/__tests__/embedded-code-translation.test.ts
+@@ -22,7 +22,7 @@
+   await act(async()=>root.render(createElement(EmbeddedCodeTranslation,{source:'original Python'})));
+   expect(document.querySelector('[role="dialog"]')).toBeNull();
+   const open=host.querySelector('button')!;
+-  expect(open.textContent).toBe('시스템 변환');
++  expect(open.textContent).toBe('시스템 전환');
+   act(()=>open.click());
+   expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-modal')).toBe('true');
+   const button=[...document.querySelectorAll('[role="dialog"] button')].find(b=>b.textContent==='회로와 코드 변환')! as HTMLButtonElement;

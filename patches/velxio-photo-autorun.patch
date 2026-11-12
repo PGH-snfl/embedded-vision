@@ -1,0 +1,143 @@
+--- a/frontend/src/components/editor/EditorToolbar.tsx
++++ b/frontend/src/components/editor/EditorToolbar.tsx
+@@ -1,4 +1,5 @@
+ import { useState, useCallback, useRef, useEffect } from 'react';
++import { shouldAutoRunPhoto } from './embeddedPhotoAutoRun';
+ import { useTranslation } from 'react-i18next';
+ import { registerEditorCommand } from '../../lib/editorCommands';
+ import { publishCompileOutput } from '../../lib/intellisenseRegistry';
+@@ -108,6 +109,7 @@
+ interface EditorToolbarProps {
+   compact?: boolean;
+   ready?: boolean;
++  autoRunAllowed?: boolean;
+   consoleOpen: boolean;
+   setConsoleOpen: (open: boolean | ((v: boolean) => boolean)) => void;
+   compileLogs: CompilationLog[];
+@@ -172,6 +174,7 @@
+ export const EditorToolbar = ({
+   compact = false,
+   ready = true,
++  autoRunAllowed = false,
+   consoleOpen,
+   setConsoleOpen,
+   compileLogs: _compileLogs,
+@@ -1076,6 +1079,18 @@
+     }
+   };
+ 
++  // Only the automatically generated, embedded photo workflow opts in.
++  // Wait for the imported project, then use the very same preflight,
++  // compilation and run path as a user clicking Run. A stopped or failed
++  // simulation is not restarted on subsequent renders.
++  const embeddedAutoRunAttempted = useRef(false);
++  useEffect(() => {
++    if (!shouldAutoRunPhoto({search:window.location.search,compact,ready,autoRunAllowed,
++        motionMode,attempted:embeddedAutoRunAttempted.current,activeBoardId,anyBoardRunning})) return;
++    embeddedAutoRunAttempted.current = true;
++    void (isMultiBoard ? handleRunAll() : handleRun());
++  }, [compact, ready, autoRunAllowed, motionMode, activeBoardId, anyBoardRunning, isMultiBoard]);
++
+   const handleStop = () => {
+     trackStopSimulation();
+     if (isBoardless) {
+@@ -1784,7 +1799,7 @@
+           {!ready ? '회로 불러오는 중…' : motionMode ? '▶ 운동 미리보기' : verifying ? '회로 확인 중…' : compiling ? '코드 준비 중…' : running || anyBoardRunning ? '● 실행 중' : '▶ 시뮬레이션 실행'}
+         </button>
+         <button onClick={handleStop} disabled={isBoardless ? !digitalRunning : !anyBoardRunning}>■ 정지</button>
+-        <span className="ev-runtime" role="status">{message?.type==='error' ? message.text : motionMode ? '회로와 코드를 편집한 뒤 운동 모델을 확인하세요 · 전기 동작 검증은 별도' : verifying ? '배선 검사 중' : compiling ? '코드를 보드 실행 파일로 변환합니다' : running || anyBoardRunning ? '가상 보드가 동작하고 있습니다' : '실행하면 코드를 자동으로 준비합니다'}</span>
++        <span className="ev-runtime" role="status">{message?.type==='error' ? message.text : motionMode ? '회로와 코드를 편집한 뒤 운동 모델을 확인하세요 · 전기 동작 검증은 별도' : verifying ? '배선 검사 중' : compiling ? '코드를 보드 실행 파일로 변환합니다' : running || anyBoardRunning ? '가상 보드가 동작하고 있습니다' : ready && !autoRunAllowed && new URLSearchParams(window.location.search).get('autorun')==='1' ? '저장된 편집 내용을 복원했습니다. 확인 후 실행을 누르세요.' : '실행하면 코드를 자동으로 준비합니다'}</span>
+       </div>}
+       {!compact && <div className="editor-toolbar-wrapper" style={{ position: 'relative' }}>
+         <div className="editor-toolbar" ref={toolbarRef}>
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -9,7 +9,7 @@
+ import {acceptedMotionRevision,getMotionSource,matchingCircuitRevision,setMotionSource} from './embeddedMotionBridge';
+ import {ensureRobotCode,findRobotCode} from './embeddedRobotCode';
+ 
+-export function EmbeddedVisionBridge({onReady}:{onReady?:(ready:boolean)=>void}){
++export function EmbeddedVisionBridge({onReady}:{onReady?:(ready:boolean,restored:boolean)=>void}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+  const [key,setKey]=useState('');
+  const [notice,setNotice]=useState('');
+@@ -56,7 +56,7 @@
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+    setKey(storageKey);
+    if(motion)setMotionSource(source);
+-   onReady?.(true);
++   onReady?.(true,restored);
+    setTitle(source.function?.summary||original.name||'새 회로');
+    setBehavior(initialSimulationBehavior(source));
+    setReturnUrl(analysisReturnUrl(hostedWorkspace(),source.analysis_origin));
+@@ -81,7 +81,7 @@
+  },[]);
+  return <header className="ev-topbar">
+   <div className="ev-project">
+-   <div className="ev-eyebrow"><a href={returnUrl} target="_blank" rel="noreferrer">← 사진 분석</a><span>EMBEDDED VISION / SIMULATOR</span></div>
++   <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">← 사진 분석</a><span>EMBEDDED VISION / SIMULATOR</span></div>
+    <h1>{title}</h1>{behavior&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
+   </div>
+   <div className="ev-project-actions">
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -86,6 +86,7 @@
+   const cameraLocked = useCircuitinyStore(s => s.cameraLocked);
+   const infrastructureMoveEnabled = useSimulatorStore(s => s.infrastructureMoveEnabled);
+   const [importReady, setImportReady] = useState(false);
++  const [autoRunAllowed, setAutoRunAllowed] = useState(false);
+   const [resultsOpen, setResultsOpen] = useState(false);
+   const [toolsOpen, setToolsOpen] = useState(false);
+   useEffect(() => {
+@@ -600,7 +601,7 @@
+   return (
+     <div className={embedded ? `app embedded-workbench${toolsOpen?' ev-tools-open':''}${workflowCollapsed?' ev-workflow-collapsed':''}` : 'app'}>
+       {embedded ? <>
+-       <EmbeddedVisionBridge onReady={setImportReady} />
++       <EmbeddedVisionBridge onReady={(ready,restored)=>{setAutoRunAllowed(ready&&!restored);setImportReady(ready);}} />
+        <nav className="ev-workflow" aria-label="시뮬레이터 사용 순서">
+         <button className="ev-flow-toggle" aria-expanded={!workflowCollapsed} aria-label={workflowCollapsed?'진행 단계 펼치기':'진행 단계 접기'} onClick={()=>setWorkflowCollapsed(!workflowCollapsed)}><span>{workflowCollapsed?'☰':'진행 단계'}</span><span aria-hidden="true">{workflowCollapsed?'':'‹'}</span></button>
+         <section data-active={!circuitRunning&&!resultsOpen}><div className="ev-step-title"><span>1</span><strong>회로 확인</strong></div>
+@@ -610,7 +611,7 @@
+          </div>
+         </section>
+         <section data-active={circuitRunning&&!resultsOpen}><div className="ev-step-title"><span>2</span><strong>실행하기</strong></div>
+-         <EditorToolbar compact ready={importReady} consoleOpen={consoleOpen} setConsoleOpen={setConsoleOpen} compileLogs={compileLogs} setCompileLogs={setCompileLogs}/>
++         <EditorToolbar compact ready={importReady} autoRunAllowed={autoRunAllowed} consoleOpen={consoleOpen} setConsoleOpen={setConsoleOpen} compileLogs={compileLogs} setCompileLogs={setCompileLogs}/>
+         </section>
+         <section data-active={resultsOpen}><div className="ev-step-title"><span>3</span><strong>결과 확인</strong></div>
+          <button aria-expanded={resultsOpen} onClick={()=>{setResultsOpen(!resultsOpen);setConsoleOpen(false);if(isMobile)setMobileView('circuit');}}>보드 출력 {resultsOpen?'접기':'보기'}</button>
+--- /dev/null
++++ b/frontend/src/components/editor/embeddedPhotoAutoRun.ts
+@@ -0,0 +1,9 @@
++/** The automatic photo flow only starts a newly imported, idle editor once. */
++export function shouldAutoRunPhoto(o: {search:string; compact:boolean; ready:boolean;
++ autoRunAllowed:boolean; motionMode:boolean; attempted:boolean; activeBoardId:string|null;
++ anyBoardRunning:boolean}): boolean {
++ const p=new URLSearchParams(o.search);
++ return o.compact && o.ready && o.autoRunAllowed && !o.motionMode &&
++   p.get('embedded')==='1' && p.get('autorun')==='1' && !o.attempted &&
++   !!o.activeBoardId && !o.anyBoardRunning;
++}
+--- /dev/null
++++ b/frontend/src/__tests__/embedded-photo-auto-run.test.ts
+@@ -0,0 +1,19 @@
++import {describe,it,expect} from 'vitest';
++import {shouldAutoRunPhoto} from '../components/editor/embeddedPhotoAutoRun';
++
++describe('photo workflow automatic simulation',()=>{
++ const fresh={search:'?embedded=1&autorun=1',compact:true,ready:true,autoRunAllowed:true,
++   motionMode:false,attempted:false,activeBoardId:'U1',anyBoardRunning:false};
++ it('starts only after a new project and board are ready',()=>{
++  expect(shouldAutoRunPhoto(fresh)).toBe(true);
++  expect(shouldAutoRunPhoto({...fresh,ready:false})).toBe(false);
++  expect(shouldAutoRunPhoto({...fresh,activeBoardId:null})).toBe(false);
++ });
++ it('does not rerun stopped work, restored edits or motion preview',()=>{
++  expect(shouldAutoRunPhoto({...fresh,attempted:true})).toBe(false);
++  expect(shouldAutoRunPhoto({...fresh,autoRunAllowed:false})).toBe(false);
++  expect(shouldAutoRunPhoto({...fresh,motionMode:true})).toBe(false);
++  expect(shouldAutoRunPhoto({...fresh,anyBoardRunning:true})).toBe(false);
++  expect(shouldAutoRunPhoto({...fresh,search:'?embedded=1'})).toBe(false);
++ });
++});

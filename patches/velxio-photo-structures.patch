@@ -1,0 +1,173 @@
+diff --git a/frontend/src/components/circuitiny/structureObjects.ts b/frontend/src/components/circuitiny/structureObjects.ts
+--- a/frontend/src/components/circuitiny/structureObjects.ts
++++ b/frontend/src/components/circuitiny/structureObjects.ts
+@@ -2,7 +2,7 @@
+  * .vlx, drafts, cloud saves, undo and project deletion share one lifecycle. */
+ export const STRUCTURE_ID = 'ev-structure';
+ export type StructureShape = 'box' | 'cylinder';
+-export type StructureParameters = { shape: StructureShape; width: number; height: number; depth: number; elevation: number; color: string; rotation: number };
++export type StructureParameters = { shape: StructureShape; width: number; height: number; depth: number; elevation: number; color: string; rotation: number; rotationX:number;rotationZ:number };
+ function numeric(value: unknown, fallback: number, min: number, max: number) {
+   const n = typeof value === 'number' ? value : Number(value);
+   return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+@@ -12,9 +12,10 @@
+   return {
+     shape: p.shape === 'cylinder' ? 'cylinder' : 'box',
+     width: numeric(p.width, 40, 2, 500), height: numeric(p.height, 20, 2, 500),
+-    depth: numeric(p.depth, 40, 2, 500), elevation: numeric(p.elevation, 0, 0, 500),
++    depth: numeric(p.depth, 40, 2, 500), elevation: numeric(p.elevation, 0, -500, 500),
+     color: typeof p.color === 'string' && /^#[0-9a-f]{6}$/i.test(p.color) ? p.color : '#829aaf',
+     rotation: numeric(p.rotation, 0, -36000, 36000),
++    rotationX:numeric(p.rotationX,0,-360,360),rotationZ:numeric(p.rotationZ,0,-360,360),
+   };
+ }
+ export function newStructure(shape: StructureShape, x: number, y: number) {
+diff --git a/frontend/src/components/circuitiny/Viewer3D.tsx b/frontend/src/components/circuitiny/Viewer3D.tsx
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -381,10 +381,14 @@
+ }) {
+   if (config?.metadataId === STRUCTURE_ID) {
+     const p = structureParameters(config.structure as Record<string,unknown> | undefined), w=p.width/1000, h=p.height/1000, d=p.depth/1000;
+-    return <mesh position={[0, (p.elevation+p.height/2)/1000, 0]} scale={[1,1,p.shape === 'cylinder' ? d/w : 1]} castShadow receiveShadow>
+-      {p.shape === 'cylinder' ? <cylinderGeometry args={[w/2,w/2,h,32]} /> : <boxGeometry args={[w,h,d]} />}
++    const rad=Math.PI/180;
++    const orientation=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),p.rotation*rad).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rotationX*rad,-p.rotation*rad,p.rotationZ*rad)));
++    const props=config.structure as Record<string,unknown>|undefined;
++    return <group><mesh position={[0, (p.elevation+p.height/2)/1000, 0]} quaternion={orientation} scale={[w,h,d]} castShadow receiveShadow>
++      {p.shape === 'cylinder' ? <cylinderGeometry args={[.5,.5,1,40]} /> : <boxGeometry args={[1,1,1]} />}
+       <meshStandardMaterial color={p.color} roughness={0.65} emissive={selected ? '#9bd1ff' : '#000000'} emissiveIntensity={selected ? 0.3 : 0} />
+-    </mesh>;
++      {String(config.nativeId||'').startsWith('photo-wheel-')&&<mesh position={[0,.51,0]}><cylinderGeometry args={[.17,.17,.025,24]}/><meshStandardMaterial color="#aeb6b9" metalness={.5} roughness={.4}/></mesh>}
++    </mesh>{typeof props?.label==='string'&&(selected||String(config.nativeId||'').startsWith('photo-chassis-')||String(config.nativeId||'').startsWith('photo-wheel-'))&&<Html center position={[0,(p.elevation+p.height+8)/1000,0]} style={{pointerEvents:'none',whiteSpace:'nowrap',background:'#ffffffd9',borderRadius:3,padding:'2px 4px',fontSize:10,color:'#435b6e'}}>{props.label} · 사진 추정</Html>}</group>;
+   }
+   if (config?.metadataId)
+     return (
+diff --git a/frontend/src/components/circuitiny/CircuitinyEditor.tsx b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -78,13 +78,14 @@
+   const lockedPosition = !movableInfrastructure && (!!board || !!(component && isBreadboard(component.metadataId)));
+   const structure = component?.metadataId === STRUCTURE_ID ? structureParameters(component.properties) : null;
+   const physicalModel=component&&physicalModelFor(component);
++  const photoObjects=components.filter(c=>c.metadataId===STRUCTURE_ID&&c.properties?.evPhotoStructure);
+   const addStructure = (shape: StructureShape) => {
+     if (native.getState().running) return;
+     const state=native.getState(), base=state.boards[0], item=newStructure(shape,(base?.x ?? 120)+260,(base?.y ?? 120)+40);
+     state.recordAddComponent(item);
+     useStore.setState((s)=>({selected:item.id,selectedNet:null,fitRevision:s.fitRevision+1,message:'구조물을 직접 드래그해 이동하세요. 크기는 오른쪽에서 변경합니다.'}));
+   };
+-  const changeStructure = (id:string, key:'width'|'height'|'depth'|'elevation'|'color', value:string) => {
++  const changeStructure = (id:string, key:'width'|'height'|'depth'|'elevation'|'color'|'rotationX'|'rotation'|'rotationZ', value:string) => {
+     const state=native.getState(), item=state.components.find(c=>c.id===id);
+     if (!item || state.running) return;
+     if (key!=='color' && (value.trim()==='' || !Number.isFinite(Number(value)))) {
+@@ -177,6 +178,7 @@
+           <button disabled={running} onClick={()=>addStructure('cylinder')}>원통 추가</button>
+           <small>전기 연결이 없는 가상 구조물입니다.</small>
+         </div></details>
++        {photoObjects.length>0&&<details className="ev-c3d-more"><summary>사진 구조물 {photoObjects.length}개</summary><div><small>사진에서 추정한 형상 · 실제 크기 미확인</small>{photoObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
+         {guide.steps.length > 0 && <button aria-pressed={guideOpen} onClick={() => { setGuideOpen(!guideOpen); setDetails(false); }}>
+           {guideOpen ? '조립 가이드 닫기' : '단계별 조립 가이드'}
+         </button>}
+@@ -395,7 +397,7 @@
+       {(component || board) && (
+         <aside className="ev-c3d-properties">
+           <strong>
+-            {selected} · {structure ? (structure.shape==='box'?'구조물 상자':'구조물 원통') : physicalModel?.name || meta?.name || board?.name || board?.boardKind || component?.metadataId}
++            {selected} · {structure ? String(component?.properties?.label||(structure.shape==='box'?'구조물 상자':'구조물 원통')) : physicalModel?.name || meta?.name || board?.name || board?.boardKind || component?.metadataId}
+           </strong>
+           {physicalModel&&<details><summary>실물 형상 · {physicalModel.name}</summary><p>{physicalModel.source?'제안된 설계 부품의 제품 형상 모델입니다.':'제품 모델이 미확인인 일반형입니다.'} 전기 동작 모델과는 별개입니다.</p><p>{physicalModel.basis}</p>{physicalModel.source&&<><p>외곽 기준: {physicalModel.width} × {physicalModel.depth} mm</p><a href={physicalModel.source} target="_blank" rel="noreferrer">제조사 원문·도면</a></>}{['hat','shield'].includes(physicalModel.kind)&&<p><a href="/physical-models/hat-license.txt" target="_blank" rel="noreferrer">Adafruit PCB 자료 · CC BY-SA 3.0</a></p>}</details>}
+           <p>
+@@ -417,9 +419,11 @@
+             </label>
+           )}
+           {structure && component && <div className="ev-structure-fields">
++            {Boolean(component.properties?.evPhotoStructure)&&<details><summary>사진 근거 · INFERRED</summary><p>{String((component.properties.evPhotoStructure as {observation?:string}).observation||'사진의 보이는 형상을 단순화한 모델입니다.')}</p><p>절대 치수 UNKNOWN · 표시 기준 길이 220 mm는 시각화 가정입니다. 실제 제작 치수가 아닙니다.</p><p>{String(((component.properties.evPhotoStructure as {assumptions?:string[]}).assumptions||[]).join(' '))}</p></details>}
+             {([['width','너비'],['height','높이'],['depth','깊이'],['elevation','바닥 높이']] as const).map(([key,label])=><label key={key}>{label} (mm)
+-              <input type="number" min={key==='elevation'?0:2} max="500" step="1" disabled={running} aria-label={`구조물 ${label} (mm)`}
++              <input type="number" min={key==='elevation'?-500:2} max="500" step="1" disabled={running} aria-label={`구조물 ${label} (mm)`}
+                 key={`${component.id}:${key}:${structure[key]}`} defaultValue={structure[key]} onBlur={e=>changeStructure(component.id,key,e.target.value)} /></label>)}
++            {([['rotationX','X 회전'],['rotation','평면 회전'],['rotationZ','Z 회전']] as const).map(([key,label])=><label key={key}>{label} (°)<input type="number" min="-360" max="360" step="1" disabled={running} aria-label={`구조물 ${label}`} key={`${component.id}:${key}:${structure[key]}`} defaultValue={structure[key]} onBlur={e=>changeStructure(component.id,key,e.target.value)}/></label>)}
+             <label>색상 <input type="color" disabled={running} aria-label="구조물 색상" value={structure.color} onChange={e=>changeStructure(component.id,'color',e.target.value)} /></label>
+           </div>}
+           {component && !structure && (
+diff --git a/frontend/src/components/circuitiny/bridge.ts b/frontend/src/components/circuitiny/bridge.ts
+--- a/frontend/src/components/circuitiny/bridge.ts
++++ b/frontend/src/components/circuitiny/bridge.ts
+@@ -28,6 +28,7 @@
+     const g = geometryFor(item),
+       isBoard = g.board;
+     const physical='properties' in item?physicalPresentation(item,g):undefined;
++    const structure='properties' in item&&g.kind==='ev-structure'?item.properties:undefined;
+     const metadataId = g.kind,
+       metadata = registry.getById(metadataId);
+     const displayName = metadataId === 'custom-chip' && 'properties' in item && typeof item.properties?.chipName === 'string'
+@@ -90,7 +91,7 @@
+         physicalModelId:physical?.model.id,
+         width: physical?physical.model.width/1000:g.size.w * PX,
+         depth: physical?physical.model.depth/1000:g.size.h * PX,
+-        physicalHeight:physical?physical.model.height/1000:undefined,
++        physicalHeight:physical?physical.model.height/1000:structure?((Math.max(Number(structure.width)||40,Number(structure.height)||20,Number(structure.depth)||40)+Math.abs(Number(structure.elevation)||0))/1000):undefined,
+         rotation: g.rotation,
+         bodyCenter: g.bodyCenter,
+         name: metadataId === 'custom-chip' ? displayName : metadata?.name || (isBoard ? ('name' in item ? item.name : metadataId) : metadataId),
+diff --git a/frontend/src/components/EmbeddedVisionBridge.tsx b/frontend/src/components/EmbeddedVisionBridge.tsx
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -11,6 +11,7 @@
+ import {ensureRobotCode,findRobotCode} from './embeddedRobotCode';
+ import {translatedSimulationNotice} from './translatedSimulationNotice';
+ import {withLegacyPhysicalModels} from './circuitiny/physicalModels';
++import {withPhotoStructures} from './circuitiny/photoStructures';
+ 
+ export function EmbeddedVisionBridge({onReady,actions}:{onReady?:(ready:boolean,restored:boolean,simulationNotice?:string)=>void;actions?:ReactNode}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+@@ -55,6 +56,7 @@
+    if(cancelled)return;
+    if(motion)payload=ensureRobotCode(payload,source);
+    payload=withLegacyPhysicalModels(payload);
++   payload=withPhotoStructures(payload,original);
+    await importVlxFile(new File([JSON.stringify(payload)],'embedded.vlx',{type:'application/json'}));
+    if(cancelled)return;
+    if(motion){const store=useEditorStore.getState(),found=findRobotCode(store.fileGroups);if(found){store.setActiveGroup(found.group);store.openFile(found.file.id);}}
+diff --git a/frontend/src/components/circuitiny/photoStructures.ts b/frontend/src/components/circuitiny/photoStructures.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/photoStructures.ts
+@@ -0,0 +1,9 @@
++/** Add source photo objects once; preserve edits and intentional deletions in drafts. */
++export function withPhotoStructures(project:any,original:any){
++ const version=original.embeddedVision?.photo_structure_version;
++ if(typeof version!=='string'||!/^[a-f0-9]{64}$/.test(version)||project.embeddedVision?.photo_structure_version===version)return project;
++ const additions=(original.components||[]).filter((p:any)=>p.metadataId==='ev-structure'&&p.properties?.evPhotoStructure);
++ const ids=new Set((project.components||[]).map((p:any)=>p.id));
++ return {...project,components:[...(project.components||[]),...additions.filter((p:any)=>!ids.has(p.id))],
++  embeddedVision:{...project.embeddedVision,photo_structure_version:version}};
++}
+diff --git a/frontend/src/__tests__/photo-structures.test.ts b/frontend/src/__tests__/photo-structures.test.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/__tests__/photo-structures.test.ts
+@@ -0,0 +1,21 @@
++import {describe,it,expect} from 'vitest';
++import {withPhotoStructures} from '../components/circuitiny/photoStructures';
++import {structureParameters} from '../components/circuitiny/structureObjects';
++
++describe('photo structure drafts',()=>{
++ it('adds initial photo objects without replacing wires, code or edited geometry',()=>{
++  const wire=[{id:'C1'}],files={code:'edited'},existing={id:'photo-wheel-test',metadataId:'ev-structure',properties:{width:99}};
++  const original={embeddedVision:{photo_structure_version:'a'.repeat(64)},components:[{...existing,properties:{evPhotoStructure:{},width:22}},{id:'photo-frame-new',metadataId:'ev-structure',properties:{evPhotoStructure:{}}}]};
++  const draft={components:[existing],wires:wire,fileGroups:files,embeddedVision:{}};
++  const upgraded=withPhotoStructures(draft,original);
++  expect(upgraded.components[0]).toBe(existing);expect(upgraded.components).toHaveLength(2);
++  expect(upgraded.wires).toBe(wire);expect(upgraded.fileGroups).toBe(files);
++  const deleted={...upgraded,components:[]};
++  expect(withPhotoStructures(deleted,original)).toBe(deleted);
++ });
++ it('keeps legacy structures upright and supports tilted photo wheels',()=>{
++  expect(structureParameters({})).toMatchObject({rotationX:0,rotationZ:0,elevation:0});
++  expect(structureParameters({rotationX:90,rotationZ:-30,elevation:-2})).toMatchObject({rotationX:90,rotationZ:-30,elevation:-2});
++  expect(structureParameters({rotationX:Infinity})).toMatchObject({rotationX:0});
++ });
++});

@@ -1,0 +1,826 @@
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -1,5 +1,6 @@
+ /** Embedded Vision local integration, 2026-10-27. AGPL-3.0, same as Velxio. */
+ import {useEffect,useState,useRef} from 'react';
++import {withPhotoMounts} from './circuitiny/photoMounts';
+ import type {ReactNode} from 'react';
+ import {importVlxFile,buildVlxPayload,triggerDownloadVlx} from '../utils/vlxFile';
+ import {useSimulatorStore} from '../store/useSimulatorStore';
+@@ -72,6 +73,8 @@
+    payload=withLegacyPhysicalModels(payload);
+    payload=withPhotoStructures(payload,original);
+    payload=withFunctionalEnvironment(payload);
++   payload=withPhotoMounts(payload);
++   if(payload.embeddedVision?.photo_mount_version)source.photo_mount_version=payload.embeddedVision.photo_mount_version;
+    if(payload.embeddedVision?.environment_design_version)source.environment_design_version=payload.embeddedVision.environment_design_version;
+    progress('차체 내부 배치와 배선을 계산하고 있습니다…');
+    const assembly=await requestAssembly({mode:'initial',project:{...payload,embeddedVision:{...payload.embeddedVision,photo_structure:source.photo_structure}}},{signal:assemblyAbort.signal});
+@@ -105,7 +108,7 @@
+      history.replaceState(null,'',location.pathname+location.search+'#project='+encodeURIComponent(updated));}
+    };window.addEventListener('message',receiveRevision);}
+    window.addEventListener('pagehide',flush);
+-   unsub1=useSimulatorStore.subscribe((s,p)=>{if(s.components!==p.components||s.wires!==p.wires||JSON.stringify(s.boards.map(b=>[b.id,b.x,b.y,b.rotation,b.boardKind,b.name,b.activeFileGroupId]))!==JSON.stringify(p.boards.map(b=>[b.id,b.x,b.y,b.rotation,b.boardKind,b.name,b.activeFileGroupId])))save();});
++   unsub1=useSimulatorStore.subscribe((s,p)=>{if(s.components!==p.components||s.wires!==p.wires||JSON.stringify(s.boards.map(b=>[b.id,b.x,b.y,b.rotation,b.boardKind,b.name,b.activeFileGroupId,b.properties]))!==JSON.stringify(p.boards.map(b=>[b.id,b.x,b.y,b.rotation,b.boardKind,b.name,b.activeFileGroupId,b.properties])))save();});
+    unsub2=useEditorStore.subscribe((s,p)=>{if(s.fileGroups!==p.fileGroups)save();});
+   })().catch(e=>{if(cancelled||e?.name==='AbortError')return;setFailed(true);progress('가져오기 실패: '+String(e),'error');});
+   return()=>{cancelled=true;assemblyAbort.abort();unsub1();unsub2();clearTimeout(timer);window.removeEventListener('pagehide',flush);window.removeEventListener('message',receiveRevision);setMotionSource(undefined);};
+--- a/frontend/src/components/circuitiny/photoAssemblyLayout.ts
++++ b/frontend/src/components/circuitiny/photoAssemblyLayout.ts
+@@ -1,10 +1,12 @@
+ /** Reversible inspection transforms. Native parts, pin positions and nets are never rewritten. */
+ import * as T from 'three';
+ import type {ComponentInstance,Project} from './project/schema';
++import {planPhotoMounts,type PhotoMount,type MountHost} from './photoMounts';
+ export type V=[number,number,number];
+-export type PhotoTransform={position:V;scale:number;translation:V};
+-type Photo={part:ComponentInstance;center:V;box:T.Box3;role:string};
+-export type PhotoLayout={photos:Photo[];scale:number;translation:V;circuitOffset:V;offsets:Record<string,V>};
++export type PhotoDrag={id:string;position:V};
++export type PhotoTransform={position:V;scale:number;translation:V;quaternion:[number,number,number,number]};
++type Photo={part:ComponentInstance;center:V;box:T.Box3;role:string;size:V;rotation:V};
++export type PhotoLayout={photos:Photo[];mounts:Record<string,PhotoMount>;scale:number;translation:V;circuitOffset:V;offsets:Record<string,V>};
+ export const isPhotoPart=(c:ComponentInstance)=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure;
+ export const isStructurePart=(c:ComponentInstance)=>c.config?.metadataId==='ev-structure';
+ const add=(a:V,b:V):V=>a.map((v,i)=>v+b[i]) as V;
+@@ -22,13 +24,17 @@
+    [pos[0],pos[1]+numeric(p.elevation,0)/1000+size[1]/2,pos[2]];
+   const q=new T.Quaternion().setFromEuler(new T.Euler(...[numeric(p.rotationX,0),-numeric(p.rotation,0),numeric(p.rotationZ,0)].map(v=>v*Math.PI/180) as V));
+   const box=new T.Box3();for(const x of [-.5,.5])for(const y of [-.5,.5])for(const z of [-.5,.5])box.expandByPoint(new T.Vector3(x*size[0],y*size[1],z*size[2]).applyQuaternion(q).add(new T.Vector3(...center)));
+-  photos.push({part,center,box,role:p.evPhotoStructure?.role||'other'});
++  photos.push({part,center,box,role:p.evPhotoStructure?.role||'other',size,rotation:[numeric(p.rotationX,0),-numeric(p.rotation,0),numeric(p.rotationZ,0)].map(v=>v*Math.PI/180) as V});
+  }
+- const offsets:Record<string,V>={},layout:PhotoLayout={photos,scale:1,translation:[0,0,0],circuitOffset:[0,0,0],offsets};
++ const offsets:Record<string,V>={},layout:PhotoLayout={photos,mounts:{},scale:1,translation:[0,0,0],circuitOffset:[0,0,0],offsets};
+  if(!photos.length){cache.set(project,layout);return layout;}
+  const whole=new T.Box3();photos.forEach(p=>whole.union(p.box));
+  const core=photos.filter(p=>['chassis','platform','housing'].includes(p.role)),body=new T.Box3();(core.length?core:photos).forEach(p=>body.union(p.box));
+  const center=body.getCenter(new T.Vector3()),span=body.getSize(new T.Vector3()),electric=new T.Box3();
++ const hosts:MountHost[]=photos.map(h=>({id:h.part.instance,label:String((h.part.config?.structure as Record<string,unknown>).label||h.part.instance),role:h.role,size:h.size,center:h.center}));
++ const parts=all.filter(c=>!isStructurePart(c)&&!isPhotoPart(c)).map(c=>({id:c.instance,type:c.config?.isBoard?'board':String(c.config?.physicalModelId||(c.config?.evSelectedDesign as {model_id?:string}|undefined)?.model_id||c.config?.metadataId||c.componentId),text:String((c.config?.evSelectedDesign as {purpose?:string}|undefined)?.purpose||c.config?.label||c.config?.name||c.instance),mount:c.config?.evPhotoMount}));
++ const owner=(ref:string)=>{const id=ref.split('.')[0];return id==='board'?all.find(c=>c.config?.pinOwner==='board')?.instance||project.boards?.[0]?.instance||id:id;};
++ layout.mounts=planPhotoMounts(parts,hosts,project.nets.filter(n=>n.endpoints.length>=2).map(n=>({a:owner(n.endpoints[0]),b:owner(n.endpoints[1])})));
+  for(const c of all.filter(c=>!isPhotoPart(c)&&!isStructurePart(c))){
+   const pos=new T.Vector3(...(c.position||[0,0,0]));
+   const w=numeric(c.config?.width,.05),d=numeric(c.config?.depth,.035),h=numeric(c.config?.physicalHeight,.02);
+@@ -39,6 +45,7 @@
+  layout.scale=hasCircuit?Math.min(8,Math.max(1,e.x/Math.max(.025,span.x*.8),e.z/Math.max(.025,span.z*.8),e.y/Math.max(.03,span.y*.75))):1;
+  layout.translation=[ec.x-center.x*layout.scale,-whole.min.y*layout.scale,ec.z-center.z*layout.scale];
+  layout.circuitOffset=[0,Math.max(0,center.y*layout.scale+layout.translation[1]-ec.y),0];
++ if(Object.keys(layout.mounts).length){layout.scale=1;layout.translation=[-center.x,-whole.min.y,-center.z];layout.circuitOffset=[0,0,0];}
+  const gap=Math.max(.07,span.length()*layout.scale*.32),count=Math.max(1,core.length);
+  const coreOrder=[...core].sort((a,b)=>a.center[1]-b.center[1]||a.part.instance.localeCompare(b.part.instance));
+  for(const [i,p] of photos.entries()){
+@@ -49,12 +56,39 @@
+  }
+  cache.set(project,layout);return layout;
+ }
+-export function photoPartTransform(c:ComponentInstance,layout:PhotoLayout,focus:boolean,exploded:boolean):PhotoTransform{
++export function photoPartTransform(c:ComponentInstance,layout:PhotoLayout,focus:boolean,exploded:boolean,preview?:PhotoDrag|null):PhotoTransform{
+  const native=(c.position||[0,0,0]) as V;
+- if(!focus||!layout.photos.length)return {position:native,scale:1,translation:[0,0,0]};
+- if(!isPhotoPart(c))return {position:add(native,layout.circuitOffset),scale:1,translation:layout.circuitOffset};
++ if(!focus||!layout.photos.length)return {position:native,scale:1,translation:[0,0,0],quaternion:[0,0,0,1]};
++ if(!isPhotoPart(c)){
++  const mount=layout.mounts[c.instance],host=mount&&layout.photos.find(h=>h.part.instance===mount.hostId);
++  if(host){
++   const frame=photoHostFrame(host,layout,exploded,preview),q=new T.Quaternion().setFromEuler(new T.Euler(...host.rotation)).multiply(new T.Quaternion().setFromEuler(new T.Euler(...mount.rotation)));
++   const local=mount.anchor.map((n,i)=>n*host.size[i]+mount.offset[i]+mount.normal[i]*.002) as V;
++   const position=(preview?.id===c.instance?preview.position:new T.Vector3(...local).applyQuaternion(frame.rotation).multiplyScalar(frame.scale).add(frame.center).toArray()) as V;
++   return {position,scale:frame.scale,translation:position.map((n,i)=>n-native[i]*frame.scale) as V,quaternion:q.toArray()};
++  }
++  return {position:add(native,layout.circuitOffset),scale:1,translation:layout.circuitOffset,quaternion:[0,0,0,1]};
++ }
+  const translation=add(layout.translation,exploded?layout.offsets[c.instance]||[0,0,0]:[0,0,0]);
+- return {position:native.map((v,i)=>v*layout.scale+translation[i]) as V,scale:layout.scale,translation};
++ return {position:preview?.id===c.instance?preview.position:native.map((v,i)=>v*layout.scale+translation[i]) as V,scale:layout.scale,translation,quaternion:[0,0,0,1]};
++}
++function photoHostFrame(host:Photo,layout:PhotoLayout,exploded:boolean,preview?:PhotoDrag|null){
++ const root=photoPartTransform(host.part,layout,true,exploded,preview),p=host.part.config?.structure as Record<string,unknown>;
++ const center=new T.Vector3(...root.position);center.y+=(numeric(p.elevation,0)/1000+host.size[1]/2)*root.scale;
++ return {center,scale:root.scale,rotation:new T.Quaternion().setFromEuler(new T.Euler(...host.rotation))};
++}
++export function photoMountOffset(c:ComponentInstance,layout:PhotoLayout,display:V,exploded:boolean,preview?:PhotoDrag|null):V|undefined{
++ const mount=layout.mounts[c.instance],host=mount&&layout.photos.find(h=>h.part.instance===mount.hostId);if(!host)return;
++ const frame=photoHostFrame(host,layout,exploded,preview),local=new T.Vector3(...display).sub(frame.center).divideScalar(frame.scale).applyQuaternion(frame.rotation.clone().invert()).toArray();
++ return local.map((n,i)=>n-mount.anchor[i]*host.size[i]-mount.normal[i]*.002) as V;
++}
++export function photoSurfaceNormal(c:ComponentInstance,layout:PhotoLayout){
++ const mount=layout.mounts[c.instance],host=mount&&layout.photos.find(h=>h.part.instance===mount.hostId);
++ return host?new T.Vector3(...mount.normal).applyEuler(new T.Euler(...host.rotation)).normalize():undefined;
++}
++export function photoPinPart(project:Project,ref:string){const id=ref.split('.')[0],all=[...project.components,...(project.boards||[])];return id==='board'?all.find(c=>c.config?.pinOwner==='board')||project.boards?.[0]:all.find(c=>c.instance===id);}
++export function photoPointMatrix(c:ComponentInstance,transform:PhotoTransform){
++ return new T.Matrix4().compose(new T.Vector3(...transform.position),new T.Quaternion(...transform.quaternion),new T.Vector3().setScalar(transform.scale)).multiply(new T.Matrix4().makeTranslation(...(c.position||[0,0,0]).map(n=>-n) as V));
+ }
+ export function nativePhotoPosition(display:V,transform:PhotoTransform):V{return display.map((v,i)=>(v-transform.translation[i])/transform.scale) as V;}
+ export function photoPartVisible(c:ComponentInstance,layout:PhotoLayout,focus:boolean,exploded:boolean){
+--- a/frontend/src/components/circuitiny/Wires3D.tsx
++++ b/frontend/src/components/circuitiny/Wires3D.tsx
+@@ -9,6 +9,7 @@
+ import { useSimulatorStore as native } from '../../store/useSimulatorStore';
+ import {photoAssemblyLayout} from './photoAssemblyLayout';
+ import {connectedWirePath} from './connectedWiring';
++import {wireGeometry,cableConnectorPositions} from './wireGeometry';
+ 
+ function JumperCable({
+   points,
+@@ -28,15 +29,7 @@
+   const geometry = useMemo(() => {
+     // Keep the tube on the native route. A spline can overshoot a bend and
+     // visually suggest a connection that does not exist in the circuit.
+-    const vertices = points.map((p) => new T.Vector3(...p));
+-    const path = new T.CurvePath<T.Vector3>();
+-    for (let i = 1; i < vertices.length; i++) {
+-      if (vertices[i - 1].distanceToSquared(vertices[i]) > 1e-16)
+-        path.add(new T.LineCurve3(vertices[i - 1], vertices[i]));
+-    }
+-    if (!path.curves.length)
+-      path.add(new T.LineCurve3(vertices[0], vertices[0].clone().addScalar(0.000001)));
+-    return new T.TubeGeometry(path, Math.max(36, points.length * 12), 0.00048, 10, false);
++    return wireGeometry(points);
+   }, [JSON.stringify(points)]);
+   useEffect(() => () => geometry.dispose(), [geometry]);
+   return (
+@@ -45,8 +38,8 @@
+         <meshStandardMaterial color={selected||warning ? '#df923c' : color} roughness={0.4} transparent={warning} opacity={warning?.4:1}/>
+       </mesh>
+       {(inspection||warning)&&<Line userData={{evInspectionOverlay:true}} points={points} color={selected||warning?'#df923c':color} lineWidth={selected?2.6:1.6} dashed={warning} dashSize={.004} gapSize={.003} transparent opacity={.95} onClick={onClick}/>}
+-      {[points[0], points[points.length - 1]].map((p, i) => (
+-        <mesh key={i} position={[p[0], p[1] + 0.0014, p[2]]} castShadow>
++      {cableConnectorPositions(points).map((p, i) => (
++        <mesh key={i} position={p} castShadow>
+           <boxGeometry args={[0.0021, 0.003, 0.0021]} />
+           <meshStandardMaterial color="#262c2d" roughness={0.5} />
+         </mesh>
+@@ -95,17 +88,18 @@
+   const enclosureView=useStore(s=>s.enclosureView);
+   const photoFocus=useStore(s=>s.photoFocus&&s.project.components.some(c=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure));
+   const photoExploded=useStore(s=>s.photoExploded);
++  const photoDrag=useStore(s=>s.photoDrag);
+   const photoLayout=useMemo(()=>photoAssemblyLayout(project),[project]);
+   const concealed=(ref:string)=>{
+     const id=ref.split('.')[0],part=[...project.components,...(project.boards||[])].find(p=>p.instance===id||(id==='board'&&p.config?.isBoard));
+     return part?.config?.evDesignMount==='internal'&&project.components.some(c=>c.instance===part.config?.evDesignEnclosure);
+   };
+   return (
+-    <group name="ev-wiring" position={photoFocus?photoLayout.circuitOffset:[0,0,0]}>
++    <group name="ev-wiring">
+       {project.nets
+         .filter((n) => (!photoFocus||photoExploded)&&!n.hidden&&(photoLayout.photos.length>0||enclosureView!=='assembled'||!n.endpoints.some(concealed)))
+         .map((net) => {
+-          const connection=connectedWirePath(project,net,drag);
++          const connection=connectedWirePath(project,net,drag,{focus:photoFocus,exploded:photoExploded,preview:photoDrag});
+           if(!connection)return null;
+           const {a,b,points,warning}=connection;
+           // This net represents the whole mating header, never one jumper wire.
+--- a/frontend/src/components/circuitiny/store.ts
++++ b/frontend/src/components/circuitiny/store.ts
+@@ -2,7 +2,9 @@
+ import { create } from 'zustand';
+ import type { LedOutputSample } from '../../simulation/ledOutput';
+ import type { Project } from './project/schema';
++import type {PhotoDrag} from './photoAssemblyLayout';
+ export type ViewerState = {
++  photoDrag:PhotoDrag|null;
+   photoExploded:boolean;
+   photoFocus:boolean;
+   enclosureView:'assembled'|'inside'|'exploded';
+@@ -52,6 +54,7 @@
+   releaseButton: (p: string) => void;
+ };
+ export const useStore = create<ViewerState>((set) => ({
++  photoDrag:null,
+   photoExploded:false,
+   photoFocus:false,
+   enclosureView:'inside',
+--- a/frontend/src/components/circuitiny/EmbeddedBodies.tsx
++++ b/frontend/src/components/circuitiny/EmbeddedBodies.tsx
+@@ -158,9 +158,8 @@
+         }
+       }
+       if(layout.photos.length&&(!photoFocus||photoExploded))for(const net of project.nets){
+-        if(net.hidden)continue;const path=connectedWirePath(project,net);if(!path)continue;
+-        const offset=photoFocus?new T.Vector3(...layout.circuitOffset):new T.Vector3();
+-        for(const point of path.points)points.push(new T.Vector3(...point).add(offset));
++        if(net.hidden)continue;const path=connectedWirePath(project,net,null,{focus:photoFocus,exploded:photoExploded});if(!path)continue;
++        for(const point of path.points)points.push(new T.Vector3(...point));
+       }
+       const box = new T.Box3().setFromPoints(points).expandByScalar(0.009);
+       if (box.isEmpty()) return;
+--- a/frontend/src/components/circuitiny/PhotoAppearanceControls.tsx
++++ b/frontend/src/components/circuitiny/PhotoAppearanceControls.tsx
+@@ -1,16 +1,18 @@
+ import {useEffect} from 'react';
+ import {useStore} from './store';
+ import {connectedWirePath} from './connectedWiring';
++import {photoAssemblyLayout} from './photoAssemblyLayout';
+ export function PhotoAppearanceControls(){
+- const project=useStore(s=>s.project),focus=useStore(s=>s.photoFocus),exploded=useStore(s=>s.photoExploded),selected=useStore(s=>s.selected),wireMode=useStore(s=>s.wireMode),moveTarget=useStore(s=>s.moveTarget);
++ const project=useStore(s=>s.project),focus=useStore(s=>s.photoFocus),exploded=useStore(s=>s.photoExploded),selected=useStore(s=>s.selected),wireMode=useStore(s=>s.wireMode),moveTarget=useStore(s=>s.moveTarget),preview=useStore(s=>s.photoDrag);
+  const photos=project.components.filter(c=>!!(c.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure);
+  const selectedIsPhoto=photos.some(c=>c.instance===selected);
++ const selectedIsMounted=!!selected&&!!photoAssemblyLayout(project).mounts[selected];
+  useStore(s=>s.catalogVersion);
+- useEffect(()=>{if(focus&&(wireMode||moveTarget&&!selectedIsPhoto||selected&&!selectedIsPhoto&&!exploded))useStore.setState(s=>({photoFocus:false,fitRevision:s.fitRevision+1}));},[selected,focus,exploded,selectedIsPhoto,wireMode,moveTarget]);
++ useEffect(()=>{if(focus&&(wireMode||moveTarget&&!selectedIsPhoto&&!selectedIsMounted||selected&&!selectedIsPhoto&&!exploded))useStore.setState(s=>({photoFocus:false,photoDrag:null,fitRevision:s.fitRevision+1}));},[selected,focus,exploded,selectedIsPhoto,selectedIsMounted,wireMode,moveTarget]);
+  if(!photos.length)return null;
+  const change=(photoFocus:boolean,photoExploded=false)=>useStore.setState(s=>({photoFocus,photoExploded,viewMode:photoFocus?'iso':s.viewMode,
+-  cameraLocked:photoFocus?false:s.cameraLocked,selected:null,selectedNet:null,moveTarget:null,fitRevision:s.fitRevision+1}));
+- const connections=project.nets.filter(n=>!n.hidden).map(net=>({net,path:connectedWirePath(project,net)})),visible=connections.filter(c=>c.path).length;
++  cameraLocked:photoFocus?false:s.cameraLocked,selected:null,selectedNet:null,moveTarget:null,photoDrag:null,fitRevision:s.fitRevision+1}));
++ const connections=project.nets.filter(n=>!n.hidden).map(net=>({net,path:connectedWirePath(project,net,null,{focus,exploded,preview})})),visible=connections.filter(c=>c.path).length;
+  return <><span role="group" aria-label="사진 구조 조립과 분해"><button aria-pressed={focus&&!exploded} onClick={()=>change(true)}>조립 보기</button><button aria-pressed={focus&&exploded} onClick={()=>change(true,true)}>분해 보기</button><button aria-pressed={!focus} onClick={()=>change(false)}>회로·배선</button>{focus&&exploded&&<small>독립 구조물 {photos.length}개 · 내부 회로 표시 · 설명용 배치</small>}</span>
+  {(!focus||exploded)&&connections.length>0&&<details className="ev-c3d-more"><summary data-wiring-status>배선 {visible}/{connections.length}</summary><div>
+   <small>표시선은 저장된 핀 연결을 따릅니다. 실제 기구 간섭은 별도 검토합니다.</small>
+--- a/frontend/src/components/circuitiny/assemblyScene.ts
++++ b/frontend/src/components/circuitiny/assemblyScene.ts
+@@ -1,27 +1,39 @@
+ import * as T from 'three';
+ import {useStore} from './store';
+-import {photoAssemblyLayout} from './photoAssemblyLayout';
++import {photoAssemblyLayout,photoPartTransform} from './photoAssemblyLayout';
++import {connectedWirePath} from './connectedWiring';
++import {cableMesh} from './wireGeometry';
+ let sceneRoot:(()=>T.Object3D|undefined)|undefined;
+ export function registerAssemblyScene(getRoot:()=>T.Object3D|undefined){sceneRoot=getRoot;return ()=>{if(sceneRoot===getRoot)sceneRoot=undefined;};}
+ /** Transfer the actual rendered product models and routed cables, not substitute boxes. */
+ export function captureAssemblyVisual(parts:any[]){
+- const mounted=new Set(parts.filter(p=>p.properties?.evAssembly).map(p=>p.id));
++ const state=useStore.getState(),layout=photoAssemblyLayout(state.project),photoLayout=layout.photos.length>0;
++ const mounted=new Set(parts.filter(p=>p.properties?.evAssembly||layout.mounts[p.id]).map(p=>p.id));
+  if(!mounted.size)return undefined;
+  const root=sceneRoot?.();if(!root)throw Error('3D 조립 화면을 준비한 뒤 다시 실행하세요.');
+  const photo=parts.find(p=>Array.isArray(p.properties?.photoSceneOrigin)),origin=photo?.properties.photoSceneOrigin||[0,0];
+- const state=useStore.getState(),layout=photoAssemblyLayout(state.project),photoLayout=layout.photos.length>0;
+  const out=new T.Group();out.name='assembled-system';
++ const ownedGeometries:T.BufferGeometry[]=[],ownedMaterials:T.Material[]=[];
+  root.updateMatrixWorld(true);
+  for(const id of mounted){
+   const outer=root.getObjectByName('ev-part:'+id),body=outer?.getObjectByName('ev-body:'+id);
+   if(!outer||!body)throw Error(id+'의 실물 모델이 아직 준비되지 않았습니다.');
+   const group=new T.Group();group.name='assembly-part:'+id;group.position.copy(outer.position);
+-  if(photoLayout&&!state.photoFocus)group.position.add(new T.Vector3(...layout.circuitOffset));
++  const part=[...state.project.components,...(state.project.boards||[])].find(c=>c.instance===id);
++  if(photoLayout&&part){const pose=photoPartTransform(part,layout,true,false);group.position.set(...pose.position);group.quaternion.set(...pose.quaternion);group.scale.setScalar(pose.scale);}
++  else{group.quaternion.copy(outer.quaternion);group.scale.copy(outer.scale);}
+   group.add(body.clone(true));out.add(group);
+  }
+- root.traverse(child=>{if(child.name==='ev-cable'){
++ if(photoLayout){
++  for(const net of state.project.nets){
++   if(net.hidden||net.connectorBinding||net.endpoints.every(p=>p.endsWith('.GPIO40')))continue;
++   const path=connectedWirePath(state.project,net,null,{focus:true,exploded:false});if(!path)continue;
++   const wire=cableMesh(path.points,net.color||'#328260',path.warning);wire.userData.netId=net.id;
++   wire.traverse(o=>{const m=o as T.Mesh;if(m.geometry)ownedGeometries.push(m.geometry);if(m.material)ownedMaterials.push(...(Array.isArray(m.material)?m.material:[m.material]));});out.add(wire);
++  }
++ }else root.traverse(child=>{if(child.name==='ev-cable'){
+   const wire=child.clone(true),overlays:T.Object3D[]=[];wire.traverse(o=>{if(o.userData.evInspectionOverlay)overlays.push(o);});overlays.forEach(o=>o.removeFromParent());
+-  if(photoLayout)wire.position.add(new T.Vector3(...layout.circuitOffset));out.add(wire);
++  out.add(wire);
+  }});
+  if(photoLayout){out.scale.setScalar(1/layout.scale);out.position.set(-layout.translation[0]/layout.scale-origin[0]/1000,-layout.translation[1]/layout.scale,-layout.translation[2]/layout.scale-origin[1]/1000);}
+  else out.position.set(-origin[0]/1000,0,-origin[1]/1000);
+@@ -37,6 +49,7 @@
+  out.updateMatrixWorld(true);
+  const result=out.toJSON();
+  baked.forEach(geometry=>geometry.dispose());
++ ownedGeometries.forEach(g=>g.dispose());ownedMaterials.forEach(m=>m.dispose());
+  if(JSON.stringify(result).length>12_000_000)throw Error('조립 그래픽이 너무 큽니다. 표시할 부품을 줄인 뒤 다시 실행하세요.');
+  return result;
+ }
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -38,7 +38,8 @@
+ import {EnclosureShell} from './EnclosureView';
+ import {environmentKind} from './environmentObjects';
+ import {EnvironmentBody,EnvironmentHose} from './EnvironmentBody';
+-import {photoAssemblyLayout,photoPartTransform,photoPartVisible,nativePhotoPosition} from './photoAssemblyLayout';
++import {photoAssemblyLayout,photoPartTransform,photoPartVisible,nativePhotoPosition,photoMountOffset,photoSurfaceNormal} from './photoAssemblyLayout';
++import {commitPhotoMount} from './PhotoMountControls';
+ type Violation = { severity: 'error' | 'warning'; involves: string[] };
+ const STRIP_LED_N = 8;
+ 
+@@ -634,9 +635,10 @@
+   const pixels = useStore((s) => s.simStrips[c.instance]);
+   const photoFocus=useStore(s=>s.photoFocus&&s.project.components.some(p=>!!(p.config?.structure as Record<string,unknown>|undefined)?.evPhotoStructure));
+   const photoExploded=useStore(s=>s.photoExploded);
++  const photoDrag=useStore(s=>s.photoDrag);
+   const photoProject=useStore(s=>s.project);
+   const photoLayout=useMemo(()=>photoAssemblyLayout(photoProject),[photoProject]);
+-  const photoTransform=photoPartTransform(c,photoLayout,photoFocus,photoExploded);
++  const photoTransform=photoPartTransform(c,photoLayout,photoFocus,photoExploded,photoDrag);
+   const photoVisible=photoPartVisible(c,photoLayout,photoFocus,photoExploded);
+   const enclosureView=useStore(s=>s.enclosureView);
+   const enclosed=useStore(s=>s.project.components.some(p=>p.instance===c.config?.evDesignEnclosure&&!!p.config?.structure));
+@@ -652,13 +654,14 @@
+     capture: {releasePointerCapture:(id:number)=>void}; enabled: boolean;
+   }>(null);
+   const canMove = canDragComponent({selected,armed:moveTarget===c.instance,simulating,wireMode});
++  const dragNormal=photoFocus?photoSurfaceNormal(c,photoLayout):undefined;
+ 
+   const projectPointer = (x:number, y:number) => {
+     const rect = gl.domElement.getBoundingClientRect();
+     if (!rect.width || !rect.height) return null;
+     const ray = new THREE.Raycaster();
+     ray.setFromCamera(new THREE.Vector2((x-rect.left)/rect.width*2-1, -(y-rect.top)/rect.height*2+1), camera);
+-    return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0), -pos[1]), new THREE.Vector3());
++    return ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(dragNormal||new THREE.Vector3(0,1,0),new THREE.Vector3(...pos)),new THREE.Vector3());
+   };
+   const finishDrag = (commit:boolean) => {
+     const drag = dragRef.current;
+@@ -667,7 +670,12 @@
+     try { drag.capture.releasePointerCapture(drag.pointerId); } catch { /* already released */ }
+     if (controls && 'enabled' in controls) (controls as {enabled:boolean}).enabled = drag.enabled;
+     const next = commit ? drag.model.result() : null;
+-    if (next) move(c.instance, nativePhotoPosition(next,photoTransform));
++    if(next){
++      const mount=photoLayout.mounts[c.instance],offset=photoFocus&&mount?photoMountOffset(c,photoLayout,next,photoExploded,photoDrag):undefined;
++      if(mount&&offset)commitPhotoMount(c.instance,{...mount,offset});
++      else move(c.instance,nativePhotoPosition(next,photoTransform));
++    }
++    useStore.setState({photoDrag:null});
+     // Restore from authoritative state, including rejected occupied-hole moves.
+     const actual = useStore.getState().project;
+     const restored=[...actual.components,...(actual.boards||[])].find(p=>p.instance===c.instance)||c;
+@@ -681,7 +689,7 @@
+       if (!drag || drag.pointerId !== e.pointerId) return;
+       const hit = projectPointer(e.clientX, e.clientY);
+       const next = hit && drag.model.update(hit, {x:e.clientX,y:e.clientY});
+-      if (next) groupRef.current?.position.copy(next);
++      if (next){groupRef.current?.position.copy(next);if(photoFocus)useStore.setState({photoDrag:{id:c.instance,position:next.toArray()}});}
+     };
+     const onUp = (e:PointerEvent) => {
+       if (!dragRef.current || dragRef.current.pointerId !== e.pointerId) return;
+@@ -695,7 +703,7 @@
+     window.addEventListener('pointercancel',cancel); window.addEventListener('blur',cancel); window.addEventListener('keydown',key);
+     return () => { cancel(); window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp);
+       window.removeEventListener('pointercancel',cancel); window.removeEventListener('blur',cancel); window.removeEventListener('keydown',key); };
+-  }, [camera, gl, controls, c.instance, canMove]);
++  }, [camera, gl, controls, c.instance, canMove, photoLayout, photoFocus, photoExploded]);
+ 
+   const isButton = String(c.config?.metadataId || '').startsWith('pushbutton');
+   const isSwitch = c.config?.metadataId === 'slide-switch';
+@@ -715,7 +723,7 @@
+       capture.setPointerCapture(e.pointerId);
+       const enabled = controls && 'enabled' in controls ? (controls as {enabled:boolean}).enabled : true;
+       if (controls && 'enabled' in controls) (controls as {enabled:boolean}).enabled = false;
+-      dragRef.current = {model:createComponentDrag(pos, hit, {x:e.nativeEvent.clientX,y:e.nativeEvent.clientY}), pointerId:e.pointerId, capture, enabled};
++      dragRef.current = {model:createComponentDrag(pos, hit, {x:e.nativeEvent.clientX,y:e.nativeEvent.clientY},dragNormal), pointerId:e.pointerId, capture, enabled};
+       e.nativeEvent.preventDefault();
+     }
+   }
+@@ -725,10 +733,9 @@
+     if (isButton) runtimeButton(c.instance, false);
+   }
+   const content = (
+-    <group ref={groupRef} position={pos} name={'ev-part:'+c.instance}>
++    <group ref={groupRef} position={pos} quaternion={photoTransform.quaternion} scale={photoTransform.scale} name={'ev-part:'+c.instance}>
+       <group
+         name={'ev-body:'+c.instance}
+-        scale={photoTransform.scale}
+         rotation={[0, (-Number(c.config?.rotation || 0) * Math.PI) / 180, 0]}
+         raycast={photoVisible?undefined:()=>false}
+         onPointerDown={photoVisible?handlePointerDown:undefined}
+@@ -984,12 +991,13 @@
+ 
+ function PhotoAssemblyGuides(){
+  const project=useStore(s=>s.project),enabled=useStore(s=>s.photoFocus&&s.photoExploded);
++ const preview=useStore(s=>s.photoDrag);
+  const layout=useMemo(()=>photoAssemblyLayout(project),[project]);
+  if(!enabled)return null;
+  return <group name="photo-assembly-guides">{layout.photos.map(p=>{
+   const transform=photoPartTransform(p.part,layout,true,false),props=p.part.config?.structure as Record<string,unknown>;
+   const start:[number,number,number]=[...transform.position];start[1]+=(Number(props.elevation||0)+Number(props.height||20)/2)/1000*transform.scale;
+-  const offset=layout.offsets[p.part.instance],end=start.map((v,i)=>v+offset[i]) as [number,number,number];
++  const target=photoPartTransform(p.part,layout,true,true,preview),end=[...target.position] as [number,number,number];end[1]+=(Number(props.elevation||0)+Number(props.height||20)/2)/1000*target.scale;
+   return <Line key={p.part.instance} points={[start,end]} color="#7f8e9a" transparent opacity={.32} lineWidth={.7} dashed dashSize={.005} gapSize={.004} raycast={()=>{}}/>;
+  })}</group>;
+ }
+--- a/frontend/src/components/circuitiny/directComponentDrag.ts
++++ b/frontend/src/components/circuitiny/directComponentDrag.ts
+@@ -3,14 +3,16 @@
+ export {canDragComponent} from './objectMovement';
+ 
+ /** A drag changes only the temporary 3D pose until a single release commit. */
+-export function createComponentDrag(start: [number, number, number], hit: THREE.Vector3, screen: {x:number; y:number}) {
++export function createComponentDrag(start: [number, number, number], hit: THREE.Vector3, screen: {x:number; y:number},surfaceNormal?:THREE.Vector3) {
+   const origin = new THREE.Vector3(...start);
+   let latest = origin.clone(), moved = false;
+   return {
+     update(point: THREE.Vector3, client: {x:number; y:number}) {
+       if (!moved && Math.hypot(client.x - screen.x, client.y - screen.y) < 3) return null;
+       moved = true;
+-      latest = origin.clone().add(new THREE.Vector3(point.x-hit.x, 0, point.z-hit.z));
++      const delta=point.clone().sub(hit);
++      if(surfaceNormal){const normal=surfaceNormal.clone().normalize();delta.addScaledVector(normal,-delta.dot(normal));}else delta.y=0;
++      latest = origin.clone().add(delta);
+       return latest.clone();
+     },
+     result(): [number, number, number] | null { return moved ? latest.toArray() as [number, number, number] : null; },
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -3,6 +3,7 @@
+ import {SelectionCard} from './SelectionCard';
+ import {EnclosureControls,EnclosureDetails} from './EnclosureView';
+ import {PhotoAppearanceControls} from './PhotoAppearanceControls';
++import {PhotoMountControls} from './PhotoMountControls';
+ import {EnvironmentPalette,EnvironmentActions,EnvironmentDetails} from './EnvironmentControls';
+ import {environmentKind} from './environmentObjects';
+ import {createPortal} from 'react-dom';
+@@ -448,6 +449,7 @@
+           actions={component&&environmentKind(component.properties)?<EnvironmentActions part={component}/>:undefined}
+           onMove={()=>useStore.setState(s=>({moveTarget:s.moveTarget===selected?null:selected}))}
+           onClose={()=>useStore.getState().select(null)}>
++          <PhotoMountControls id={selected!} disabled={running||wireMode}/>
+           {!structure&&<EnclosureDetails part={component||board||{}}/>}
+           {physicalModel&&<details><summary>실물 형상 · {physicalModel.name}</summary><p>{physicalModel.source?'제안된 설계 부품의 제품 형상 모델입니다.':'제품 모델이 미확인인 일반형입니다.'} 전기 동작 모델과는 별개입니다.</p><p>{physicalModel.basis}</p>{physicalModel.source&&<><p>외곽 기준: {physicalModel.width} × {physicalModel.depth} mm</p><a href={physicalModel.source} target="_blank" rel="noreferrer">제조사 원문·도면</a></>}{['hat','shield'].includes(physicalModel.kind)&&<p><a href="/physical-models/hat-license.txt" target="_blank" rel="noreferrer">Adafruit PCB 자료 · CC BY-SA 3.0</a></p>}</details>}
+           {Boolean(component?.properties?.evAssembly)&&<details><summary>장착 위치 · 새 설계 추정</summary><p>{String((component!.properties.evAssembly as {note:string}).note)}</p><p>사진의 원래 장착을 복원한 결과가 아닙니다. 치수와 고정 방법은 실제 부품으로 검토하세요.</p></details>}
+--- a/frontend/src/components/circuitiny/connectedWiring.ts
++++ b/frontend/src/components/circuitiny/connectedWiring.ts
+@@ -3,6 +3,8 @@
+ import {resolvePin} from './project/pins';
+ import {hardwareModel,mountedPose} from './assemblyGeometry';
+ import type {routeAssembly} from './assemblyPlanner';
++import * as T from 'three';
++import {photoAssemblyLayout,photoPartTransform,photoPinPart,photoPointMatrix,type PhotoDrag} from './photoAssemblyLayout';
+ export type V=[number,number,number];
+ type Routing=ReturnType<typeof routeAssembly>;
+ const valid=(p:unknown):p is V=>Array.isArray(p)&&p.length===3&&p.every(n=>typeof n==='number'&&Number.isFinite(n));
+@@ -20,9 +22,26 @@
+    {...net,physicalRoute:false,routeBlocked:false,routeKind:'pins',routeNote:'실제 단자 기준 표시 배선 · 기구 간섭 검증 전'};
+  });
+ }
+-export function connectedWirePath(project:Project,net:Net,drag?:{wireId:string;side:'start'|'end';point:V}|null){
++export type PhotoWireView={focus:boolean;exploded:boolean;preview?:PhotoDrag|null};
++export function connectedWirePath(project:Project,net:Net,drag?:{wireId:string;side:'start'|'end';point:V}|null,view?:PhotoWireView){
+  const a=resolvePin(project,net.endpoints[0]),b=resolvePin(project,net.endpoints[1]);
+  if(!a||!b||!valid(a.position)||!valid(b.position))return null;
++ if(view?.focus){
++  const layout=photoAssemblyLayout(project),pa=photoPinPart(project,net.endpoints[0]),pb=photoPinPart(project,net.endpoints[1]);
++  if(layout.photos.length&&pa&&pb){
++   const ma=photoPointMatrix(pa,photoPartTransform(pa,layout,true,false)),mb=photoPointMatrix(pb,photoPartTransform(pb,layout,true,false));
++   const ca=photoPointMatrix(pa,photoPartTransform(pa,layout,true,view.exploded,view.preview)),cb=photoPointMatrix(pb,photoPartTransform(pb,layout,true,view.exploded,view.preview));
++   const start=new T.Vector3(...a.position).applyMatrix4(ma),end=new T.Vector3(...b.position).applyMatrix4(mb),
++    leadA=start.clone().addScaledVector(new T.Vector3(...a.normal).transformDirection(ma),.008),leadB=end.clone().addScaledVector(new T.Vector3(...b.normal).transformDirection(mb),.008);
++   const lift=Math.max(start.y,end.y,leadA.y,leadB.y)+.016+(Math.max(0,project.nets.indexOf(net))%24)*.0015;
++   const base=[start,leadA,new T.Vector3(leadA.x,lift,leadA.z),new T.Vector3(leadB.x,lift,leadB.z),leadB,end];
++   const lengths=[0];for(let i=1;i<base.length;i++)lengths.push(lengths[i-1]+base[i].distanceTo(base[i-1]));
++   const da=ca.clone().multiply(ma.clone().invert()),db=cb.clone().multiply(mb.clone().invert()),total=lengths.at(-1)||1;
++   const points=base.map((p,i)=>p.clone().applyMatrix4(da).lerp(p.clone().applyMatrix4(db),lengths[i]/total).toArray() as V);
++   points[0]=new T.Vector3(...a.position).applyMatrix4(ca).toArray();points[points.length-1]=new T.Vector3(...b.position).applyMatrix4(cb).toArray();
++   return {points,a:{...a,position:points[0]},b:{...b,position:points[points.length-1]},warning:!!net.routeBlocked,kind:'pins',note:'장착 구조물 위치 기준 표시 배선'};
++  }
++ }
+  const start=drag?.wireId===net.id&&drag.side==='start'?drag.point:a.position,
+   end=drag?.wireId===net.id&&drag.side==='end'?drag.point:b.position;
+  if(!valid(start)||!valid(end))return null;
+--- a/frontend/src/__tests__/photo-explode.test.ts
++++ b/frontend/src/__tests__/photo-explode.test.ts
+@@ -8,6 +8,7 @@
+ import {useStore} from '../components/circuitiny/store';
+ import {PhotoAppearanceControls} from '../components/circuitiny/PhotoAppearanceControls';
+ import {captureAssemblyVisual,registerAssemblyScene} from '../components/circuitiny/assemblyScene';
++import {definitions,pin} from '../components/circuitiny/catalog';
+ 
+ function photo(id:string,y:number,role:string):ComponentInstance{
+  return {instance:id,componentId:'photo',position:[-.4,0,.11],pinAssignments:{},config:{metadataId:'ev-structure',structure:{
+@@ -29,7 +30,8 @@
+   const assembled=photoPartVisible(c,layout,true,false),exploded=photoPartVisible(c,layout,true,true);
+   if(c.instance==='U1'||c.instance==='D1'){expect(assembled).toBe(false);expect(exploded).toBe(true);
+    const view=photoPartTransform(c,layout,true,true);expect(view.position[1]).toBeGreaterThan(c.position![1]);
+-   expect(view.position.map((n,i)=>n-c.position![i])).toEqual(layout.circuitOffset);
++   const rest=photoPartTransform(c,layout,true,false),delta=view.position.map((n,i)=>n-rest.position[i]);
++   delta.forEach((n,i)=>expect(n).toBeCloseTo(layout.offsets[layout.mounts[c.instance].hostId][i]));
+   }else if(c.instance==='generic-case'){expect(assembled).toBe(false);expect(exploded).toBe(false);expect(photoPartVisible(c,layout,false,false)).toBe(false);}
+   else{
+    expect(assembled).toBe(true);expect(exploded).toBe(true);
+@@ -43,9 +45,8 @@
+  }
+  expect(JSON.stringify(project)).toBe(before);
+  const lower=layout.photos.find(p=>p.part.instance==='lower')!,upper=layout.photos.find(p=>p.part.instance==='upper')!;
+- const low=lower.center[1]*layout.scale+layout.translation[1],high=upper.center[1]*layout.scale+layout.translation[1];
+- const controller=photoPartTransform(project.components[3],layout,true,true).position[1];
+- expect(controller).toBeGreaterThan(low);expect(controller).toBeLessThan(high);
++ expect(lower).toBeDefined();expect(upper).toBeDefined();
++ expect(layout.photos.some(p=>p.part.instance===layout.mounts.U1.hostId)).toBe(true);
+ });
+ 
+ it('offers assembled, exploded and circuit views and preserves circuit selection in exploded view',async()=>{
+@@ -55,7 +56,7 @@
+  const buttons=host.querySelectorAll('button');expect([...buttons].map(b=>b.textContent)).toEqual(['조립 보기','분해 보기','회로·배선']);
+  await act(async()=>buttons[1].click());expect(useStore.getState().photoExploded).toBe(true);
+  await act(async()=>useStore.setState({selected:'U1'}));expect(useStore.getState().photoFocus).toBe(true);
+- await act(async()=>useStore.setState({moveTarget:'U1'}));expect(useStore.getState().photoFocus).toBe(false);
++ await act(async()=>useStore.setState({moveTarget:'U1'}));expect(useStore.getState().photoFocus).toBe(true);
+  await act(async()=>buttons[0].click());expect(useStore.getState().photoFocus).toBe(true);expect(useStore.getState().photoExploded).toBe(false);
+  expect(useStore.getState().project).toBe(project);
+  await act(async()=>root.unmount());
+@@ -63,13 +64,16 @@
+ 
+ it('transfers the same assembled circuit and cable poses from either editor view to motion',()=>{
+  const project=fixture(),layout=photoAssemblyLayout(project),before=JSON.stringify(project);
+- const nativeParts=[{id:'U1',properties:{evAssembly:{}}},{id:'lower',properties:{photoSceneOrigin:[-400,110]}}];
++ for(const [id,name] of [['arduino-uno','5'],['led','A']])definitions.set(id,{id,name:id,version:'1',category:'misc',model:'',pins:[pin(name,name,'digital_io',[0,.0075,0])],schematic:{symbol:'generic-rect'}});
++ const nativeParts=[{id:'U1',properties:{evAssembly:{}}},{id:'D1',properties:{evAssembly:{}}},{id:'lower',properties:{photoSceneOrigin:[-400,110]}}];
+  const results:T.Object3D[]=[];
+  for(const focus of [false,true]){
+   useStore.setState({project,photoFocus:focus,photoExploded:focus});
+-  const scene=new T.Group(),part=new T.Group(),body=new T.Mesh(new T.BoxGeometry(.07,.015,.05),new T.MeshBasicMaterial());
+-  part.name='ev-part:U1';part.position.set(...photoPartTransform(project.components[3],layout,focus,focus).position);
+-  body.name='ev-body:U1';part.add(body);scene.add(part);
++  const scene=new T.Group();for(const c of project.components.slice(3,5)){
++   const part=new T.Group(),body=new T.Mesh(new T.BoxGeometry(.07,.015,.05),new T.MeshBasicMaterial()),pose=photoPartTransform(c,layout,focus,focus);
++   part.name='ev-part:'+c.instance;part.position.set(...pose.position);part.quaternion.set(...pose.quaternion);part.scale.setScalar(pose.scale);
++   body.name='ev-body:'+c.instance;part.add(body);scene.add(part);
++  }
+   const parent=new T.Group();if(focus)parent.position.set(...layout.circuitOffset);
+   const cable=new T.Group();cable.name='ev-cable';cable.add(new T.Mesh(new T.BoxGeometry(.04,.001,.001),new T.MeshBasicMaterial()));parent.add(cable);scene.add(parent);
+   const release=registerAssemblyScene(()=>scene);const captured=captureAssemblyVisual(nativeParts)!;release();results.push(new T.ObjectLoader().parse(captured));
+--- a/frontend/src/__tests__/connected-wiring.test.ts
++++ b/frontend/src/__tests__/connected-wiring.test.ts
+@@ -12,7 +12,6 @@
+ import {resolvePin} from '../components/circuitiny/project/pins';
+ import {Wires3D} from '../components/circuitiny/Wires3D';
+ import {PhotoAppearanceControls} from '../components/circuitiny/PhotoAppearanceControls';
+-import {photoAssemblyLayout} from '../components/circuitiny/photoAssemblyLayout';
+ import {registerAssemblyScene,captureAssemblyVisual} from '../components/circuitiny/assemblyScene';
+ import type {Project,Net} from '../components/circuitiny/project/schema';
+ import type {routeAssembly} from '../components/circuitiny/assemblyPlanner';
+@@ -93,7 +92,8 @@
+   expect(JSON.parse(host.querySelector('[data-wire-points]')!.getAttribute('data-wire-points')!)).toEqual(actual);
+   await act(async()=>useStore.setState({photoFocus:true,photoExploded:true}));
+   expect(host.querySelectorAll('[name="ev-cable"]')).toHaveLength(count);
+-  expect(host.querySelector('[name="ev-wiring"]')!.getAttribute('position')).toBe(photoAssemblyLayout(p).circuitOffset.join(','));
++  expect(host.querySelector('[name="ev-wiring"]')!.getAttribute('position')).toBeNull();
++  expect(JSON.parse(host.querySelector('[data-wire-points]')!.getAttribute('data-wire-points')!)).toEqual(connectedWirePath(p,p.nets[0],null,{focus:true,exploded:true})!.points);
+   await act(async()=>useStore.setState({photoFocus:true,photoExploded:false}));
+   expect(host.querySelectorAll('[name="ev-cable"]')).toHaveLength(0);
+   expect(fingerprint()).toBe(before);
+--- /dev/null
++++ b/frontend/src/components/circuitiny/photoMounts.ts
+@@ -0,0 +1,63 @@
++/** Authored mounting choices, separate from electrical connections and photo observations. */
++import * as T from 'three';
++export type V=[number,number,number];
++export type PhotoMount={version:1;hostId:string;anchor:V;normal:V;offset:V;rotation:V;reason:string;basis:'DESIGN_SELECTED'};
++export type MountHost={id:string;label:string;role:string;size:V;center:V};
++export type MountPart={id:string;type:string;text:string;mount?:unknown};
++export type MountEdge={a:string;b:string};
++const vector=(v:unknown,limit:number):v is V=>Array.isArray(v)&&v.length===3&&v.every(n=>typeof n==='number'&&Number.isFinite(n)&&Math.abs(n)<=limit);
++export function readPhotoMount(value:unknown,hosts?:MountHost[]):PhotoMount|undefined{
++ const p=value as PhotoMount|undefined;
++ if(!p||p.version!==1||p.basis!=='DESIGN_SELECTED'||typeof p.hostId!=='string'||hosts&&!hosts.some(h=>h.id===p.hostId)||!vector(p.anchor,.6)||!vector(p.normal,1)||Math.abs(Math.hypot(...p.normal)-1)>1e-6||!vector(p.offset,2)||!vector(p.rotation,Math.PI*2)||typeof p.reason!=='string')return;
++ return p;
++}
++const side=(s:string)=>/왼|좌측|left/i.test(s)?-1:/오른|우측|right/i.test(s)?1:0;
++const board=(p:MountPart)=>/board|arduino|esp32|pico|rpi|hat|shield/i.test(p.type);
++const passive=(p:MountPart)=>/resistor|capacitor|diode/.test(p.type);
++export function newPhotoMount(part:MountPart,host:MountHost,slot=0,center:V=[0,0,0]):PhotoMount{
++ const axis=host.size.indexOf(Math.min(...host.size)),sign=axis===1?1:host.center[axis]<center[axis]?-1:1;
++ const normal:V=[0,0,0],anchor:V=[0,0,0];normal[axis]=sign;anchor[axis]=sign*.5;
++ const tangent=[0,1,2].filter(i=>i!==axis),slots=[[0,0],[0,.31],[0,-.31],[.31,0],[-.31,0],[.31,.31],[-.31,-.31],[.31,-.31],[-.31,.31]],at=slots[slot%slots.length];
++ anchor[tangent[0]]=at[0];anchor[tangent[1]]=at[1];
++ const q=new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0),new T.Vector3(...normal)),e=new T.Euler().setFromQuaternion(q);
++ return {version:1,hostId:host.id,anchor,normal,offset:[0,0,0],rotation:[e.x||0,e.y||0,e.z||0],basis:'DESIGN_SELECTED',
++  reason:`${part.text||part.type}의 역할과 구조물의 형상·위치를 참고해 ${host.label}에 장착하도록 선정했습니다.`};
++}
++export function planPhotoMounts(parts:MountPart[],hosts:MountHost[],edges:MountEdge[]){
++ const result:Record<string,PhotoMount>={},counts:Record<string,number>={};if(!hosts.length)return result;
++ const center=hosts.reduce((a,h)=>a.map((n,i)=>n+h.center[i]/hosts.length) as V,[0,0,0] as V);
++ const ordered=[...parts].sort((a,b)=>Number(passive(a))-Number(passive(b))||a.id.localeCompare(b.id,undefined,{numeric:true}));
++ // Restore explicit user choices first, so automatic assignments cannot take their slots.
++ for(const p of ordered){const saved=readPhotoMount(p.mount,hosts);if(saved){result[p.id]=saved;counts[saved.hostId]=(counts[saved.hostId]||0)+1;}}
++ for(const p of ordered){if(result[p.id])continue;
++  const neighbours=edges.flatMap(e=>e.a===p.id?[e.b]:e.b===p.id?[e.a]:[]),ps=side(p.text);
++  const ranked=hosts.map(h=>{
++   let score=['platform','chassis','frame'].includes(h.role)?20:0;
++   if(board(p))score+=/기판|pcb|board/i.test(h.label)?160:['platform','chassis'].includes(h.role)?60:0;
++   else if(/servo|motor|micro-dc/.test(p.type))score+=h.role==='actuator'?150:['leg','foot'].includes(h.role)?70:0;
++   else if(/sensor|hc-sr04|potentiometer|button/.test(p.type))score+=h.role==='sensor'?140:/센서|전면|front/i.test(h.label)?80:0;
++   else if(/power|battery|supply/.test(p.type))score+=h.role==='housing'?100:['platform','chassis'].includes(h.role)?50:0;
++   if(passive(p))score+=neighbours.filter(id=>result[id]?.hostId===h.id).length*100;
++   const hs=side(h.label);if(ps&&hs)score+=ps===hs?70:-160;
++   if(/발목|ankle/i.test(p.text))score+=/발목|ankle/i.test(h.label)?70:/상부|upper/i.test(h.label)?-70:0;
++   else if(/상부|upper|hip/i.test(p.text))score+=/상부|upper|hip/i.test(h.label)?45:/발목|ankle/i.test(h.label)?-70:0;
++   score-=(counts[h.id]||0)*(/servo|motor|micro-dc/.test(p.type)?110:12);
++   return {h,score};
++  }).sort((a,b)=>b.score-a.score||a.h.id.localeCompare(b.h.id));
++  const host=ranked[0].h;result[p.id]=newPhotoMount(p,host,counts[host.id]||0,center);counts[host.id]=(counts[host.id]||0)+1;
++ }
++ return result;
++}
++export function withPhotoMounts<P extends {components:any[];boards?:any[];wires?:any[];embeddedVision?:any}>(project:P):P{
++ const hosts:MountHost[]=project.components.filter(p=>p.metadataId==='ev-structure'&&p.properties?.evPhotoStructure).map(p=>{
++  const s=p.properties,size:V=[s.width/1000,s.height/1000,s.depth/1000];
++  return {id:p.id,label:String(s.label||p.id),role:s.evPhotoStructure.role,size,
++   center:[(p.x+6)*25.4/96000+size[0]/2,(Number(s.elevation||0)/1000)+size[1]/2,(p.y+6)*25.4/96000+size[2]/2] as V};
++ }).filter(h=>[...h.size,...h.center].every(Number.isFinite)&&h.size.every(n=>n>0));
++ if(!hosts.length)return project;
++ const describe=(p:any):MountPart=>({id:p.id,type:p.boardKind?'board':String(p.properties?.evPhysicalModel||p.properties?.evSelectedDesign?.model_id||p.metadataId),text:String(p.properties?.evSelectedDesign?.purpose||p.properties?.label||p.name||p.id),mount:p.properties?.evPhotoMount});
++ const parts=[...(project.boards||[]),...project.components.filter(p=>p.metadataId!=='ev-structure')];
++ const plans=planPhotoMounts(parts.map(describe),hosts,(project.wires||[]).map(w=>({a:w.start.componentId,b:w.end.componentId})));
++ const apply=(p:any)=>!plans[p.id]||p.properties?.evPhotoMount===plans[p.id]?p:{...p,properties:{...p.properties,evPhotoMount:plans[p.id]}};
++ return {...project,boards:(project.boards||[]).map(apply),components:project.components.map(apply),embeddedVision:{...project.embeddedVision,photo_mount_version:1}};
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/PhotoMountControls.tsx
+@@ -0,0 +1,42 @@
++import {useMemo} from 'react';
++import {useStore} from './store';
++import {useSimulatorStore as native} from '../../store/useSimulatorStore';
++import {edit,atomic} from './actions';
++import {photoAssemblyLayout,isPhotoPart} from './photoAssemblyLayout';
++import {newPhotoMount,readPhotoMount,type PhotoMount,type MountHost} from './photoMounts';
++export function commitPhotoMount(id:string,mount:PhotoMount){
++ edit(()=>{
++  if(!readPhotoMount(mount))throw Error('장착 위치 범위를 확인하세요.');
++  const s=native.getState(),c=s.components.find(p=>p.id===id),board=s.boards.find(p=>p.id===id);
++  if(!c&&!board)return;
++  atomic('사진 구조물 장착 위치 변경',()=>{
++   if(c)s.updateComponent(id,{properties:{...c.properties,evPhotoMount:mount}});
++   else if(board)s.updateBoard(id,{properties:{...board.properties,evPhotoMount:mount}});
++  });
++ });
++}
++export function PhotoMountControls({id,disabled}:{id:string;disabled:boolean}){
++ const project=useStore(s=>s.project),layout=useMemo(()=>photoAssemblyLayout(project),[project]);
++ const part=[...project.components,...(project.boards||[])].find(p=>p.instance===id);
++ if(!part||!layout.photos.length)return null;
++ if(isPhotoPart(part)){
++  const children=Object.entries(layout.mounts).filter(([,m])=>m.hostId===id);
++  return children.length?<p>장착 부품: {children.map(([id])=>id).join(' · ')}</p>:null;
++ }
++ const mount=layout.mounts[id],host=mount&&layout.photos.find(h=>h.part.instance===mount.hostId);if(!host)return null;
++ const label=(p:typeof host)=>String((p.part.config?.structure as Record<string,unknown>)?.label||p.part.instance);
++ return <details><summary>장착 구조물 · {label(host)}</summary>
++  <label>장착 대상<select aria-label="장착 구조물" disabled={disabled} value={mount.hostId} onChange={e=>{
++   const h=layout.photos.find(h=>h.part.instance===e.target.value);if(!h)return;
++   const target:MountHost={id:h.part.instance,label:label(h),role:h.role,size:h.size,center:h.center};
++   const slot=Object.entries(layout.mounts).filter(([key,m])=>key!==id&&m.hostId===target.id).length;
++   const center=layout.photos.reduce((a,h)=>a.map((n,i)=>n+h.center[i]/layout.photos.length) as [number,number,number],[0,0,0] as [number,number,number]);
++   commitPhotoMount(id,newPhotoMount({id,type:String(part.config?.metadataId||part.componentId),text:String(part.config?.label||id)},target,slot,center));
++  }}>{layout.photos.map(h=><option value={h.part.instance} key={h.part.instance}>{label(h)}</option>)}</select></label>
++  <small>분해·이동할 때 이 구조물을 함께 따라갑니다. 새 설계의 장착 위치입니다.</small>
++  {(['X','Y','Z'] as const).map((axis,i)=><label key={axis}>{axis} 위치 조정 (mm)<input aria-label={`장착 ${axis} 위치`} type="number" step="1" min="-2000" max="2000" disabled={disabled} key={`${id}:${i}:${mount.offset[i]}`} defaultValue={Math.round(mount.offset[i]*100000)/100} onBlur={e=>{
++   if(!e.target.value.trim()||!Number.isFinite(Number(e.target.value)))return;
++   const offset=[...mount.offset] as [number,number,number];offset[i]=Number(e.target.value)/1000;commitPhotoMount(id,{...mount,offset});
++  }}/></label>)}
++ </details>;
++}
+--- /dev/null
++++ b/frontend/src/components/circuitiny/wireGeometry.ts
+@@ -0,0 +1,15 @@
++import * as T from 'three';
++type V=[number,number,number];
++export function wireGeometry(points:V[]){
++ const vertices=points.map(p=>new T.Vector3(...p)),path=new T.CurvePath<T.Vector3>();
++ for(let i=1;i<vertices.length;i++)if(vertices[i-1].distanceToSquared(vertices[i])>1e-16)path.add(new T.LineCurve3(vertices[i-1],vertices[i]));
++ if(!path.curves.length)path.add(new T.LineCurve3(vertices[0],vertices[0].clone().addScalar(.000001)));
++ return new T.TubeGeometry(path,Math.max(36,points.length*12),.00048,10,false);
++}
++export const cableConnectorPositions=(points:V[]):V[]=>[points[0],points[points.length-1]].map(p=>[p[0],p[1]+.0014,p[2]]);
++export function cableMesh(points:V[],color:string,warning=false){
++ const group=new T.Group();group.name='ev-cable';
++ group.add(new T.Mesh(wireGeometry(points),new T.MeshStandardMaterial({color:warning?'#df923c':color,roughness:.4,transparent:warning,opacity:warning?.4:1})));
++ for(const p of cableConnectorPositions(points)){const end=new T.Mesh(new T.BoxGeometry(.0021,.003,.0021),new T.MeshStandardMaterial({color:'#262c2d',roughness:.5}));end.position.set(...p);group.add(end);}
++ return group;
++}
+--- /dev/null
++++ b/frontend/src/__tests__/photo-mount.test.ts
+@@ -0,0 +1,135 @@
++// @vitest-environment jsdom
++import {it,expect,beforeEach,vi} from 'vitest';
++import * as T from 'three';
++import '@wokwi/elements';
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import {withPhotoMounts,planPhotoMounts,type PhotoMount} from '../components/circuitiny/photoMounts';
++import {photoAssemblyLayout,photoPartTransform,photoPointMatrix,photoPinPart,photoMountOffset,type V} from '../components/circuitiny/photoAssemblyLayout';
++import {connectedWirePath} from '../components/circuitiny/connectedWiring';
++import {registerProject} from '../components/circuitiny/bridge';
++import {useStore} from '../components/circuitiny/store';
++import {useSimulatorStore as native} from '../store/useSimulatorStore';
++import {importVlxFile,buildVlxPayload} from '../utils/vlxFile';
++import {commitPhotoMount,PhotoMountControls} from '../components/circuitiny/PhotoMountControls';
++import {captureAssemblyVisual,registerAssemblyScene} from '../components/circuitiny/assemblyScene';
++import {createComponentDrag} from '../components/circuitiny/directComponentDrag';
++import fixture from './fixtures/functional-servo.json';
++
++function photo(id:string,label:string,role:string,center:V,size:V){
++ const [x,y,z]=center,[w,h,d]=size,f=96/25.4;
++ return {id,metadataId:'ev-structure',x:(x-w/2)*f-6,y:(z-d/2)*f-6,properties:{label,shape:'box',width:w,height:h,depth:d,elevation:y-h/2,rotation:0,rotationX:0,rotationZ:0,color:'#30343b',
++  photoSceneOrigin:[0,0],evPhotoStructure:{role},evPhotoGeometry:{shape:'box',position:center.map(n=>n/220),size:size.map(n=>n/220),rotation:[0,0,0],color:'#30343b',outline:null,details:[],holes:[]}}};
++}
++function source(){return {...fixture.project,components:[...fixture.project.components,
++ photo('photo-board','상부 제어 기판','platform',[-300,160,0],[120,3,90]),
++ photo('photo-sensor','전면 센서 장착판','sensor',[-240,190,0],[6,45,70]),
++ photo('photo-servo','왼쪽 발목 구동부','actuator',[-310,50,-100],[45,50,25]),
++ photo('photo-power','전원 케이스','housing',[-350,100,55],[45,60,80]),
++ ]};}
++beforeEach(()=>{document.body.replaceChildren();sessionStorage.clear();native.setState({running:false});useStore.setState({photoFocus:false,photoExploded:false,photoDrag:null,selected:null,moveTarget:null,wireMode:false});});
++async function load(){
++ const raw=withPhotoMounts(source());await importVlxFile({text:async()=>JSON.stringify(raw)} as File);
++ const s=native.getState();for(const p of [...s.boards,...s.components]){
++  const kind='boardKind' in p?p.boardKind:p.metadataId;if(kind==='ev-structure')continue;
++  const el=document.createElement('wokwi-'+kind) as HTMLElement&{updateComplete?:Promise<unknown>};el.id=p.id;Object.assign(el,p.properties||{});document.body.append(el);if(el.updateComplete)await el.updateComplete;
++ }
++ const project=registerProject(s);useStore.setState({project});return {raw,project};
++}
++const close=(a:number[],b:number[])=>a.forEach((n,i)=>expect(n).toBeCloseTo(b[i],8));
++it('chooses board, sensor, actuator and power hosts and preserves bindings on reopen',async()=>{
++ const original=source(),before=JSON.stringify(original),p=withPhotoMounts(original);
++ expect(JSON.stringify(original)).toBe(before);expect(p.wires).toBe(original.wires);expect(p.fileGroups).toBe(original.fileGroups);
++ const all=[...p.boards,...p.components],mount=(id:string)=>Reflect.get(all.find(p=>p.id===id)!.properties,'evPhotoMount') as PhotoMount;
++ expect(mount('U1').hostId).toBe('photo-board');expect(mount('S1').hostId).toBe('photo-sensor');expect(mount('M1').hostId).toBe('photo-servo');expect(mount('PS1').hostId).toBe('photo-power');
++ expect(withPhotoMounts(p)).toEqual(p);
++ await importVlxFile({text:async()=>JSON.stringify(p)} as File);const saved=buildVlxPayload();expect(saved.boards[0].properties?.evPhotoMount).toEqual(mount('U1'));
++ expect(saved.components.find(p=>p.id==='M1')!.properties.evPhotoMount).toEqual(mount('M1'));
++});
++it('keeps every mounted component on its own moving parent and aligns every wire end',async()=>{
++ const {project}=await load(),layout=photoAssemblyLayout(project),all=[...project.components,...(project.boards||[])];
++ for(const [id,mount] of Object.entries(layout.mounts)){
++  const c=all.find(c=>c.instance===id)!,a=photoPartTransform(c,layout,true,false),b=photoPartTransform(c,layout,true,true);
++  close(b.position.map((n,i)=>n-a.position[i]),layout.offsets[mount.hostId]);
++ }
++ for(const exploded of [false,true])for(const net of project.nets){
++  const path=connectedWirePath(project,net,null,{focus:true,exploded})!;expect(path).not.toBeNull();
++  for(const [i,ref] of net.endpoints.entries()){
++   const c=photoPinPart(project,ref)!,nativePoint=connectedWirePath(project,net)![i===0?'a':'b'].position;
++   const expected=new T.Vector3(...nativePoint).applyMatrix4(photoPointMatrix(c,photoPartTransform(c,layout,true,exploded))).toArray();
++   close(path.points[i===0?0:path.points.length-1],expected);
++  }
++ }
++});
++it('updates children and attached wire ends during a parent drag, before committing native edits',async()=>{
++ const {project}=await load(),before=JSON.stringify(buildVlxPayload().components),layout=photoAssemblyLayout(project),host=layout.photos.find(h=>h.part.instance==='photo-servo')!.part;
++ const base=photoPartTransform(host,layout,true,true),delta:V=[.03,.02,-.04],preview={id:host.instance,position:base.position.map((n,i)=>n+delta[i]) as V};
++ const child=project.components.find(c=>c.instance==='M1')!,a=photoPartTransform(child,layout,true,true),b=photoPartTransform(child,layout,true,true,preview);
++ close(b.position.map((n,i)=>n-a.position[i]),delta);
++ for(const net of project.nets.filter(n=>n.endpoints.some(p=>p.startsWith('M1.')))){
++  const a=connectedWirePath(project,net,null,{focus:true,exploded:true})!,b=connectedWirePath(project,net,null,{focus:true,exploded:true,preview})!;
++  for(const [i,ref] of net.endpoints.entries()){const index=i===0?0:a.points.length-1;close(b.points[index].map((n,j)=>n-a.points[index][j]),ref.startsWith('M1.')?delta:[0,0,0]);}
++ }
++ expect(JSON.stringify(buildVlxPayload().components)).toBe(before);
++});
++it('moves a wire rigidly when both ends are attached to the same structure',async()=>{
++ const {project}=await load(),mount=photoAssemblyLayout(project).mounts.PS1,c=native.getState().components.find(c=>c.id==='M1')!;
++ native.getState().updateComponent('M1',{properties:{...c.properties,evPhotoMount:{...mount,offset:[.01,0,0]}}});
++ const p=registerProject(native.getState()),layout=photoAssemblyLayout(p),host=layout.photos.find(h=>h.part.instance===mount.hostId)!.part,position=photoPartTransform(host,layout,true,true).position;
++ const delta:V=[.02,.03,-.01],preview={id:host.instance,position:position.map((n,i)=>n+delta[i]) as V};
++ const net=p.nets.find(n=>n.endpoints.some(r=>r.startsWith('PS1.'))&&n.endpoints.some(r=>r.startsWith('M1.')))!;
++ const a=connectedWirePath(p,net,null,{focus:true,exploded:true})!,b=connectedWirePath(p,net,null,{focus:true,exploded:true,preview})!;
++ a.points.forEach((point,i)=>close(b.points[i].map((v,j)=>v-point[j]),delta));
++});
++it('follows host rotation and resize, and saves a dragged local mount offset with undo',async()=>{
++ await load();const id='photo-servo',part=native.getState().components.find(p=>p.id===id)!;
++ native.getState().updateComponent(id,{properties:{...part.properties,rotationX:35,rotationZ:20,depth:40}});
++ const updated=registerProject(native.getState()),layout=photoAssemblyLayout(updated),c=updated.components.find(c=>c.instance==='M1')!,pose=photoPartTransform(c,layout,true,true);
++ const wanted=pose.position.map((n,i)=>n+[.015,0,.02][i]) as V,offset=photoMountOffset(c,layout,wanted,true)!;
++ useStore.setState({project:updated});const before=native.getState().components.find(c=>c.id==='M1')!.properties.evPhotoMount;
++ commitPhotoMount('M1',{...layout.mounts.M1,offset});
++ const next=registerProject(native.getState());close(photoPartTransform(next.components.find(c=>c.instance==='M1')!,photoAssemblyLayout(next),true,true).position,wanted);
++ native.getState().undo();expect(native.getState().components.find(c=>c.id==='M1')!.properties.evPhotoMount).toEqual(before);
++});
++it('captures the same assembled parts and cable meshes from circuit, assembled and exploded views',async()=>{
++ const {project,raw}=await load(),layout=photoAssemblyLayout(project),all=[...project.components,...(project.boards||[])].filter(c=>layout.mounts[c.instance]);
++ const results:T.Object3D[]=[];
++ for(const [focus,exploded] of [[false,false],[true,false],[true,true]]){
++  useStore.setState({project,photoFocus:focus,photoExploded:exploded});const root=new T.Group();
++  for(const c of all){const group=new T.Group(),pose=photoPartTransform(c,layout,focus,exploded);group.name='ev-part:'+c.instance;group.position.set(...pose.position);group.quaternion.set(...pose.quaternion);group.scale.setScalar(pose.scale);
++   const body=new T.Mesh(new T.BoxGeometry(.01,.01,.01),new T.MeshStandardMaterial());body.name='ev-body:'+c.instance;group.add(body);root.add(group);}
++  const release=registerAssemblyScene(()=>root);try{results.push(new T.ObjectLoader().parse(captureAssemblyVisual([...raw.components,...raw.boards])!));}finally{release();}
++ }
++ results.forEach(r=>r.updateMatrixWorld(true));
++ for(const id of Object.keys(layout.mounts)){const poses=results.map(r=>r.getObjectByName('assembly-part:'+id)!.matrixWorld.toArray());close(poses[1],poses[0]);close(poses[2],poses[0]);}
++ const wires=results.map(root=>{const out:T.Mesh[]=[];root.traverse(c=>{if(c.name==='ev-cable')out.push(c.children[0] as T.Mesh);});return out;});
++ expect(wires[0]).toHaveLength(project.nets.length);
++ for(let i=0;i<wires[0].length;i++)for(const j of [1,2])expect(Array.from(wires[j][i].geometry.getAttribute('position').array)).toEqual(Array.from(wires[0][i].geometry.getAttribute('position').array));
++});
++it('repairs a missing host and leaves legacy projects without photo objects unchanged',()=>{
++ const p=withPhotoMounts(source()),removed={...p,components:p.components.filter(p=>p.id!=='photo-servo')},next=withPhotoMounts(removed);
++ const servo=next.components.find(p=>p.id==='M1')!;expect((Reflect.get(servo.properties,'evPhotoMount') as PhotoMount).hostId).not.toBe('photo-servo');
++ expect(withPhotoMounts(fixture.project)).toBe(fixture.project);
++ const plans=planPhotoMounts([{id:'M1',type:'servo',text:'left ankle',mount:null}],[{id:'left',label:'left ankle',role:'actuator',size:[.04,.05,.02],center:[0,.05,-.1]},{id:'right',label:'right ankle',role:'actuator',size:[.04,.05,.02],center:[0,.05,.1]}],[]);
++ expect(plans.M1.hostId).toBe('left');
++});
++it('lets the user change a board host in its selection card and preserves it in saved drafts',async()=>{
++ await load();const host=document.createElement('div'),root=createRoot(host);
++ (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
++ try{
++  await act(async()=>root.render(createElement(PhotoMountControls,{id:'U1',disabled:false})));
++  await vi.waitFor(()=>expect(native.getState().wires.every(w=>w.start.x!==0||w.start.y!==0)).toBe(true));
++  const before=buildVlxPayload();
++  expect(host.textContent).toContain('상부 제어 기판');
++  const select=host.querySelector('select')!;await act(async()=>{select.value='photo-power';select.dispatchEvent(new Event('change',{bubbles:true}));});
++  const after=buildVlxPayload();expect((after.boards[0].properties?.evPhotoMount as PhotoMount).hostId).toBe('photo-power');
++  expect(after.wires).toEqual(before.wires);expect(after.fileGroups).toEqual(before.fileGroups);
++  await importVlxFile({text:async()=>JSON.stringify(after)} as File);
++  expect((native.getState().boards[0].properties?.evPhotoMount as PhotoMount).hostId).toBe('photo-power');
++ }finally{await act(async()=>root.unmount());}
++});
++it('allows vertical movement on a side panel while keeping the part on that panel',()=>{
++ const drag=createComponentDrag([.1,.2,.3],new T.Vector3(),{x:0,y:0},new T.Vector3(1,0,0));
++ drag.update(new T.Vector3(.07,.03,.04),{x:12,y:15});close(drag.result()!,[.1,.23,.34]);
++ const legacy=createComponentDrag([.1,.2,.3],new T.Vector3(),{x:0,y:0});legacy.update(new T.Vector3(.07,.03,.04),{x:12,y:15});close(legacy.result()!,[.17,.2,.34]);
++});

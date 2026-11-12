@@ -1,0 +1,19 @@
+{
+  "arduino-uno":{"name":"Arduino UNO R3","pins":["0","1","2","3","4","5","6","7","8","9","10","11","12","13","A0","A1","A2","A3","A4","A5","5V","3.3V","GND","VIN","RESET","AREF"],"size_mm":[73,18,54],"defaults":{},"properties":[],"basis":"기존 UNO 실행 모델과 인터페이스 정의","use":"5V 센서 입력과 디지털/PWM 출력. USB 전원."},
+  "led":{"name":"표시용 LED","pins":["A","C"],"size_mm":[12,15,12],"defaults":{"color":"green"},"properties":["color"],"basis":"기존 LED 실행 모델","use":"직렬 저항을 거쳐 GPIO에 연결"},
+  "resistor":{"name":"축형 저항","pins":["1","2"],"size_mm":[18,5,8],"defaults":{"value":"1000"},"properties":["value"],"basis":"기존 SPICE 저항 모델","use":"value를 Ω 단위 문자열로 선정. 220, 330, 1k, 10k, 100k 등"},
+  "pushbutton-6mm":{"name":"6mm 순간 누름 버튼","pins":["1.l","1.r","2.l","2.r"],"size_mm":[8,6,8],"defaults":{},"properties":[],"basis":"Wokwi Pushbutton6mmElement.pinInfo","use":"같은 번호 l/r은 내부 연결. 서로 다른 번호를 입력과 GND에 연결하고 INPUT_PULLUP 사용 가능"},
+  "potentiometer":{"name":"10kΩ 가변저항","pins":["GND","SIG","VCC"],"size_mm":[22,20,22],"defaults":{"value":512},"properties":["value"],"basis":"Wokwi PotentiometerElement.pinInfo","use":"VCC=5V, GND=접지, SIG=아날로그 입력. value=0~1023"},
+  "photoresistor-sensor":{"name":"아날로그 조도 센서 모듈","pins":["VCC","GND","AO","DO"],"size_mm":[33,12,18],"defaults":{"lux":500,"ldrModel":"wokwi"},"properties":["lux"],"basis":"기존 조도 센서 SPICE 및 MCU 통합 모델","use":"5V 전원, AO=아날로그 입력. lux=주변 밝기"},
+  "hc-sr04":{"name":"HC-SR04 초음파 거리 센서","pins":["VCC","TRIG","ECHO","GND"],"size_mm":[45,20,20],"defaults":{"distance":34},"properties":["distance"],"basis":"기존 거리 표시 회로와 센서 실행 모델","use":"5V, TRIG 출력 펄스, ECHO 입력. distance 단위 cm"},
+  "servo":{"name":"180도 RC 서보모터","pins":["GND","V+","PWM"],"size_mm":[45,32,25],"defaults":{"angle":0},"properties":[],"basis":"Wokwi ServoElement.pinInfo","use":"PWM에 20ms 주기 1~2ms 펄스. 외부 5V 전원과 공통 GND 사용. Servo 라이브러리 또는 직접 펄스 생성"},
+  "buzzer":{"name":"수동 피에조 부저","pins":["1","2"],"size_mm":[20,12,20],"defaults":{},"properties":[],"basis":"Wokwi BuzzerElement.pinInfo","use":"1=GND, 2=신호, tone(pin,frequency)"},
+  "lcd1602":{"name":"16×2 병렬 문자 LCD","pins":["VSS","VDD","V0","RS","RW","E","D0","D1","D2","D3","D4","D5","D6","D7","A","K"],"size_mm":[84,15,44],"defaults":{"pins":"full","background":"blue"},"properties":[],"basis":"기존 병렬 LCD 회로와 실행 모델","use":"5V, 4-bit 제어, 대비 가변저항과 백라이트 직렬 저항. LiquidCrystal 라이브러리"},
+  "soil-moisture-sen0193":{"name":"DFRobot SEN0193 토양 수분 센서","pins":["GND","VCC","SIG"],"size_mm":[24,6,75],"defaults":{"value":560},"properties":["value"],"basis":"data/watering-parts.json 및 기존 급수 통합 모델","use":"5V, SIG=아날로그 입력. 건조/젖음 예시 ADC=560/280"},
+  "mosfet-irlz44n":{"name":"IRLZ44N N채널 MOSFET","pins":["G","D","S"],"size_mm":[12,25,8],"defaults":{},"properties":[],"basis":"기존 IRLZ44N 참조 회로와 SPICE 모델","use":"5V GPIO→330Ω→G, G-S에 100kΩ. S=GND, D=펌프 −"},
+  "dc-water-pump":{"name":"12V DC 급수 펌프","pins":["+","-"],"size_mm":[32,25,25],"defaults":{"nominalVoltage":12,"resistance":48,"inductance":0.005},"properties":[],"basis":"기존 12V 급수 펌프 전기 모델","use":"외부 12V +와 MOSFET D 사이. 보호 다이오드 필요. GPIO에 직접 연결하지 않음"},
+  "dc-power-supply":{"name":"정전압 DC 전원","pins":["+","-"],"size_mm":[35,24,25],"defaults":{"voltage":5,"enabled":true},"properties":["voltage"],"basis":"기존 DC 전원 SPICE 모델","use":"5V 또는12V를 설계 선정. 전원 −를 보드 GND와 공통 연결"},
+  "diode-1n5822":{"name":"1N5822 역기전력 보호 다이오드","pins":["A","C"],"size_mm":[22,6,8],"defaults":{},"properties":[],"basis":"기존 1N5822 참조 회로와 SPICE 모델","use":"펌프 +에 C, 펌프 −에 A"},
+  "capacitor":{"name":"무극성 커패시터","pins":["1","2"],"size_mm":[8,9,8],"defaults":{"value":"100nF"},"properties":["value"],"basis":"기존 SPICE 커패시터 모델","use":"전원 디커플링 또는 필터. 예:100nF"},
+  "capacitor-electrolytic":{"name":"전해 커패시터","pins":["+","−"],"size_mm":[12,22,12],"defaults":{"value":"470uF","voltageRating":25},"properties":["value","voltageRating"],"basis":"기존 급수 참조 회로의 전해 커패시터 모델","use":"극성 준수. 12V 전원에는25V 등급 선정 가능"}
+}

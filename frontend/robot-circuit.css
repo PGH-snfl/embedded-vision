@@ -1,0 +1,11 @@
+.robot-circuit-editor{padding:22px;margin:0 0 22px;border:1px solid #b9d3c3;border-radius:14px;background:#f7fbf8}
+.robot-circuit-editor h3{margin:0}.robot-circuit-editor p{line-height:1.55}
+.robot-circuit-warning{border-left:3px solid #dda63c;padding:9px 12px;background:#fff9e8;font-size:12px}
+.robot-circuit-actions{display:flex;align-items:end;gap:9px;flex-wrap:wrap;margin:14px 0}
+.robot-circuit-actions label{display:grid;gap:4px;font-size:12px;font-weight:600}.robot-circuit-actions button{padding:7px 12px}
+.robot-circuit-viewport{width:100%;overflow:auto;border:1px solid #d2dfd6;border-radius:10px;background:#fff}
+.robot-circuit-viewport svg{display:block;min-width:700px;width:100%;height:auto;touch-action:none}
+.robot-circuit-viewport [data-part]{cursor:grab}.robot-circuit-viewport [data-port]{cursor:crosshair}.robot-circuit-viewport [data-wire-hit]{cursor:pointer}.robot-circuit-viewport [data-wire-handle]{cursor:grab}
+.robot-circuit-viewport svg:focus-visible,.robot-circuit-viewport [tabindex]:focus-visible{outline:2px solid #23683e;outline-offset:2px}
+.robot-circuit-help{font-size:12px;color:#496954}
+@media(max-width:700px){.robot-circuit-editor{padding:14px}.robot-circuit-viewport svg{min-width:700px}}
