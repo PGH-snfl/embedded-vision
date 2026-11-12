@@ -2,6 +2,32 @@
 import re
 
 
+def output_diagnostic(raw, schema, *, phase, response_id=None, validation_error=None, syntax_error=None):
+    """Keep schema paths and error types, never model values or validator messages."""
+    import hashlib
+    fields=set()
+    def collect(node):
+        if isinstance(node,dict):
+            fields.update(node.get('properties',{}))
+            for value in node.values():collect(value)
+        elif isinstance(node,list):
+            for value in node:collect(value)
+    collect(schema)
+    details={'output_phase':phase,'output_chars':len(raw),
+             'output_sha256':hashlib.sha256(raw.encode()).hexdigest(),
+             'response_id':response_id if isinstance(response_id,str) and re.fullmatch(r'resp_[A-Za-z0-9_-]{1,100}',response_id) else None}
+    if syntax_error is not None:
+        details['json_position']={'line':syntax_error.lineno,'column':syntax_error.colno}
+    if validation_error is not None:
+        issues=[]
+        for issue in validation_error.errors(include_url=False,include_context=False,include_input=False)[:20]:
+            path='.'.join(str(p) if isinstance(p,int) or p in fields else 'item' for p in issue['loc']) or 'root'
+            code=issue['type']
+            issues.append({'path':path[:240],'code':code if re.fullmatch(r'[a-z_]{1,80}',code) else 'validation_error'})
+        details.update(validation_error_count=validation_error.error_count(),violations=issues)
+    return details
+
+
 class ProviderFailure(RuntimeError):
     def __init__(self, message, *, category, model, task, http_calls, **details):
         super().__init__(message)

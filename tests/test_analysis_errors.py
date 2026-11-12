@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from backend.application import create_app
 from backend.planner.errors import ProviderFailure, http_failure
 from backend.planner.provider import ResponsesProvider, SPECIALIST
+from backend.planner.inspection_skill import InspectionRuntime,VIRTUAL_ROOT
 from test_auto_analysis import graph, wait_job
 from test_analysis_model_selection import photo
 
@@ -93,6 +94,72 @@ def test_incomplete_token_limit_is_not_an_http_error(monkeypatch):
         ResponsesProvider().infer(SPECIALIST, graph(), '', 'component_inventory', [])
     assert caught.value.diagnostic['reason'] == 'max_output_tokens'
     assert '토큰 한도' in str(caught.value)
+
+
+def test_invalid_json_records_position_without_the_private_model_text(monkeypatch):
+    mock_http(monkeypatch,lambda req:httpx.Response(200,json={
+        'status':'completed','id':'resp_unit123','output':[{'type':'message','content':[
+            {'type':'output_text','text':'private-photo-text is not JSON'}]}]}))
+    with pytest.raises(ProviderFailure) as caught:
+        ResponsesProvider().infer(SPECIALIST,{},'','component_review',[])
+    details=caught.value.diagnostic
+    assert details['category']=='invalid_output' and details['output_phase']=='json_parse'
+    assert details['json_position']=={'line':1,'column':1}
+    assert details['response_id']=='resp_unit123' and len(details['output_sha256'])==64
+    assert 'private-photo-text' not in str(caught.value)+json.dumps(details)
+
+
+def test_review_validation_records_fields_but_not_values_or_unknown_keys(monkeypatch):
+    body={'reviews':[{'part_id':'P1','name':'private-photo-text','quantity':0,
+                      'kind':'private-model-value','private-extra-key':'private-extra-value'}]}
+    mock_http(monkeypatch,lambda req:httpx.Response(200,json={
+        'status':'completed','output':[{'type':'message','content':[
+            {'type':'output_text','text':json.dumps(body)}]}]}))
+    with pytest.raises(ProviderFailure) as caught:
+        ResponsesProvider().infer(SPECIALIST,{},'','component_review',[])
+    details=caught.value.diagnostic
+    assert details['output_phase']=='schema_validation'
+    assert {'path':'reviews.0.quantity','code':'greater_than_equal'} in details['violations']
+    assert any(i['path']=='reviews.0.kind' for i in details['violations'])
+    assert any(i['path']=='reviews.0.item' for i in details['violations'])
+    assert details['validation_error_count']>=3
+    assert 'private-' not in str(caught.value)+json.dumps(details)
+
+
+def test_first_inventory_finishes_after_one_optional_tool_round(monkeypatch):
+    from test_parts_first import inventory
+    def reply(request):
+        payload=json.loads(request.content)
+        if payload.get('tool_choice')!='none':
+            output=[{'type':'shell_call','id':'call1','call_id':'shell1','action':{
+                'commands':['cat '+VIRTUAL_ROOT+'/SKILL.md'],'max_output_length':2000}}]
+        else:
+            output=[{'type':'message','content':[{'type':'output_text','text':inventory().model_dump_json()}]}]
+        return httpx.Response(200,json={'status':'completed','output':output})
+    calls=mock_http(monkeypatch,reply)
+    result,_=ResponsesProvider().infer(SPECIALIST,{},'','component_inventory',[],skill_runtime=InspectionRuntime([]))
+    assert len(calls)==2 and calls[1]['tool_choice']=='none'
+    assert len(result.parts)==3 and all(p['model']==SPECIALIST for p in calls)
+    assert all(p['text']['format']['strict'] for p in calls)
+
+
+@pytest.mark.parametrize('task,effort',[
+    ('component_inventory','medium'),('component_review','medium'),
+    ('component_coverage','medium'),('system_reasoning','high')])
+def test_astra_observation_effort_is_bounded_without_changing_the_model(monkeypatch,task,effort):
+    calls=mock_http(monkeypatch,lambda req:httpx.Response(503,json={'error':{'code':'server_error'}}))
+    with pytest.raises(ProviderFailure):ResponsesProvider().infer(SPECIALIST,{},'',task,[])
+    assert calls[0]['model']==SPECIALIST and calls[0]['reasoning']['effort']==effort
+
+
+def test_extra_tool_request_cannot_repeat_before_first_inventory(monkeypatch):
+    calls=mock_http(monkeypatch,lambda req:httpx.Response(200,json={'status':'completed','output':[
+        {'type':'shell_call','id':'call1','call_id':'shell1','action':{
+            'commands':['cat '+VIRTUAL_ROOT+'/SKILL.md'],'max_output_length':2000}}]}))
+    with pytest.raises(ProviderFailure) as caught:
+        ResponsesProvider().infer(SPECIALIST,{},'','component_inventory',[],skill_runtime=InspectionRuntime([]))
+    assert len(calls)==2 and caught.value.diagnostic['category']=='tool_protocol'
+    assert caught.value.diagnostic['tool_rounds']==1
 
 
 def test_first_failed_inspection_checkpoints_stage_and_attempted_call(tmp_path, monkeypatch):

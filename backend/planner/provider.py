@@ -3,13 +3,14 @@ import base64, io, json, os, time
 from pathlib import Path
 import httpx
 from PIL import Image
+from pydantic import ValidationError
 from .models import Decision, FocusedReview
 from ..design.models import Inventory
 from ..design.component_completion import SystemReasoning,PhotoSystemAnalysis
 from ..design.photo_structure import PhotoStructure, STRUCTURE_PROMPT
 
 from .selection import PRIMARY, SPECIALIST
-from .errors import ProviderFailure,http_failure
+from .errors import ProviderFailure,http_failure,output_diagnostic
 
 def api_key():
     key=os.environ.get('OPENAI_API_KEY', '').strip()
@@ -182,13 +183,17 @@ A suggested NEW function is kept separately in suggested_function. No original w
                 instructions=instructions.replace('Stage 1 has already identified and saved observed_inventory. Start from that component list.',
                     'In this ONE response first populate inventory from visible components, then populate design using only those inventory IDs. Treat inventory as observed_inventory for the following rules.')
         json_schema=schema.model_json_schema()
-        payload={'model':model,'store':False,'reasoning':{'effort':'high' if model==SPECIALIST else 'medium'},
+        observation_task=task in {'component_inventory','component_review','component_coverage'}
+        effort='high' if model==SPECIALIST and not observation_task else 'medium'
+        payload={'model':model,'store':False,'reasoning':{'effort':effort},
             'max_output_tokens':24000 if task=='photo_system' else 18000 if task=='system_reasoning' else 12000,'instructions':instructions,'input':[{'role':'user','content':content}],
             'text':{'format':{'type':'json_schema','name':'circuit_action_plan','strict':True,'schema':json_schema}}}
         if skill_runtime:
             payload['tools']=[skill_runtime.tool()];payload['parallel_tool_calls']=False
             payload['include']=['reasoning.encrypted_content']
             payload['instructions']+='\nMounted inspection skill (server-loaded instructions):\n'+skill_runtime.instructions
+            if task=='component_inventory':
+                payload['instructions']+='\nThe skill instructions are already included above; do not re-read them. First save a visible component inventory. You may request at most ONE batch of extra crops before returning that JSON inventory. Batch needed regions in one shell action. The server will crop and review every candidate afterward; do not perform all per-component reviews in this stage.'
             if task in {'component_review','component_coverage'}:
                 # These stages already receive the mandatory original crops and
                 # full manifest. Re-reading it per batch can exhaust the shared
@@ -196,7 +201,7 @@ A suggested NEW function is kept separately in suggested_function. No original w
                 payload['tool_choice']='none'
             budget=skill_runtime.budget
         started=time.monotonic()
-        usages=[];http_calls=0
+        usages=[];http_calls=0;tool_rounds=0
         try:
             with httpx.Client(timeout=240,trust_env=False) as client:
                 while True:
@@ -213,20 +218,38 @@ A suggested NEW function is kept separately in suggested_function. No original w
                         raise ProviderFailure(hint+' 계획을 실행하지 않습니다.',category='incomplete',model=model,task=task,http_calls=http_calls,reason=reason)
                     outputs=data.get('output',[]);shell_calls=[item for item in outputs if item.get('type')=='shell_call']
                     if not shell_calls:break
+                    if payload.get('tool_choice')=='none':
+                        raise ProviderFailure('모델이 부품 목록 대신 추가 도구 사용을 요청했습니다. 반복 호출을 중단했습니다.',
+                            category='tool_protocol',model=model,task=task,http_calls=http_calls,tool_rounds=tool_rounds)
                     if not skill_runtime or len(shell_calls)>2:raise RuntimeError('허용되지 않은 스킬 실행 요청입니다.')
                     payload['input'].extend(outputs)
                     for call in shell_calls:payload['input'].extend(skill_runtime.execute(call))
+                    tool_rounds+=1
+                    if task=='component_inventory':
+                        # Mandatory crop review follows the saved inventory.
+                        # A read + four sequential optional crops previously
+                        # spent six requests before the first list was saved.
+                        payload['tool_choice']='none'
+                        payload['instructions']+='\nThe optional crop batch is complete. Return the component inventory JSON now using the whole image and available crops; later stages perform detailed review.'
         except httpx.HTTPError as exc:
             timeout=isinstance(exc,httpx.TimeoutException)
-            raise ProviderFailure(('모델 응답 시간이 초과됐습니다.' if timeout else '모델 연결에 실패했습니다.')+' 자동 재시도나 Astra 대체 호출은 하지 않았습니다.',category='timeout' if timeout else 'connection',model=model,task=task,http_calls=http_calls) from None
+            raise ProviderFailure(('모델 응답 시간이 초과됐습니다.' if timeout else '모델 연결에 실패했습니다.')+' 자동 재시도나 Astra 대체 호출은 하지 않았습니다.',category='timeout' if timeout else 'connection',model=model,task=task,http_calls=http_calls,tool_rounds=tool_rounds,elapsed_seconds=round(time.monotonic()-started,2)) from None
         parts=[p for item in data.get('output',[]) if item.get('type')=='message' for p in item.get('content',[])]
         if any(p.get('type')=='refusal' for p in parts):raise ProviderFailure('모델이 요청을 거절했습니다.',category='refusal',model=model,task=task,http_calls=http_calls)
         raw=''.join(p.get('text','') for p in parts if p.get('type')=='output_text')
         try:
             parsed=json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ProviderFailure('모델 응답을 JSON으로 읽지 못했습니다. 원본 사진은 보존했습니다.',
+                category='invalid_output',model=model,task=task,http_calls=http_calls,
+                **output_diagnostic(raw,json_schema,phase='json_parse',response_id=data.get('id'),syntax_error=exc)) from None
+        try:
             decision=schema.model_validate(parsed)
-        except ValueError:
-            raise ProviderFailure('모델 출력이 계획 스키마와 일치하지 않습니다. 실행하지 않습니다.',category='invalid_output',model=model,task=task,http_calls=http_calls) from None
+        except ValidationError as exc:
+            details=output_diagnostic(raw,json_schema,phase='schema_validation',response_id=data.get('id'),validation_error=exc)
+            paths=', '.join(dict.fromkeys(v['path'] for v in details['violations'][:3]))
+            raise ProviderFailure('모델 응답이 JSON 규칙(스키마: 필수 항목·종류·범위)에 맞지 않습니다. 확인 항목: '+paths+'. 원본 사진은 보존했습니다.',
+                category='invalid_output',model=model,task=task,http_calls=http_calls,**details) from None
         return decision, {'model':model,'response_id':data.get('id'),'usage':data.get('usage'),
                           'elapsed_seconds':round(time.monotonic()-started,2),'http_calls':len(usages),
                           'turn_usage':usages if len(usages)>1 else []}
