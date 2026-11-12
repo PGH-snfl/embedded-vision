@@ -27,6 +27,8 @@ def image(path):
 
 
 def transport(monkeypatch,*,native=False,addition=False,missing_review=False,uninspected=False,duplicate=False):
+    # Explicit legacy transport; final-only default is covered in test_final_json_analysis.
+    monkeypatch.setattr(ResponsesProvider,'default_photo_pipeline','staged_json')
     observed,design,_=build_inputs();inventory=observed.model_dump(mode='json');calls=[];used_native=False
     def reply(body):return httpx.Response(200,json={'status':'completed','id':'unit-response','output':[{'type':'message','content':[{'type':'output_text','text':json.dumps(body)}]}],'usage':{}})
     def handler(request):

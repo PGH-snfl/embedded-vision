@@ -19,7 +19,7 @@ from .runtime_repairs import complete_missing_grounds
 from .board_profiles import board_profiles, board_catalog
 from .analysis_context import observation_context
 
-POLICY_VERSION='component-observation-before-board-v12'
+POLICY_VERSION='component-notes-final-json-v13'
 PROMPT='사진·영상에서 실제 보이는 구성품을 먼저 목록화하세요. 개발보드·센서·표시기·구동부·전원·기구물·배선 등을 보이는 범위에서 식별합니다. 기능과 필요한 추가 부품은 다음 단계에서 판단하므로 suggested_function은 빈 문자열로 둡니다. 읽힌 표식, 모델 후보, 수량, 위치와 확인할 사항을 기록하세요. 사진에 보이지 않는 필수 부품을 관측 목록에 넣지 마세요. 모델·정격·값·핀 배열은 확정하지 않습니다. 시뮬레이터 목록은 이름 비교 자료이며 관측 근거가 아니며 원본 데이터시트도 아닙니다. 목록에 없는 부품을 억지로 다른 부품에 대응하지 마세요. 영상의 동일한 부품을 중복 계산하지 마세요.'
 REASONING_PROMPT='저장된 observed_inventory를 변경하지 말고 해당 구성품 목록을 근거로 어떤 시스템인지, 입력·처리·출력 기능 후보 1~3개를 추론하세요. 모델 후보·표식·수량·위치를 참고하고 사진의 문맥으로 보완하세요. 그 뒤 기능 구현에 부족하거나 가려져 확인되지 않은 부품은 required_parts에만 추가합니다. 각 보완 부품에 목적·이유·근거 관측 부품 ID·기능 후보 ID·확인할 사양을 기록하세요. 보완 부품은 INFERRED, 사진 내 존재 여부는 UNKNOWN입니다. 원본에 해당 부품이 있다고 확정하지 않습니다. 필요한 구동 회로·전원·보호 부품·전류 제한·커넥터·배선도 검토하세요. 수량이 부족하면 부족분만 제안하고 사진의 기존 부품을 중복 추가하지 마세요. 시뮬레이터 목록은 관측 근거가 아니며 원본 정격 자료도 아닙니다. 새 회로·코드를 만들 수 있도록 기능을 설명하되 미지원 기능을 다른 간단한 기능으로 바꾸지 마세요. 모델·전압·핀·저항값은 확정하지 말고 데이터시트 확인 항목으로 남기세요.'
 
@@ -29,6 +29,7 @@ def inventory_plan(graph,assets,provider=None,progress=None,on_inventory=None,si
     # Normal photo/video analysis always finishes inventory before board design.
     # The explicit legacy single_call=True path is retained for internal callers.
     use_inspection=single_call is None and isinstance(provider,ResponsesProvider) and provider.component_inspection
+    final_json=use_inspection and provider.photo_pipeline=='final_json'
     single_call=False if single_call is None else single_call
     progress('components','1/4 · 사진·영상에서 보이는 구성품과 표식을 먼저 확인합니다.')
     # Original links, wire paths and hidden-wire hypotheses are intentionally excluded.
@@ -48,7 +49,11 @@ def inventory_plan(graph,assets,provider=None,progress=None,on_inventory=None,si
                      'notice':catalog['notice'],'matches':[]} if catalog['status']=='unavailable' else None)
     context=observation_context(graph.mode,[metadata[aid] for aid in selected_ids if aid in metadata],workflow_stamp(),catalog)
     raw={};inspection=None;inspection_calls=[];inspection_budget=None
-    if use_inspection:
+    if final_json:
+        from .final_json import analyze_final_json
+        observed,raw,inspection,inspection_calls,inspection_budget=analyze_final_json(context,assets,provider,model,progress,on_inspection)
+        usage=inspection_calls[0]['call']
+    elif use_inspection:
         from .component_inspection import inspect_inventory
         observed,inspection,inspection_calls,inspection_budget=inspect_inventory(context,assets,provider,model,progress,on_inspection)
         usage=inspection_calls[0]['call']
@@ -93,7 +98,7 @@ def inventory_plan(graph,assets,provider=None,progress=None,on_inventory=None,si
         'executable':False,'blockers':['구성품 목록을 저장했습니다. 시스템 기능과 보완 부품을 분석하고 있습니다.'],
         'execution_steps':[],'validation_errors':[],'notice':'사진 관측과 기능 구현용 보완 부품을 구분합니다.'}
     if on_inventory:on_inventory(deepcopy(partial))
-    if inventory.parts and not single_call:
+    if inventory.parts and not single_call and not final_json:
         progress('function',('4/6' if use_inspection else '2/4')+' · 구성품과 구조를 근거로 기능을 추론하고 실행할 부품·배선·코드를 선정합니다.')
         reasoning_context={**context,'purpose':'관측 목록을 참조해 기능을 추론하고 필요한 부품을 별도 보완합니다.',
             'stage':'circuit_design_after_inventory','workflow':workflow_stamp(),
@@ -156,10 +161,10 @@ def inventory_plan(graph,assets,provider=None,progress=None,on_inventory=None,si
             'inventory':inventory.model_dump(mode='json'),'simulator_catalog':catalog_result or match_inventory(inventory,catalog),'function':intent.model_dump(mode='json'),'function_hypotheses':[h.model_dump(mode='json') for h in hypotheses],'hypothesis_source':'multimodal_model' if raw.get('function_hypotheses') else 'stored_component_observations','system_model':system_model,'virtual_model':virtual_model,'photo_structure':photo_structure,'system_model_warnings':system_model_warnings,
             'decision':{'summary':inventory.summary,'findings':[],'unresolved':inventory.unknowns,'conflicts':[],
                         'actions':['review_evidence'],'deep_review':[]},
-            'attempts':calls,'analysis_mode':'skill_inspection' if use_inspection else 'single_call' if single_call else 'staged','model_call_count':sum(c['call'].get('http_calls',1) for c in calls),
+            'attempts':calls,'analysis_mode':'final_json' if final_json else 'skill_inspection' if use_inspection else 'single_call' if single_call else 'staged','model_call_count':sum(c['call'].get('http_calls',1) for c in calls),
             'routing':{'policy':POLICY_VERSION,'primary':model,'specialist':SPECIALIST,'escalation_reasons':[],
                        'specialist_called':False,'specialist_attempted':False,'specialist_error':None,
-                       'no_escalation_reason':label+' 한 번의 호출로 구성품·기능·실행 설계를 작성하고 서버에서 참조를 검사했습니다.' if single_call else label+'로 구성품 식별과 기능·보완 추론을 순서대로 처리했습니다.'},
+                       'no_escalation_reason':label+'의 중간 분석은 자유 문장으로 연결하고 최종 JSON 한 개만 검증했습니다.' if final_json else label+' 한 번의 호출로 구성품·기능·실행 설계를 작성하고 서버에서 참조를 검사했습니다.' if single_call else label+'로 구성품 식별과 기능·보완 추론을 순서대로 처리했습니다.'},
             'executable':False,'blockers':['부품 모델·핀 라벨·전압을 검토한 뒤 새 설계를 생성하세요.'],
             'execution_steps':[],'validation_errors':[],
             'notice':'관측 부품 목록과 새 설계는 별도입니다. 원본 배선이 가려져 있어도 새 설계를 제안할 수 있습니다.'}

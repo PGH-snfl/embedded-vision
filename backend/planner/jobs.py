@@ -92,6 +92,8 @@ class AutoAnalysis:
             job['plan_id']=plan['id']
         def inventory_ready(plan):
             save_plan(plan)
+            if (plan.get('component_inspection') or {}).get('mode')=='final_json':
+                return # The notes/design stages already ran; don't jump back to step 1.
             update('components',f"통합 응답에서 구성품 {len(plan['inventory']['parts'])}종 저장 완료 · 기능·설계 참조를 검사합니다." if plan['attempts'][0]['stage']=='photo_system' else f"구성품 {len(plan['inventory']['parts'])}종 목록 저장 완료 · 이 목록을 근거로 기능을 분석합니다.")
         def inspection_ready(report):
             with self.lock:
