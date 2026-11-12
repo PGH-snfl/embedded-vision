@@ -1,4 +1,7 @@
 import importlib.util
+import hashlib
+import base64
+import re
 from pathlib import Path
 import socket
 
@@ -21,7 +24,17 @@ def test_custom_editor_port_reaches_frontend_and_frame_policy(tmp_path, monkeypa
         assert 'http://127.0.0.1:18968' in response.headers['Content-Security-Policy']
         assert '/runtime-config.js' in client.get('/').text
         assert '/runtime-config.js' in client.get('/board-workflow.html').text
-        assert client.get('/tutorial').status_code == 200
+        tutorial=client.get('/tutorial')
+        assert tutorial.status_code == 200
+        for tag in ('script','style'):
+            for source in re.findall(r'<'+tag+r'>(.*?)</'+tag+r'>',tutorial.text,re.S):
+                digest=base64.b64encode(hashlib.sha256(source.encode()).digest()).decode()
+                assert "'sha256-"+digest+"'" in tutorial.headers['Content-Security-Policy']
+        assert 'unsafe-inline' not in tutorial.headers['Content-Security-Policy']
+        local=client.get('/tutorial.html')
+        assert '<script src="/tutorial.js"></script>' in local.text
+        assert client.get('/tutorial.js').status_code==200
+        assert client.get('/tutorial.css').status_code==200
 
 
 def test_invalid_ports_fail_before_any_server(monkeypatch):

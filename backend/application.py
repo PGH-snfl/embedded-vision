@@ -1,4 +1,5 @@
 import hashlib
+import base64
 import io
 import os
 import uuid
@@ -98,7 +99,13 @@ def create_app(data_root: Path | None = None, *, local_only=True, analysis_dispa
         embedded_editor=request.url.path in {'/prototype-editor.html','/rover-editor.html'}
         ancestors="'self'" if embedded_editor else "'none'"
         if embedded_editor:response.headers['Cache-Control']='no-store'
-        response.headers["Content-Security-Policy"]=f"default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-src 'self' http://127.0.0.1:{editor_port} http://localhost:{editor_port}; frame-ancestors {ancestors}; base-uri 'none'"
+        if request.url.path=='/tutorial':
+            import re
+            text=(ROOT/'tutorial.html').read_text()
+            allowed={tag:' '.join("'sha256-"+base64.b64encode(hashlib.sha256(block.encode()).digest()).decode()+"'" for block in re.findall(r'<'+tag+r'>(.*?)</'+tag+r'>',text,re.S)) for tag in ('style','script')}
+            response.headers['Content-Security-Policy']=f"default-src 'none'; style-src {allowed['style']}; script-src {allowed['script']}; frame-ancestors 'none'; base-uri 'none'"
+        else:
+            response.headers["Content-Security-Policy"]=f"default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-src 'self' http://127.0.0.1:{editor_port} http://localhost:{editor_port}; frame-ancestors {ancestors}; base-uri 'none'"
         return response
 
     def get(project):
