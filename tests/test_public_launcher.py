@@ -51,8 +51,7 @@ def test_busy_port_is_not_reused_or_terminated(monkeypatch):
         server.bind(('127.0.0.1', 0))
         server.listen()
         port = server.getsockname()[1]
-        monkeypatch.setenv('EMBEDDED_VISION_PORT', str(port))
-        monkeypatch.setenv('EMBEDDED_VISION_EDITOR_PORT', str(18968 if port != 18968 else 18969))
+        monkeypatch.setenv('EMBEDDED_VISION_EDITOR_PORT', str(port))
         monkeypatch.setattr('sys.argv', ['launch.py', '--no-open'])
         monkeypatch.setattr(launcher.subprocess, 'Popen', lambda *a, **kw: pytest.fail('Must not launch on a busy port'))
         with pytest.raises(RuntimeError, match='사용 중'):

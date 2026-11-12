@@ -16,3 +16,4 @@ dist/
 *.pem
 *.key
 .DS_Store
+services/editor/vendor/

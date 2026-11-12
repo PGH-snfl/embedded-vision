@@ -1,1 +1,1 @@
-"""Recognize parts first, then author an independent new design."""
+../../shared/backend/design/__init__.py

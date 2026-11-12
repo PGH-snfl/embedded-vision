@@ -1,0 +1,2512 @@
+{
+  "source": "simulator_picker",
+  "status": "available",
+  "entries": [
+    {
+      "id": "arduino-uno",
+      "name": "Arduino Uno",
+      "korean_name": "아두이노 우노 (Arduino UNO)",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "arduino-nano",
+      "name": "Arduino Nano",
+      "korean_name": "아두이노 나노 (Arduino Nano)",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "arduino-mega",
+      "name": "Arduino Mega 2560",
+      "korean_name": "아두이노 메가 (Arduino Mega)",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "raspberry-pi-pico",
+      "name": "Raspberry Pi Pico",
+      "korean_name": "라즈베리파이 Pico",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "pi-pico-w",
+      "name": "Raspberry Pi Pico W",
+      "korean_name": "라즈베리파이 Pico W",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "raspberry-pi-zero",
+      "name": "Raspberry Pi Zero",
+      "korean_name": "라즈베리파이 Zero",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "raspberry-pi-1",
+      "name": "Raspberry Pi 1B+",
+      "korean_name": "라즈베리파이 1B+",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "raspberry-pi-2",
+      "name": "Raspberry Pi 2B",
+      "korean_name": "라즈베리파이 2B",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "raspberry-pi-3",
+      "name": "Raspberry Pi 3B",
+      "korean_name": "라즈베리파이 3B",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "raspberry-pi-4",
+      "name": "Raspberry Pi 4B",
+      "korean_name": "라즈베리파이 4B",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "raspberry-pi-5",
+      "name": "Raspberry Pi 5",
+      "korean_name": "라즈베리파이 5",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "esp32",
+      "name": "ESP32 DevKit V1",
+      "korean_name": "ESP32 개발 보드 V1",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "esp32-devkit-c-v4",
+      "name": "ESP32 DevKit C V4",
+      "korean_name": "ESP32 개발 보드 C V4",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "esp32-cam",
+      "name": "ESP32-CAM",
+      "korean_name": "ESP32-CAM",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "wemos-lolin32-lite",
+      "name": "Wemos Lolin32 Lite",
+      "korean_name": "Wemos Lolin32 Lite",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "esp32-s3",
+      "name": "ESP32-S3 DevKit",
+      "korean_name": "ESP32-S3 개발 보드",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "xiao-esp32-s3",
+      "name": "XIAO ESP32-S3",
+      "korean_name": "XIAO ESP32-S3",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "arduino-nano-esp32",
+      "name": "Arduino Nano ESP32",
+      "korean_name": "아두이노 나노 ESP32",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "esp32-c3",
+      "name": "ESP32-C3 DevKit",
+      "korean_name": "ESP32-C3 개발 보드",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "xiao-esp32-c3",
+      "name": "XIAO ESP32-C3",
+      "korean_name": "XIAO ESP32-C3",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "aitewinrobot-esp32c3-supermini",
+      "name": "ESP32-C3 SuperMini",
+      "korean_name": "ESP32-C3 SuperMini",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "stm32-bluepill",
+      "name": "STM32 Blue Pill",
+      "korean_name": "STM32 Blue Pill",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "stm32-blackpill",
+      "name": "STM32 Black Pill",
+      "korean_name": "STM32 Black Pill",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "stm32-bluepill-f103cb",
+      "name": "STM32 Blue Pill (F103CB)",
+      "korean_name": "STM32 Blue Pill (F103CB)",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "stm32-blackpill-f401",
+      "name": "STM32 Black Pill (F401)",
+      "korean_name": "STM32 Black Pill (F401)",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "stm32-f4-discovery",
+      "name": "STM32F4 Discovery",
+      "korean_name": "STM32F4 Discovery",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "stm32-olimex-h405",
+      "name": "Olimex STM32-H405",
+      "korean_name": "Olimex STM32-H405",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "stm32-netduino-plus2",
+      "name": "Netduino Plus 2",
+      "korean_name": "Netduino Plus 2",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "stm32-netduino2",
+      "name": "Netduino 2",
+      "korean_name": "Netduino 2",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "attiny85",
+      "name": "ATtiny85",
+      "korean_name": "ATtiny85",
+      "category": "boards",
+      "tags": [],
+      "placement": "board"
+    },
+    {
+      "id": "diode-1n4007",
+      "name": "1N4007 (1 kV Rectifier)",
+      "korean_name": "정류 다이오드 (1N4007)",
+      "category": "analog",
+      "tags": [
+        "diode",
+        "1n4007",
+        "rectifier",
+        "power",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "diode-1n4148",
+      "name": "1N4148 (Small-Signal Diode)",
+      "korean_name": "신호용 다이오드 (1N4148)",
+      "category": "analog",
+      "tags": [
+        "diode",
+        "1n4148",
+        "small-signal",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "zener-1n4733",
+      "name": "1N4733 (5.1 V Zener)",
+      "korean_name": "제너 다이오드 (1N4733)",
+      "category": "analog",
+      "tags": [
+        "diode",
+        "zener",
+        "1n4733",
+        "5.1v",
+        "regulator",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "diode-1n5817",
+      "name": "1N5817 (Schottky 20V)",
+      "korean_name": "쇼트키 다이오드 (1N5817)",
+      "category": "analog",
+      "tags": [
+        "diode",
+        "schottky",
+        "1n5817",
+        "low-drop",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "diode-1n5819",
+      "name": "1N5819 (Schottky 40V)",
+      "korean_name": "쇼트키 다이오드 (1N5819)",
+      "category": "analog",
+      "tags": [
+        "diode",
+        "schottky",
+        "1n5819",
+        "low-drop",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "bjt-2n2222",
+      "name": "2N2222 (NPN BJT)",
+      "korean_name": "NPN 트랜지스터 (2N2222)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "bjt",
+        "npn",
+        "2n2222",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "bjt-2n3055",
+      "name": "2N3055 (NPN Power BJT)",
+      "korean_name": "NPN 트랜지스터 (2N3055)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "bjt",
+        "npn",
+        "power",
+        "2n3055",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "bjt-2n3906",
+      "name": "2N3906 (PNP BJT)",
+      "korean_name": "PNP 트랜지스터 (2N3906)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "bjt",
+        "pnp",
+        "2n3906",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "mosfet-2n7000",
+      "name": "2N7000 (N-MOSFET)",
+      "korean_name": "N채널 MOSFET (2N7000)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "mosfet",
+        "nmos",
+        "n-channel",
+        "logic-level",
+        "2n7000",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "opto-4n25",
+      "name": "4N25 (Optocoupler)",
+      "korean_name": "광절연 소자 (4N25)",
+      "category": "analog",
+      "tags": [
+        "optocoupler",
+        "optoisolator",
+        "4n25",
+        "isolation",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "reg-7805",
+      "name": "7805 (+5V Linear Regulator)",
+      "korean_name": "정전압 조정기 (7805)",
+      "category": "analog",
+      "tags": [
+        "regulator",
+        "linear",
+        "78xx",
+        "7805",
+        "+5v",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "reg-7812",
+      "name": "7812 (+12V Linear Regulator)",
+      "korean_name": "정전압 조정기 (7812)",
+      "category": "analog",
+      "tags": [
+        "regulator",
+        "linear",
+        "78xx",
+        "7812",
+        "+12v",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "reg-7905",
+      "name": "7905 (−5V Linear Regulator)",
+      "korean_name": "음전압 조정기 (7905)",
+      "category": "analog",
+      "tags": [
+        "regulator",
+        "linear",
+        "79xx",
+        "7905",
+        "-5v",
+        "negative",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "battery-9v",
+      "name": "9V Battery",
+      "korean_name": "9V 배터리",
+      "category": "analog",
+      "tags": [
+        "battery",
+        "source",
+        "9v",
+        "power",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "battery-aa",
+      "name": "AA Battery (1.5V)",
+      "korean_name": "AA 배터리 (1.5V)",
+      "category": "analog",
+      "tags": [
+        "battery",
+        "source",
+        "aa",
+        "1.5v",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "bjt-bc547",
+      "name": "BC547 (NPN BJT)",
+      "korean_name": "NPN 트랜지스터 (BC547)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "bjt",
+        "npn",
+        "bc547",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "bjt-bc557",
+      "name": "BC557 (PNP BJT)",
+      "korean_name": "PNP 트랜지스터 (BC557)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "bjt",
+        "pnp",
+        "bc557",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "battery-coin-cell",
+      "name": "Coin Cell (CR2032, 3V)",
+      "korean_name": "동전형 배터리 (CR2032)",
+      "category": "analog",
+      "tags": [
+        "battery",
+        "source",
+        "coin",
+        "cr2032",
+        "3v",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "diode",
+      "name": "Diode (generic)",
+      "korean_name": "일반 다이오드",
+      "category": "analog",
+      "tags": [
+        "diode",
+        "rectifier",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "mosfet-fqp27p06",
+      "name": "FQP27P06 (P-MOSFET)",
+      "korean_name": "P채널 MOSFET (FQP27P06)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "mosfet",
+        "pmos",
+        "p-channel",
+        "fqp27p06",
+        "logic-level",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "opamp-ideal",
+      "name": "Ideal Op-Amp",
+      "korean_name": "이상적인 연산 증폭기",
+      "category": "analog",
+      "tags": [
+        "opamp",
+        "amplifier",
+        "ideal",
+        "vcvs",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "mosfet-irf540",
+      "name": "IRF540 (N-MOSFET Power)",
+      "korean_name": "N채널 MOSFET (IRF540)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "mosfet",
+        "nmos",
+        "n-channel",
+        "power",
+        "irf540",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "mosfet-irf9540",
+      "name": "IRF9540 (P-MOSFET)",
+      "korean_name": "P채널 MOSFET (IRF9540)",
+      "category": "analog",
+      "tags": [
+        "transistor",
+        "mosfet",
+        "pmos",
+        "p-channel",
+        "irf9540",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "reg-lm317",
+      "name": "LM317 (Adjustable Linear Regulator)",
+      "korean_name": "가변 전압 조정기 (LM317)",
+      "category": "analog",
+      "tags": [
+        "regulator",
+        "linear",
+        "lm317",
+        "adjustable",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "opamp-lm324",
+      "name": "LM324 (Quad Op-Amp)",
+      "korean_name": "4채널 연산 증폭기 (LM324)",
+      "category": "analog",
+      "tags": [
+        "opamp",
+        "amplifier",
+        "lm324",
+        "quad",
+        "single-supply",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "opamp-lm358",
+      "name": "LM358 (Dual Op-Amp)",
+      "korean_name": "2채널 연산 증폭기 (LM358)",
+      "category": "analog",
+      "tags": [
+        "opamp",
+        "amplifier",
+        "lm358",
+        "single-supply",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "opamp-lm741",
+      "name": "LM741 (Op-Amp)",
+      "korean_name": "연산 증폭기 (LM741)",
+      "category": "analog",
+      "tags": [
+        "opamp",
+        "amplifier",
+        "lm741",
+        "classic",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "opto-pc817",
+      "name": "PC817 (Optocoupler)",
+      "korean_name": "광절연 소자 (PC817)",
+      "category": "analog",
+      "tags": [
+        "optocoupler",
+        "optoisolator",
+        "pc817",
+        "isolation",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "power-supply",
+      "name": "Regulated Power Supply",
+      "korean_name": "전원 공급 장치",
+      "category": "analog",
+      "tags": [
+        "power-supply",
+        "regulated",
+        "source",
+        "psu",
+        "bench",
+        "lab",
+        "dc",
+        "ac",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "signal-generator",
+      "name": "Signal Generator",
+      "korean_name": "신호 발생기",
+      "category": "analog",
+      "tags": [
+        "signal-generator",
+        "source",
+        "ac",
+        "dc",
+        "function-generator",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "opamp-tl072",
+      "name": "TL072 (JFET Op-Amp)",
+      "korean_name": "JFET 연산 증폭기 (TL072)",
+      "category": "analog",
+      "tags": [
+        "opamp",
+        "amplifier",
+        "tl072",
+        "jfet",
+        "audio",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "esp32-devkit-v1",
+      "name": "ESP32 Devkit V1",
+      "korean_name": "ESP32 개발 보드 (DevKit V1)",
+      "category": "boards",
+      "tags": [
+        "esp32-devkit-v1",
+        "esp32 devkit v1",
+        "esp32",
+        "devkit",
+        "v1"
+      ],
+      "placement": "board_artwork_only"
+    },
+    {
+      "id": "epaper-1in54-bw",
+      "name": "ePaper 1.54\" (200×200, B/W)",
+      "korean_name": "전자종이 화면 1.54\" (200×200, 흑백)",
+      "category": "displays",
+      "tags": [
+        "epaper",
+        "e-paper",
+        "e-ink",
+        "display",
+        "ssd1681",
+        "1.54",
+        "gxepd2",
+        "spi"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "epaper-2in13-bw",
+      "name": "ePaper 2.13\" (250×122, B/W)",
+      "korean_name": "전자종이 화면 2.13\" (250×122, 흑백)",
+      "category": "displays",
+      "tags": [
+        "epaper",
+        "e-paper",
+        "e-ink",
+        "display",
+        "ssd1675",
+        "il3897",
+        "2.13",
+        "gxepd2",
+        "spi"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "epaper-2in13-bwr",
+      "name": "ePaper 2.13\" (250×122, B/W/Red)",
+      "korean_name": "전자종이 화면 2.13\" (250×122, 흑백·빨강)",
+      "category": "displays",
+      "tags": [
+        "epaper",
+        "e-paper",
+        "e-ink",
+        "display",
+        "ssd1680",
+        "tri-color",
+        "red",
+        "2.13",
+        "gxepd2",
+        "spi"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "epaper-2in9-bw",
+      "name": "ePaper 2.9\" (296×128, B/W)",
+      "korean_name": "전자종이 화면 2.9\" (296×128, 흑백)",
+      "category": "displays",
+      "tags": [
+        "epaper",
+        "e-paper",
+        "e-ink",
+        "display",
+        "ssd1680",
+        "2.9",
+        "gxepd2",
+        "spi"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "epaper-2in9-bwr",
+      "name": "ePaper 2.9\" (296×128, B/W/Red)",
+      "korean_name": "전자종이 화면 2.9\" (296×128, 흑백·빨강)",
+      "category": "displays",
+      "tags": [
+        "epaper",
+        "e-paper",
+        "e-ink",
+        "display",
+        "ssd1680",
+        "tri-color",
+        "red",
+        "2.9",
+        "gxepd2",
+        "spi"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "epaper-4in2-bw",
+      "name": "ePaper 4.2\" (400×300, B/W)",
+      "korean_name": "전자종이 화면 4.2\" (400×300, 흑백)",
+      "category": "displays",
+      "tags": [
+        "epaper",
+        "e-paper",
+        "e-ink",
+        "display",
+        "ssd1683",
+        "uc8176",
+        "4.2",
+        "gxepd2",
+        "spi"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "epaper-5in65-7c",
+      "name": "ePaper 5.65\" (600×448, ACeP 7-colour)",
+      "korean_name": "전자종이 화면 5.65\" (600×448, ACeP 7색)",
+      "category": "displays",
+      "tags": [
+        "epaper",
+        "e-paper",
+        "e-ink",
+        "display",
+        "uc8159c",
+        "acep",
+        "7-color",
+        "5.65",
+        "gxepd2",
+        "spi"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "epaper-7in5-bw",
+      "name": "ePaper 7.5\" (800×480, B/W)",
+      "korean_name": "전자종이 화면 7.5\" (800×480, 흑백)",
+      "category": "displays",
+      "tags": [
+        "epaper",
+        "e-paper",
+        "e-ink",
+        "display",
+        "uc8179",
+        "gd7965",
+        "7.5",
+        "gxepd2",
+        "spi"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ili9341",
+      "name": "ILI9341",
+      "korean_name": "컬러 TFT 화면 (ILI9341)",
+      "category": "displays",
+      "tags": [
+        "ili9341"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "lcd1602-i2c",
+      "name": "LCD 16x2 (I2C)",
+      "korean_name": "I2C 문자 LCD (16×2)",
+      "category": "displays",
+      "tags": [
+        "lcd",
+        "i2c",
+        "display",
+        "hd44780",
+        "pcf8574",
+        "1602",
+        "liquidcrystal"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "lcd2004-i2c",
+      "name": "LCD 20x4 (I2C)",
+      "korean_name": "I2C 문자 LCD (20×4)",
+      "category": "displays",
+      "tags": [
+        "lcd",
+        "i2c",
+        "display",
+        "hd44780",
+        "pcf8574",
+        "2004",
+        "liquidcrystal"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "lcd1602",
+      "name": "LCD1602",
+      "korean_name": "문자 LCD (LCD1602 · 16×2)",
+      "category": "displays",
+      "tags": [
+        "lcd1602"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "lcd2004",
+      "name": "LCD2004",
+      "korean_name": "문자 LCD (LCD2004 · 20×4)",
+      "category": "displays",
+      "tags": [
+        "lcd2004"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ssd1306",
+      "name": "SSD1306 OLED",
+      "korean_name": "OLED 화면 (SSD1306)",
+      "category": "displays",
+      "tags": [
+        "ssd1306",
+        "oled",
+        "display",
+        "i2c",
+        "spi",
+        "0x3c"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ssd1306-i2c-4pin",
+      "name": "SSD1306 OLED (I2C, 4-pin)",
+      "korean_name": "I2C OLED 화면 (SSD1306 · 4핀)",
+      "category": "displays",
+      "tags": [
+        "ssd1306",
+        "oled",
+        "display",
+        "i2c",
+        "4-pin",
+        "0x3c"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "motor-driver-l293d",
+      "name": "L293D (Dual H-Bridge Motor Driver)",
+      "korean_name": "모터 드라이버 (L293D · H 브리지)",
+      "category": "electromech",
+      "tags": [
+        "motor",
+        "driver",
+        "l293d",
+        "h-bridge",
+        "dc-motor",
+        "stepper",
+        "electromech"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "relay",
+      "name": "Relay (SPDT)",
+      "korean_name": "전자식 릴레이 (SPDT)",
+      "category": "electromech",
+      "tags": [
+        "relay",
+        "electromechanical",
+        "switch",
+        "spdt",
+        "coil",
+        "contact"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "dip-switch-8",
+      "name": "DIP Switch 8",
+      "korean_name": "8채널 DIP 스위치",
+      "category": "input",
+      "tags": [
+        "dip-switch-8",
+        "dip switch 8",
+        "dip",
+        "switch",
+        "8"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ky-040",
+      "name": "KY-040 Rotary Encoder",
+      "korean_name": "회전 인코더 (KY-040)",
+      "category": "input",
+      "tags": [
+        "rotary",
+        "encoder",
+        "rotary encoder",
+        "rotary-encoder",
+        "ky-040",
+        "ky040",
+        "knob",
+        "quadrature",
+        "dial",
+        "input"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "membrane-keypad",
+      "name": "Membrane Keypad",
+      "korean_name": "멤브레인 키패드",
+      "category": "input",
+      "tags": [
+        "membrane-keypad",
+        "membrane keypad",
+        "membrane",
+        "keypad"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "potentiometer",
+      "name": "Potentiometer",
+      "korean_name": "회전형 가변저항",
+      "category": "input",
+      "tags": [
+        "potentiometer"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "pushbutton",
+      "name": "Pushbutton",
+      "korean_name": "누름 버튼",
+      "category": "input",
+      "tags": [
+        "pushbutton"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "slide-switch",
+      "name": "Slide Switch",
+      "korean_name": "슬라이드 스위치",
+      "category": "input",
+      "tags": [
+        "slide-switch",
+        "slide switch",
+        "slide",
+        "switch"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ic-74hc00",
+      "name": "74HC00 (Quad 2-input NAND)",
+      "korean_name": "74HC00 논리 IC (4개 2입력 NAND)",
+      "category": "logic",
+      "tags": [
+        "ic",
+        "74hc",
+        "74hc00",
+        "nand",
+        "quad",
+        "dip14",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ic-74hc02",
+      "name": "74HC02 (Quad 2-input NOR)",
+      "korean_name": "74HC02 논리 IC (4개 2입력 NOR)",
+      "category": "logic",
+      "tags": [
+        "ic",
+        "74hc",
+        "74hc02",
+        "nor",
+        "quad",
+        "dip14",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ic-74hc04",
+      "name": "74HC04 (Hex Inverter)",
+      "korean_name": "74HC04 논리 IC (6개 반전기)",
+      "category": "logic",
+      "tags": [
+        "ic",
+        "74hc",
+        "74hc04",
+        "inverter",
+        "hex",
+        "dip14",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ic-74hc08",
+      "name": "74HC08 (Quad 2-input AND)",
+      "korean_name": "74HC08 논리 IC (4개 2입력 AND)",
+      "category": "logic",
+      "tags": [
+        "ic",
+        "74hc",
+        "74hc08",
+        "and",
+        "quad",
+        "dip14",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ic-74hc14",
+      "name": "74HC14 (Hex Schmitt Inverter)",
+      "korean_name": "74HC14 논리 IC (6개 슈미트 반전기)",
+      "category": "logic",
+      "tags": [
+        "ic",
+        "74hc",
+        "74hc14",
+        "schmitt",
+        "inverter",
+        "hex",
+        "hysteresis",
+        "dip14",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ic-74hc32",
+      "name": "74HC32 (Quad 2-input OR)",
+      "korean_name": "74HC32 논리 IC (4개 2입력 OR)",
+      "category": "logic",
+      "tags": [
+        "ic",
+        "74hc",
+        "74hc32",
+        "or",
+        "quad",
+        "dip14",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ic-74hc86",
+      "name": "74HC86 (Quad 2-input XOR)",
+      "korean_name": "74HC86 논리 IC (4개 2입력 XOR)",
+      "category": "logic",
+      "tags": [
+        "ic",
+        "74hc",
+        "74hc86",
+        "xor",
+        "quad",
+        "dip14",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-and",
+      "name": "AND Gate",
+      "korean_name": "AND 논리 게이트",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "and",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-and-3",
+      "name": "AND Gate (3-input)",
+      "korean_name": "AND 논리 게이트 (3-입력)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "and",
+        "3-input",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-and-4",
+      "name": "AND Gate (4-input)",
+      "korean_name": "AND 논리 게이트 (4-입력)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "and",
+        "4-input",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "flip-flop-d",
+      "name": "D Flip-Flop",
+      "korean_name": "D 플립플롭",
+      "category": "logic",
+      "tags": [
+        "flip-flop",
+        "ff",
+        "d",
+        "register",
+        "sequential",
+        "digital",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "flip-flop-jk",
+      "name": "JK Flip-Flop",
+      "korean_name": "JK 플립플롭",
+      "category": "logic",
+      "tags": [
+        "flip-flop",
+        "ff",
+        "jk",
+        "sequential",
+        "digital",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-nand",
+      "name": "NAND Gate",
+      "korean_name": "NAND 논리 게이트",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "nand",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-nand-3",
+      "name": "NAND Gate (3-input)",
+      "korean_name": "NAND 논리 게이트 (3-입력)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "nand",
+        "3-input",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-nand-4",
+      "name": "NAND Gate (4-input)",
+      "korean_name": "NAND 논리 게이트 (4-입력)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "nand",
+        "4-input",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-nor",
+      "name": "NOR Gate",
+      "korean_name": "NOR 논리 게이트",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "nor",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-nor-3",
+      "name": "NOR Gate (3-input)",
+      "korean_name": "NOR 논리 게이트 (3-입력)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "nor",
+        "3-input",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-nor-4",
+      "name": "NOR Gate (4-input)",
+      "korean_name": "NOR 논리 게이트 (4-입력)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "nor",
+        "4-input",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-not",
+      "name": "NOT Gate (Inverter)",
+      "korean_name": "NOT 논리 게이트 (반전기)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "not",
+        "inverter",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-or",
+      "name": "OR Gate",
+      "korean_name": "OR 논리 게이트",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "or",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-or-3",
+      "name": "OR Gate (3-input)",
+      "korean_name": "OR 논리 게이트 (3-입력)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "or",
+        "3-input",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-or-4",
+      "name": "OR Gate (4-input)",
+      "korean_name": "OR 논리 게이트 (4-입력)",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "or",
+        "4-input",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "flip-flop-t",
+      "name": "T Flip-Flop",
+      "korean_name": "T 플립플롭",
+      "category": "logic",
+      "tags": [
+        "flip-flop",
+        "ff",
+        "t",
+        "toggle",
+        "sequential",
+        "digital",
+        "logic"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-xnor",
+      "name": "XNOR Gate",
+      "korean_name": "XNOR 논리 게이트",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "xnor",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "logic-gate-xor",
+      "name": "XOR Gate",
+      "korean_name": "XOR 논리 게이트",
+      "category": "logic",
+      "tags": [
+        "logic",
+        "gate",
+        "xor",
+        "digital"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "a4988",
+      "name": "A4988 Stepper Driver",
+      "korean_name": "스테퍼 모터 드라이버 (A4988)",
+      "category": "motors",
+      "tags": [
+        "a4988",
+        "stepper",
+        "driver",
+        "motor",
+        "step",
+        "dir",
+        "pololu",
+        "motors"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "biaxial-stepper",
+      "name": "Biaxial Stepper",
+      "korean_name": "2축 스테퍼 모터",
+      "category": "motors",
+      "tags": [
+        "biaxial-stepper",
+        "biaxial stepper",
+        "biaxial",
+        "stepper"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "servo",
+      "name": "Servo",
+      "korean_name": "서보 모터",
+      "category": "motors",
+      "tags": [
+        "servo"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "stepper-motor",
+      "name": "Stepper Motor",
+      "korean_name": "스테퍼 모터",
+      "category": "motors",
+      "tags": [
+        "stepper-motor",
+        "stepper motor",
+        "stepper",
+        "motor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "7segment",
+      "name": "7 Segment",
+      "korean_name": "7세그먼트 숫자 표시기",
+      "category": "other",
+      "tags": [
+        "7segment",
+        "7 segment",
+        "7",
+        "segment"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "analog-joystick",
+      "name": "Analog Joystick",
+      "korean_name": "아날로그 조이스틱",
+      "category": "other",
+      "tags": [
+        "analog-joystick",
+        "analog joystick",
+        "analog",
+        "joystick"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "big-sound-sensor",
+      "name": "Big Sound Sensor",
+      "korean_name": "소리 감지 센서 (대형)",
+      "category": "other",
+      "tags": [
+        "big-sound-sensor",
+        "big sound sensor",
+        "big",
+        "sound",
+        "sensor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ds1307",
+      "name": "DS1307",
+      "korean_name": "실시간 시계 (DS1307)",
+      "category": "other",
+      "tags": [
+        "ds1307"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ds3231",
+      "name": "DS3231 RTC",
+      "korean_name": "실시간 시계 (DS3231)",
+      "category": "other",
+      "tags": [
+        "ds3231",
+        "rtc",
+        "clock",
+        "i2c",
+        "0x68",
+        "temperature",
+        "rtclib"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "flame-sensor",
+      "name": "Flame Sensor",
+      "korean_name": "불꽃 감지 센서",
+      "category": "other",
+      "tags": [
+        "flame-sensor",
+        "flame sensor",
+        "flame",
+        "sensor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "gas-sensor",
+      "name": "Gas Sensor",
+      "korean_name": "가스 센서",
+      "category": "other",
+      "tags": [
+        "gas-sensor",
+        "gas sensor",
+        "gas",
+        "sensor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "hx711",
+      "name": "HX711",
+      "korean_name": "로드셀 변환기 (HX711)",
+      "category": "other",
+      "tags": [
+        "hx711"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ks2e-m-dc5",
+      "name": "KS2E-M-DC5",
+      "korean_name": "릴레이 모듈 (KS2E-M-DC5)",
+      "category": "other",
+      "tags": [
+        "ks2e-m-dc5",
+        "ks2e",
+        "m",
+        "dc5"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "led-ring",
+      "name": "LED Ring",
+      "korean_name": "원형 LED 모듈",
+      "category": "other",
+      "tags": [
+        "led-ring",
+        "led ring",
+        "led",
+        "ring"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "microsd-card",
+      "name": "microSD Card",
+      "korean_name": "마이크로 SD 카드",
+      "category": "other",
+      "tags": [
+        "microsd-card",
+        "microsd card",
+        "microsd",
+        "card"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "nano-rp2040-connect",
+      "name": "Nano RP2040 Connect",
+      "korean_name": "아두이노 나노 RP2040 Connect",
+      "category": "other",
+      "tags": [
+        "nano-rp2040-connect",
+        "nano rp2040 connect",
+        "nano",
+        "rp2040",
+        "connect"
+      ],
+      "placement": "board_artwork_only"
+    },
+    {
+      "id": "neopixel-matrix",
+      "name": "NeoPixel Matrix",
+      "korean_name": "RGB LED 행렬 (NeoPixel)",
+      "category": "other",
+      "tags": [
+        "neopixel-matrix",
+        "neopixel matrix",
+        "neopixel",
+        "matrix"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "pushbutton-6mm",
+      "name": "Pushbutton 6mm",
+      "korean_name": "누름 버튼 (6mm)",
+      "category": "other",
+      "tags": [
+        "pushbutton-6mm",
+        "pushbutton 6mm",
+        "pushbutton",
+        "6mm"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "rotary-dialer",
+      "name": "Rotary Dialer",
+      "korean_name": "회전식 다이얼",
+      "category": "other",
+      "tags": [
+        "rotary-dialer",
+        "",
+        "rotary",
+        "dialer"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "slide-potentiometer",
+      "name": "Slide Potentiometer",
+      "korean_name": "슬라이드 가변저항",
+      "category": "other",
+      "tags": [
+        "slide-potentiometer",
+        "slide potentiometer",
+        "slide",
+        "potentiometer"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "small-sound-sensor",
+      "name": "Small Sound Sensor",
+      "korean_name": "소리 감지 센서 (소형)",
+      "category": "other",
+      "tags": [
+        "small-sound-sensor",
+        "small sound sensor",
+        "small",
+        "sound",
+        "sensor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "tilt-switch",
+      "name": "Tilt Switch",
+      "korean_name": "기울기 스위치",
+      "category": "other",
+      "tags": [
+        "tilt-switch",
+        "tilt switch",
+        "tilt",
+        "switch"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "buzzer",
+      "name": "Buzzer",
+      "korean_name": "부저",
+      "category": "output",
+      "tags": [
+        "buzzer"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "led",
+      "name": "LED",
+      "korean_name": "발광 다이오드 (LED)",
+      "category": "output",
+      "tags": [
+        "led"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "led-bar-graph",
+      "name": "Led Bar Graph",
+      "korean_name": "LED 막대 표시기",
+      "category": "output",
+      "tags": [
+        "led-bar-graph",
+        "led bar graph",
+        "led",
+        "bar",
+        "graph"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "neopixel",
+      "name": "Neopixel",
+      "korean_name": "주소 지정 RGB LED (NeoPixel)",
+      "category": "output",
+      "tags": [
+        "neopixel"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "rgb-led",
+      "name": "RGB Led",
+      "korean_name": "3색 발광 다이오드 (RGB LED)",
+      "category": "output",
+      "tags": [
+        "rgb-led",
+        "rgb led",
+        "rgb",
+        "led"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "breadboard",
+      "name": "Breadboard (full)",
+      "korean_name": "빵판 (830구)",
+      "category": "passive",
+      "tags": [
+        "breadboard",
+        "protoboard",
+        "prototype",
+        "passive",
+        "wokwi-breadboard"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "breadboard-mini",
+      "name": "Breadboard Mini",
+      "korean_name": "미니 빵판 (170구)",
+      "category": "passive",
+      "tags": [
+        "breadboard",
+        "mini",
+        "protoboard",
+        "passive",
+        "wokwi-breadboard-mini"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-1n",
+      "name": "Cap. 1 nF",
+      "korean_name": "세라믹 커패시터 1 nF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "ceramic",
+        "preset",
+        "1nf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-1u",
+      "name": "Cap. 1 µF",
+      "korean_name": "세라믹 커패시터 1 µF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "ceramic",
+        "preset",
+        "1µf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-10n",
+      "name": "Cap. 10 nF",
+      "korean_name": "세라믹 커패시터 10 nF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "ceramic",
+        "preset",
+        "10nf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-10p",
+      "name": "Cap. 10 pF",
+      "korean_name": "세라믹 커패시터 10 pF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "ceramic",
+        "preset",
+        "10pf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-100n",
+      "name": "Cap. 100 nF",
+      "korean_name": "세라믹 커패시터 100 nF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "ceramic",
+        "preset",
+        "100nf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-100p",
+      "name": "Cap. 100 pF",
+      "korean_name": "세라믹 커패시터 100 pF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "ceramic",
+        "preset",
+        "100pf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-22p",
+      "name": "Cap. 22 pF",
+      "korean_name": "세라믹 커패시터 22 pF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "ceramic",
+        "preset",
+        "22pf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "capacitor",
+      "name": "Cap. ceramic (custom)",
+      "korean_name": "세라믹 커패시터 (직접 설정)",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "ceramic",
+        "custom"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-elec-1u",
+      "name": "Electrolytic 1 µF",
+      "korean_name": "전해 커패시터 1 µF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "electrolytic",
+        "polarized",
+        "preset",
+        "1µf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-elec-10u",
+      "name": "Electrolytic 10 µF",
+      "korean_name": "전해 커패시터 10 µF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "electrolytic",
+        "polarized",
+        "preset",
+        "10µf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-elec-100u",
+      "name": "Electrolytic 100 µF",
+      "korean_name": "전해 커패시터 100 µF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "electrolytic",
+        "polarized",
+        "preset",
+        "100µf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-elec-1000u",
+      "name": "Electrolytic 1000 µF",
+      "korean_name": "전해 커패시터 1000 µF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "electrolytic",
+        "polarized",
+        "preset",
+        "1000µf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-elec-47u",
+      "name": "Electrolytic 47 µF",
+      "korean_name": "전해 커패시터 47 µF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "electrolytic",
+        "polarized",
+        "preset",
+        "47µf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "cap-elec-470u",
+      "name": "Electrolytic 470 µF",
+      "korean_name": "전해 커패시터 470 µF",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "electrolytic",
+        "polarized",
+        "preset",
+        "470µf"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "capacitor-electrolytic",
+      "name": "Electrolytic Cap. (custom)",
+      "korean_name": "전해 커패시터 (직접 설정)",
+      "category": "passive",
+      "tags": [
+        "capacitor",
+        "electrolytic",
+        "polarized",
+        "custom"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "franzininho",
+      "name": "Franzininho",
+      "korean_name": "프란지니뉴 개발 보드 (Franzininho)",
+      "category": "passive",
+      "tags": [
+        "franzininho"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "inductor",
+      "name": "Inductor (custom)",
+      "korean_name": "인덕터 (직접 설정)",
+      "category": "passive",
+      "tags": [
+        "inductor",
+        "custom"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ind-1m",
+      "name": "Inductor 1 mH",
+      "korean_name": "인덕터 1 mH",
+      "category": "passive",
+      "tags": [
+        "inductor",
+        "preset",
+        "1mh"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ind-10m",
+      "name": "Inductor 10 mH",
+      "korean_name": "인덕터 10 mH",
+      "category": "passive",
+      "tags": [
+        "inductor",
+        "preset",
+        "10mh"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ind-100u",
+      "name": "Inductor 100 µH",
+      "korean_name": "인덕터 100 µH",
+      "category": "passive",
+      "tags": [
+        "inductor",
+        "preset",
+        "100µh"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ir-receiver",
+      "name": "IR Receiver",
+      "korean_name": "적외선 수신기",
+      "category": "passive",
+      "tags": [
+        "ir-receiver",
+        "ir receiver",
+        "ir",
+        "receiver",
+        "infrared",
+        "nec",
+        "remote",
+        "demodulator",
+        "vs1838b",
+        "tsop",
+        "38khz"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ir-remote",
+      "name": "IR Remote",
+      "korean_name": "적외선 리모컨",
+      "category": "passive",
+      "tags": [
+        "ir-remote",
+        "ir remote",
+        "ir",
+        "remote",
+        "infrared",
+        "nec",
+        "remote control",
+        "handset",
+        "transmitter"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "junction",
+      "name": "Junction",
+      "korean_name": "배선 분기점",
+      "category": "passive",
+      "tags": [
+        "junction",
+        "node",
+        "wire",
+        "net",
+        "solder"
+      ],
+      "placement": "wire_gesture"
+    },
+    {
+      "id": "resistor",
+      "name": "Resistor (custom)",
+      "korean_name": "저항 (직접 설정)",
+      "category": "passive",
+      "tags": [
+        "resistor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-1k",
+      "name": "Resistor 1 kΩ",
+      "korean_name": "저항 1 kΩ",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "1kω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-1m",
+      "name": "Resistor 1 MΩ",
+      "korean_name": "저항 1 MΩ",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "1mω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-10k",
+      "name": "Resistor 10 kΩ",
+      "korean_name": "저항 10 kΩ",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "10kω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-100k",
+      "name": "Resistor 100 kΩ",
+      "korean_name": "저항 100 kΩ",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "100kω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-2k2",
+      "name": "Resistor 2.2 kΩ",
+      "korean_name": "저항 2.2 kΩ",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "2.2kω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-22k",
+      "name": "Resistor 22 kΩ",
+      "korean_name": "저항 22 kΩ",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "22kω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-220",
+      "name": "Resistor 220 Ω",
+      "korean_name": "저항 220 Ω",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "220ω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-330",
+      "name": "Resistor 330 Ω",
+      "korean_name": "저항 330 Ω",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "330ω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-4k7",
+      "name": "Resistor 4.7 kΩ",
+      "korean_name": "저항 4.7 kΩ",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "4.7kω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-47k",
+      "name": "Resistor 47 kΩ",
+      "korean_name": "저항 47 kΩ",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "47kω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "resistor-470",
+      "name": "Resistor 470 Ω",
+      "korean_name": "저항 470 Ω",
+      "category": "passive",
+      "tags": [
+        "resistor",
+        "preset",
+        "470ω"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "bmp280",
+      "name": "BMP280 (Pressure + Temp)",
+      "korean_name": "기압·온도 센서 (BMP280)",
+      "category": "sensor",
+      "tags": [
+        "sensor",
+        "i2c",
+        "pressure",
+        "temperature",
+        "bmp280",
+        "weather",
+        "barometer"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "dht22",
+      "name": "DHT22",
+      "korean_name": "온도·습도 센서 (DHT22)",
+      "category": "sensors",
+      "tags": [
+        "dht22"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "gps-neo6m",
+      "name": "GPS NEO-6M",
+      "korean_name": "GPS 위치 센서 (NEO-6M)",
+      "category": "sensors",
+      "tags": [
+        "gps",
+        "neo-6m",
+        "neo6m",
+        "u-blox",
+        "nmea",
+        "uart",
+        "serial",
+        "position",
+        "tinygps"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "hc-sr04",
+      "name": "HC-SR04",
+      "korean_name": "초음파 거리 센서 (HC-SR04)",
+      "category": "sensors",
+      "tags": [
+        "hc-sr04",
+        "hc",
+        "sr04"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "heart-beat-sensor",
+      "name": "Heart Beat Sensor",
+      "korean_name": "심박 센서",
+      "category": "sensors",
+      "tags": [
+        "heart-beat-sensor",
+        "heart rate",
+        "heart",
+        "beat",
+        "pulse",
+        "bpm",
+        "ppg",
+        "ky-039",
+        "pulse sensor",
+        "sensor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "mpu6050",
+      "name": "MPU6050",
+      "korean_name": "가속도·자이로 센서 (MPU6050)",
+      "category": "sensors",
+      "tags": [
+        "mpu6050"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "ntc-temperature-sensor",
+      "name": "NTC Temperature Sensor",
+      "korean_name": "NTC 온도 센서",
+      "category": "sensors",
+      "tags": [
+        "ntc-temperature-sensor",
+        "ntc temperature sensor",
+        "ntc",
+        "temperature",
+        "sensor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "photodiode",
+      "name": "Photodiode",
+      "korean_name": "빛 감지 다이오드",
+      "category": "sensors",
+      "tags": [
+        "photodiode",
+        "sensor",
+        "light",
+        "optical",
+        "analog"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "photoresistor-sensor",
+      "name": "Photoresistor Sensor",
+      "korean_name": "조도 센서",
+      "category": "sensors",
+      "tags": [
+        "photoresistor-sensor",
+        "photoresistor sensor",
+        "photoresistor",
+        "sensor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "pir-motion-sensor",
+      "name": "PIR Motion Sensor",
+      "korean_name": "적외선 움직임 센서 (PIR)",
+      "category": "sensors",
+      "tags": [
+        "pir-motion-sensor",
+        "pir motion sensor",
+        "pir",
+        "motion",
+        "sensor"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "soil-moisture-sen0193",
+      "name": "SEN0193 토양 수분 센서",
+      "korean_name": "SEN0193 토양 수분 센서",
+      "category": "sensors",
+      "tags": [
+        "soil",
+        "moisture",
+        "watering",
+        "토양",
+        "수분",
+        "급수"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "mosfet-irlz44n",
+      "name": "IRLZ44N 로직 레벨 MOSFET",
+      "korean_name": "IRLZ44N 로직 레벨 MOSFET",
+      "category": "analog",
+      "tags": [
+        "mosfet",
+        "irlz44n",
+        "pump",
+        "펌프",
+        "스위치"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "dc-water-pump",
+      "name": "12V DC 급수 펌프",
+      "korean_name": "12V DC 급수 펌프",
+      "category": "motors",
+      "tags": [
+        "pump",
+        "motor",
+        "watering",
+        "펌프",
+        "급수"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "dc-power-supply",
+      "name": "펌프용 DC 전원",
+      "korean_name": "펌프용 DC 전원",
+      "category": "analog",
+      "tags": [
+        "supply",
+        "12v",
+        "power",
+        "전원",
+        "급수"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "diode-1n5822",
+      "name": "1N5822 보호 다이오드",
+      "korean_name": "1N5822 보호 다이오드",
+      "category": "analog",
+      "tags": [
+        "diode",
+        "flyback",
+        "1n5822",
+        "다이오드",
+        "보호"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "instr-voltmeter",
+      "name": "Voltmeter",
+      "korean_name": "전압계",
+      "category": "analog",
+      "tags": [
+        "voltmeter",
+        "meter",
+        "probe",
+        "instrument",
+        "spice",
+        "multimeter",
+        "dmm"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "instr-ammeter",
+      "name": "Ammeter",
+      "korean_name": "전류계",
+      "category": "analog",
+      "tags": [
+        "ammeter",
+        "meter",
+        "probe",
+        "instrument",
+        "spice",
+        "current",
+        "multimeter",
+        "dmm"
+      ],
+      "placement": "registered"
+    },
+    {
+      "id": "custom-chip",
+      "name": "Custom Chip",
+      "korean_name": "사용자 정의 칩",
+      "category": "logic",
+      "tags": [
+        "custom",
+        "chip",
+        "wasm",
+        "c",
+        "wokwi",
+        "eeprom",
+        "rtc",
+        "logic",
+        "cpu",
+        "8080",
+        "z80"
+      ],
+      "placement": "registered"
+    }
+  ],
+  "notice": "시뮬레이터 목록은 부품 식별 참고 자료입니다. 사진 속 존재, 정확한 모델, 핀·정격, 설계 및 시뮬레이션 지원을 보증하지 않습니다. 보드 외형과 배선 분기점은 직접 배치할 수 없습니다."
+}

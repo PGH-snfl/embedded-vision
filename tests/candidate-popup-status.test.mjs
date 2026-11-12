@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-const {JSDOM}=require('../third_party/velxio/frontend/node_modules/jsdom');
+const {JSDOM}=require('jsdom');
 
 test('manual candidate selection updates inline simulator without opening a new tab',async()=>{
   const dom=new JSDOM('<main id="parent"><div id="function-intent"></div></main>',{url:'http://127.0.0.1:8766/'});

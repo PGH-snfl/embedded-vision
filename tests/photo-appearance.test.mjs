@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-const require=createRequire(new URL('../third_party/velxio/frontend/package.json',import.meta.url));
+const require=createRequire(import.meta.url);
 const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="host"></div>',{url:'http://127.0.0.1:8897/'});
 globalThis.location=dom.window.location;globalThis.window=dom.window;globalThis.document=dom.window.document;
 const {renderPhotoAppearance}=await import('../frontend/photo-appearance.js');

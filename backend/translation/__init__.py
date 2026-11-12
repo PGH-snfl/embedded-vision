@@ -1,1 +1,1 @@
-"""Deterministic, narrowly scoped source-to-source code translation."""
+../../shared/backend/translation/__init__.py

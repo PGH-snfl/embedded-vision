@@ -1,1 +1,1 @@
-"""Multimodal reasoning -> reviewed structured plan -> constrained MCP execution."""
+../../shared/backend/planner/__init__.py

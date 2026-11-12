@@ -1,4 +1,4 @@
-"""Run only our two local servers; never reuse or terminate unrelated services."""
+"""Run independently selected services; editor is the default."""
 import argparse
 import json
 import os
@@ -38,47 +38,59 @@ def wait_ready(url, child, timeout=60):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--no-open', action='store_true')
+    parser.add_argument('--service',choices=('editor','analyzer','all'),default='editor')
     args = parser.parse_args()
     os.umask(0o077)
     os.chdir(ROOT)
-    api_port = port_number('EMBEDDED_VISION_PORT', 8766)
-    editor_port = port_number('EMBEDDED_VISION_EDITOR_PORT', 8768)
-    if api_port == editor_port:
+    api_port=port_number('EMBEDDED_VISION_PORT',8766) if args.service in {'analyzer','all'} else None
+    editor_port=port_number('EMBEDDED_VISION_EDITOR_PORT',8768) if args.service in {'editor','all'} else None
+    if api_port is not None and api_port==editor_port:
         raise ValueError('분석 화면과 편집기 포트는 달라야 합니다.')
-    if not (ROOT/'third_party/velxio/frontend/dist/index.html').is_file():
-        raise RuntimeError('편집기가 없습니다. bash start.sh --setup-only를 실행하세요.')
-    for port in (api_port, editor_port):
+    targets=[]
+    if editor_port:
+        if not (ROOT/'services/editor/vendor/velxio/frontend/dist/index.html').is_file():
+            raise RuntimeError('편집기가 없습니다. bash start.sh --setup-only를 실행하세요.')
+        targets.append(('editor','services.editor.app:app',editor_port))
+    if api_port:targets.append(('analyzer','services.analyzer.app:app',api_port))
+    for name,_,port in targets:
+        python=ROOT/f'services/{name}/.venv/bin/python'
+        if not python.is_file():raise RuntimeError(f'{name} 설치가 필요합니다. bash services/{name}/start.sh --setup-only')
         with socket.socket() as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                probe.bind(('127.0.0.1', port))
-            except OSError:
-                raise RuntimeError(f'{port} 포트가 사용 중입니다. 기존 서버를 종료하거나 포트 환경변수를 바꾸세요.') from None
+            probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+            try:probe.bind(('127.0.0.1',port))
+            except OSError:raise RuntimeError(f'{port} 포트가 사용 중입니다. 기존 서버를 종료하거나 포트 환경변수를 바꾸세요.') from None
     folder = ROOT/'.runtime/launcher'
     folder.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.pop('EV_SAAS_MODE', None)
-    env['EMBEDDED_VISION_EDITOR_PORT'] = str(editor_port)
+    if editor_port:env['EMBEDDED_VISION_EDITOR_PORT']=str(editor_port)
     children, logs = [], []
     def interrupted(signum, frame):
         raise KeyboardInterrupt
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, interrupted)
     try:
-        for name, module, port in [('analysis', 'backend.api:app', api_port), ('editor', 'backend.workbench.server:app', editor_port)]:
+        for name,module,port in targets:
+            service_env=env.copy()
+            service_env['EMBEDDED_SERVICE']=name
+            if name=='editor':service_env['EMBEDDED_VISION_DATA']=env.get('EMBEDDED_EDITOR_DATA',str(ROOT/'.runtime/editor'))
+            else:service_env['EMBEDDED_VISION_DATA']=env.get('EMBEDDED_ANALYZER_DATA',env.get('EMBEDDED_VISION_DATA',str(ROOT/'.runtime')))
             log = (folder/f'{name}.log').open('w')
             logs.append(log)
-            children.append(subprocess.Popen([sys.executable, '-m', 'uvicorn', module, '--host', '127.0.0.1', '--port', str(port)], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True))
-        for port, child in zip((api_port, editor_port), children):
+            children.append(subprocess.Popen([str(ROOT/f'services/{name}/.venv/bin/python'), '-m', 'uvicorn', module, '--host', '127.0.0.1', '--port', str(port)], cwd=ROOT, env=service_env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True))
+        for (_,_,port),child in zip(targets,children):
             wait_ready(f'http://127.0.0.1:{port}/api/health', child)
-        url = f'http://127.0.0.1:{api_port}/'
-        print(f'사진 분석: {url}\n편집기: http://127.0.0.1:{editor_port}/editor\n튜토리얼: {url}tutorial\n종료: Ctrl+C', flush=True)
-        if not args.no_open:
-            if not webbrowser.open(url):
-                print('브라우저에서 위 주소를 열어주세요.', flush=True)
-        while all(child.poll() is None for child in children):
+        url=f'http://127.0.0.1:{editor_port or api_port}/'
+        for name,_,port in targets:print(f'{name}: http://127.0.0.1:{port}/',flush=True)
+        print('종료: Ctrl+C · 선택하지 않은 서비스는 시작하지 않습니다.',flush=True)
+        if not args.no_open and not webbrowser.open(url):print('브라우저에서 위 주소를 열어주세요.',flush=True)
+        reported=set()
+        while any(child.poll() is None for child in children):
+            for (name,_,_),child in zip(targets,children):
+                if child.poll() is not None and name not in reported:
+                    print(f'{name} 서버가 종료됐습니다. 다른 서비스는 계속 실행합니다.',flush=True);reported.add(name)
             time.sleep(.5)
-        raise RuntimeError('서버 하나가 종료되어 함께 종료합니다. 로그를 확인하세요.')
+        raise RuntimeError('선택한 서버가 모두 종료됐습니다. 서비스별 로그를 확인하세요.')
     except KeyboardInterrupt:
         print('\n서버를 종료합니다.', flush=True)
     finally:

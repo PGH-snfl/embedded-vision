@@ -1,0 +1,219 @@
+diff --git a/frontend/src/components/EmbeddedVisionBridge.tsx b/frontend/src/components/EmbeddedVisionBridge.tsx
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -22,6 +22,7 @@
+ export function EmbeddedVisionBridge({onReady,actions}:{onReady?:(ready:boolean,restored:boolean,simulationNotice?:string,inspection?:boolean)=>void;actions?:ReactNode}){
+  const [message,setMessage]=useState('로컬 편집기 · 컴파일 지원: Arduino UNO');
+  const [key,setKey]=useState('');
++ const [standalone,setStandalone]=useState(()=>new URLSearchParams(location.search).get('standalone')==='1');
+  const [notice,setNotice]=useState('');
+  const [title,setTitle]=useState('회로를 불러오고 있습니다');
+  const [behavior,setBehavior]=useState('');
+@@ -36,7 +37,8 @@
+  const running=useSimulatorStore(s=>s.running);
+  useEffect(()=>{
+   const encoded=new URLSearchParams(location.hash.slice(1)).get('project');
+-  if(!encoded)return;
++  const projectId=new URLSearchParams(location.search).get('editor_project');
++  if(!encoded&&!projectId)return;
+   const assemblyAbort=new AbortController();
+   let cancelled=false,loadOrigin='',unsub1=()=>{},unsub2=()=>{},flush=()=>{},timer:ReturnType<typeof setTimeout>,receiveRevision=(_e:MessageEvent)=>{};
+   const progress=(text:string,phase='loading')=>{
+@@ -44,12 +46,20 @@
+    try{const channel=new URLSearchParams(location.search).get('channel');if(window.parent!==window&&/^[a-f0-9]{32,128}$/i.test(channel||'')&&new URL(document.referrer).origin===loadOrigin)window.parent.postMessage({type:'ev:editor-status',channel,phase,message:text},loadOrigin);}catch{/* standalone editor */}
+   };
+   (async()=>{
+-   const original=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded),c=>c.charCodeAt(0))));
++   let original:any;
++   if(encoded)original=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded),c=>c.charCodeAt(0))));
++   else{
++    if(!/^[a-f0-9]{32}$/.test(projectId||''))throw new Error('편집기 프로젝트 ID가 잘못되었습니다.');
++    const response=await fetch('/api/editor/projects/'+projectId,{signal:assemblyAbort.signal,cache:'no-store'});
++    if(!response.ok)throw new Error('편집기 프로젝트를 불러오지 못했습니다.');
++    original=await response.json();
++   }
+    const source=original.embeddedVision;
++   const independent=source?.standalone===true||new URLSearchParams(location.search).get('standalone')==='1';setStandalone(independent);
+    const isInspection=['enclosure_hypothesis_view','photo_appearance_view'].includes(source?.recipe);setInspection(isInspection);
+    loadOrigin=source?.analysis_origin||'';progress('저장된 회로를 확인하고 있습니다…');
+    const motion=new URLSearchParams(location.search).get('motion')==='1';
+-   if(original.format!=='velxio-project'||!source?.source_graph_sha256)throw new Error('사진 분석에서 내보낸 회로 파일이 아닙니다.');
++   if(original.format!=='velxio-project'||!source?.source_graph_sha256)throw new Error('읽을 수 있는 편집기 프로젝트 파일이 아닙니다.');
+    const storageKey='embedded-velxio:'+(hostedWorkspace()?'workspace:'+hostedWorkspace()+':':'')+source.source_graph_sha256+':'+source.inventory_plan+':'+(source.recipe||'legacy')+':'+(source.function_version||'legacy')+':'+(source.assembly?.layout_version||'legacy')+(source.translation_instance?':translation:'+source.translation_instance:'');
+    if(motion||Number(source.watering_circuit_version)>=2)try{const backups=Object.keys(localStorage).filter(k=>k.startsWith(storageKey+':recovery:')).sort();if(backups.length)setRecoveryKey(backups[backups.length-1]);}catch{/* unavailable */}
+    let payload=original,restored=false;
+@@ -93,9 +103,9 @@
+    onReady?.(true,restored,translatedSimulationNotice(source.recipe),isInspection);
+    setTitle(source.function?.summary||original.name||'새 회로');
+    setBehavior(isInspection?'':initialSimulationBehavior(source));
+-   setReturnUrl(analysisReturnUrl(hostedWorkspace(),source.analysis_origin));
+-   setNotice(source.simulation_notice||'');
+-   progress(restored?'저장한 편집 내용을 복원했습니다.':isInspection?'사진 기반 3D 구조를 준비했습니다.':'사진에서 확인한 부품으로 새로 구성한 회로를 가져왔습니다.','ready');
++   setReturnUrl(independent?'/':analysisReturnUrl(hostedWorkspace(),source.analysis_origin));
++   setNotice(source.standalone_notice||source.simulation_notice||'');
++   progress(restored?'저장한 편집 내용을 복원했습니다.':independent?'프로젝트의 회로·코드를 불러왔습니다.':isInspection?'사진 기반 3D 구조를 준비했습니다.':'사진에서 확인한 부품으로 새로 구성한 회로를 가져왔습니다.','ready');
+    flush=()=>{if(resetting.current)return;try{
+      const data=buildVlxPayload({name:original.name});
+      localStorage.setItem(storageKey,JSON.stringify({...data,embeddedVision:source}));
+@@ -116,8 +126,8 @@
+  },[]);
+  return <header className="ev-topbar">
+   <div className="ev-project">
+-   <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">← 사진 분석</a><span>EMBEDDED VISION / {inspection?'STRUCTURE':'SIMULATOR'}</span></div>
+-   <h1>{title}</h1>{behavior&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
++   <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">{standalone?'← 편집기 홈':'← 사진 분석'}</a><span>{standalone?'EMBEDDED EDITOR':'EMBEDDED VISION'} / {inspection?'STRUCTURE':'SIMULATOR'}</span></div>
++   <h1>{title}</h1>{behavior&&!standalone&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
+   </div>
+   <EmbeddedToolCard title="프로젝트 저장" className="ev-project-actions">
+    {hostedWorkspace()&&<button className="ev-cloud-save" disabled={!key||!cloud.current||cloudSaving} onClick={async()=>{if(!cloud.current)return;setCloudSaving(true);try{const payload={...buildVlxPayload({name:'embedded-circuit'}),embeddedVision:getMotionSource()};const revision=await cloud.current.save(payload);setCloudStatus('서버에 저장됨 · r'+revision);}catch(e){setCloudStatus(String(e));}finally{setCloudSaving(false);}}}>{cloudSaving?'저장 중…':'작업공간에 저장'}</button>}
+@@ -125,7 +135,7 @@
+    <span className="ev-badge">{inspection?'사진 기반 구조 · 형상 근사':'가상 회로 · 실물 미검증'}</span>
+    <button className="ev-download" disabled={!key} onClick={()=>triggerDownloadVlx({name:'embedded-circuit'})}>↓ 프로젝트 저장</button>
+    <details className="ev-info"><summary>설계 정보·저장 안내</summary><div>
+-    <strong>사진 분석에서 만든 새 설계</strong><p>{notice||'원본 배선을 복원한 결과가 아닙니다. 실제 부품과 핀을 대조하세요.'}</p>
++    <strong>{standalone?'프로젝트 정보':'사진 분석에서 만든 새 설계'}</strong><p>{notice||'원본 배선을 복원한 결과가 아닙니다. 실제 부품과 핀을 대조하세요.'}</p>
+     <p>{message}</p><p role="status">{cloudStatus}</p><p>편집 내용은 이 브라우저에 자동 저장됩니다. 프로젝트 파일(.vlx)로도 저장할 수 있습니다. SaaS에서는 ‘작업공간에 저장’을 눌러 서버에도 보관하세요. 서버 저장본은 다시 열 때 먼저 불러옵니다. KiCad에는 자동 반영되지 않습니다.</p>
+     <p>로컬 컴파일은 Arduino UNO를 지원합니다. 다른 보드와 외부 라이브러리는 현재 지원하지 않습니다.</p>
+     {recoveryKey&&((new URLSearchParams(location.search).get('motion')==='1'||Number(getMotionSource()?.watering_circuit_version)>=2)?<button onClick={()=>{const saved=localStorage.getItem(recoveryKey);if(saved){const url=URL.createObjectURL(new Blob([saved],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='previous-draft.vlx';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}}>이전 초안 다운로드</button>:<button disabled={running} onClick={async()=>{const saved=localStorage.getItem(recoveryKey);if(saved){try{await importVlxFile(new File([saved],'browser-draft.vlx',{type:'application/json'}));setCloudStatus('브라우저 초안 복원됨 · 서버에 반영하려면 작업공간에 저장하세요.');}catch{setCloudStatus('브라우저 초안을 불러오지 못했습니다.');}}}}>브라우저 초안 복원</button>)}
+diff --git a/frontend/src/__tests__/embedded-button-led-integration.test.ts b/frontend/src/__tests__/embedded-button-led-integration.test.ts
+--- a/frontend/src/__tests__/embedded-button-led-integration.test.ts
++++ b/frontend/src/__tests__/embedded-button-led-integration.test.ts
+@@ -32,8 +32,8 @@
+ vi.stubGlobal('requestAnimationFrame', () => 1);
+ vi.stubGlobal('cancelAnimationFrame', () => {});
+ 
+-const project = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+-const python = resolve(project, '.venv/bin/python');
++const project = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../../..');
++const python = resolve(project, 'services/editor/.venv/bin/python');
+ const generate = `
+ import json, tempfile
+ from pathlib import Path
+diff --git a/frontend/src/__tests__/embedded-lcd-integration.test.ts b/frontend/src/__tests__/embedded-lcd-integration.test.ts
+--- a/frontend/src/__tests__/embedded-lcd-integration.test.ts
++++ b/frontend/src/__tests__/embedded-lcd-integration.test.ts
+@@ -13,8 +13,8 @@
+ 
+ vi.stubGlobal('requestAnimationFrame', () => 1);
+ vi.stubGlobal('cancelAnimationFrame', () => {});
+-const project = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+-const python = resolve(project, '.venv/bin/python');
++const project = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../../..');
++const python = resolve(project, 'services/editor/.venv/bin/python');
+ const generate = `
+ import json, tempfile
+ from pathlib import Path
+diff --git a/frontend/src/__tests__/embedded-button-check.test.ts b/frontend/src/__tests__/embedded-button-check.test.ts
+--- a/frontend/src/__tests__/embedded-button-check.test.ts
++++ b/frontend/src/__tests__/embedded-button-check.test.ts
+@@ -11,9 +11,9 @@
+ import { verifyCircuit } from '../simulation/verify/circuitVerifier';
+ 
+ it('does not flag a powered button LED breadboard as unpowered', async () => {
+- const root=resolve(fileURLToPath(new NodeURL('.', import.meta.url)), '../../../../..');
++ const root=resolve(fileURLToPath(new NodeURL('.', import.meta.url)), '../../../../../../..');
+  const script="import json;from backend.design.recipes import new_graph;from backend.workbench.export import export_project;print(json.dumps(export_project(new_graph('a'*32,'arduino_led_button')[0])))";
+- const res=spawnSync(resolve(root,'.venv/bin/python'),['-c',script],{cwd:root,encoding:'utf8'});expect(res.status,res.stderr).toBe(0);
++ const res=spawnSync(resolve(root,'services/editor/.venv/bin/python'),['-c',script],{cwd:root,encoding:'utf8'});expect(res.status,res.stderr).toBe(0);
+  const p=JSON.parse(res.stdout);
+  vi.stubGlobal('requestAnimationFrame',()=>0);
+  await importVlxFile({text:async()=>JSON.stringify(p)} as File);
+diff --git a/frontend/src/__tests__/embedded-light-led-integration.test.ts b/frontend/src/__tests__/embedded-light-led-integration.test.ts
+--- a/frontend/src/__tests__/embedded-light-led-integration.test.ts
++++ b/frontend/src/__tests__/embedded-light-led-integration.test.ts
+@@ -16,7 +16,7 @@
+ vi.mock('../store/useSimulatorStore',()=>({useSimulatorStore:{getState:()=>({boards:[{id:'U1',boardKind:'arduino-uno'}]}),subscribe:()=>()=>{}},getBoardSimulator:()=>bridge.sim}));
+ vi.mock('../store/useElectricalStore',()=>({useElectricalStore:{getState:()=>bridge.electrical,subscribe:()=>()=>{}}}));
+ vi.stubGlobal('requestAnimationFrame',()=>1);vi.stubGlobal('cancelAnimationFrame',()=>{});
+-const project=resolve(dirname(fileURLToPath(import.meta.url)),'../../../../..');
++const project=resolve(dirname(fileURLToPath(import.meta.url)),'../../../../../../..');
+ const script=`
+ import json,tempfile
+ from pathlib import Path
+@@ -30,7 +30,7 @@
+ `;
+ 
+ it('actual generated design drives LED by physical light sensor voltage, including disconnect', {timeout:60000}, async()=>{
+-  const result=spawnSync(resolve(project,'.venv/bin/python'),['-c',script],{cwd:project,encoding:'utf8',timeout:45000});
++  const result=spawnSync(resolve(project,'services/editor/.venv/bin/python'),['-c',script],{cwd:project,encoding:'utf8',timeout:45000});
+   expect(result.status,result.stderr).toBe(0);
+   const f=JSON.parse(result.stdout), {components,wires}=f.project;
+   const sensor=components.find((c:any)=>c.id==='S1');
+diff --git a/frontend/src/__tests__/portable-system-conversion.test.ts b/frontend/src/__tests__/portable-system-conversion.test.ts
+--- a/frontend/src/__tests__/portable-system-conversion.test.ts
++++ b/frontend/src/__tests__/portable-system-conversion.test.ts
+@@ -1,5 +1,5 @@
+ // @vitest-environment jsdom
+-import {readFile,writeFile} from 'node:fs/promises';
++import {readFile,writeFile,mkdir} from 'node:fs/promises';
+ import {it,expect,vi} from 'vitest';
+ import {probeFunctionalSystem} from '../simulation/functional/FunctionalProbe';
+ import {functionalNets} from '../simulation/functional/circuit';
+@@ -14,7 +14,8 @@
+  const project=fixture[name],solver=new NgSpiceNodeAdapter(),before=JSON.stringify(project);
+  try{
+   const report=await probeFunctionalSystem(project,'micropython-source',solver);
+-  await writeFile('../../../outputs/portable-system-conversion/'+name+'-execution.json',JSON.stringify(report,null,2));
++  await mkdir('../../../../../outputs/portable-system-conversion', {recursive:true});
++  await writeFile('../../../../../outputs/portable-system-conversion/'+name+'-execution.json',JSON.stringify(report,null,2));
+   expect(report.status,JSON.stringify(report)).toBe('pass');expect(report.engine).toBe('rp2040js+ngspice');
+   expect(JSON.stringify(project)).toBe(before);
+   const input=project.components.find(p=>p.metadataId===(name==='button'?'pushbutton-6mm':'potentiometer'))!;
+diff --git a/frontend/src/__tests__/system-conversion-runtime.test.ts b/frontend/src/__tests__/system-conversion-runtime.test.ts
+--- a/frontend/src/__tests__/system-conversion-runtime.test.ts
++++ b/frontend/src/__tests__/system-conversion-runtime.test.ts
+@@ -1,5 +1,5 @@
+ // @vitest-environment jsdom
+-import {readFile,writeFile} from 'node:fs/promises';
++import {readFile,writeFile,mkdir} from 'node:fs/promises';
+ import {it,expect,vi} from 'vitest';
+ import {probeFunctionalSystem} from '../simulation/functional/FunctionalProbe';
+ import {NgSpiceNodeAdapter} from '../simulation/spice/adapters/NgSpiceNodeAdapter';
+@@ -15,7 +15,8 @@
+   expect(report.samples.find(s=>s.input==='S1'&&s.value===1)!.outputs.D1).toBeGreaterThan(.001);
+   expect(report.samples.find(s=>s.input==='S1'&&s.value===0)!.outputs.D1).toBeLessThan(.00001);
+   expect(JSON.stringify(fixture)).toBe(before);
+-  await writeFile('../../../outputs/system-conversion/pico-execution.json',JSON.stringify(report,null,2));
++  await mkdir('../../../../../outputs/system-conversion', {recursive:true});
++  await writeFile('../../../../../outputs/system-conversion/pico-execution.json',JSON.stringify(report,null,2));
+  }finally{solver.dispose();}
+ },120000);
+ it('executes the Pico-to-UNO round-trip program with the same button behavior',async()=>{
+@@ -24,6 +25,7 @@
+   expect(report.status,JSON.stringify(report)).toBe('pass');expect(report.engine).toBe('avr8js+ngspice');
+   expect(report.samples.find(s=>s.input==='S1'&&s.value===1)!.outputs.D1).toBeGreaterThan(.001);
+   expect(report.samples.find(s=>s.input==='S1'&&s.value===0)!.outputs.D1).toBeLessThan(.00001);
+-  await writeFile('../../../outputs/system-conversion/uno-roundtrip-execution.json',JSON.stringify(report,null,2));
++  await mkdir('../../../../../outputs/system-conversion', {recursive:true});
++  await writeFile('../../../../../outputs/system-conversion/uno-roundtrip-execution.json',JSON.stringify(report,null,2));
+  }finally{solver.dispose();}
+ },30000);
+diff --git a/frontend/src/__tests__/multiboard-functional.test.ts b/frontend/src/__tests__/multiboard-functional.test.ts
+--- a/frontend/src/__tests__/multiboard-functional.test.ts
++++ b/frontend/src/__tests__/multiboard-functional.test.ts
+@@ -1,5 +1,5 @@
+ // @vitest-environment jsdom
+-import {readFile,writeFile} from 'node:fs/promises';
++import {readFile,writeFile,mkdir} from 'node:fs/promises';
+ import {it,expect,vi} from 'vitest';
+ import {probeFunctionalSystem} from '../simulation/functional/FunctionalProbe';
+ import {functionalNets} from '../simulation/functional/circuit';
+@@ -32,7 +32,8 @@
+   expect(result.checks.find(c=>c.id==='feedback')?.status).toBe('pass');
+   const release=result.samples.find(s=>s.input==='S1'&&s.value===0)!,press=result.samples.find(s=>s.input==='S1'&&s.value===1)!;
+   expect(press.outputs.D1).toBeGreaterThan(release.outputs.D1+.001);
+-  await writeFile('../../../outputs/multiboard-workflow/pico-button-report.json',JSON.stringify(result,null,2));
++  await mkdir('../../../../../outputs/multiboard-workflow', {recursive:true});
++  await writeFile('../../../../../outputs/multiboard-workflow/pico-button-report.json',JSON.stringify(result,null,2));
+  }finally{solver.dispose();}
+ },120000);
+ it('executes Pico ADC-to-PWM dimming with 3.3V supply and 16-bit Python values',async()=>{
+@@ -48,6 +49,7 @@
+   expect(result.status,JSON.stringify(result)).toBe('pass');
+   const low=result.samples.find(s=>s.input==='S1'&&s.value===0)!,high=result.samples.find(s=>s.input==='S1'&&s.value===1023)!;
+   expect(high.outputs.D1).toBeGreaterThan(low.outputs.D1+.001);
+-  await writeFile('../../../outputs/multiboard-workflow/pico-dimmer-report.json',JSON.stringify(result,null,2));
++  await mkdir('../../../../../outputs/multiboard-workflow', {recursive:true});
++  await writeFile('../../../../../outputs/multiboard-workflow/pico-dimmer-report.json',JSON.stringify(result,null,2));
+  }finally{solver.dispose();}
+ },120000);
