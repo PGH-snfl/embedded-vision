@@ -116,6 +116,17 @@ def embedded_board_profiles():
 @app.get('/api/health')
 def health():return {'status':'ok','service':'editor','compiler':'isolated avr-g++','boards':['arduino:avr:uno']}
 
+@app.get('/api/editor/lessons')
+def editor_lessons():
+    from services.editor.backend.examples import lesson_catalog
+    return lesson_catalog()
+
+@app.get('/api/editor/lessons/{lesson_id}')
+def editor_lesson(lesson_id:str):
+    from services.editor.backend.examples import lesson_project
+    try:return lesson_project(lesson_id)
+    except KeyError:raise HTTPException(404,'등록된 아두이노 학습 예제가 없습니다.') from None
+
 @app.get('/api/editor/examples')
 def editor_examples():
     from ..design.board_profiles import board_profiles
@@ -157,7 +168,7 @@ async def import_editor_project(request:Request):
     path=editor_projects()/(project_id+'.json')
     with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'w') as stream:
         json.dump(project,stream,ensure_ascii=False)
-    return {'project_id':project_id,'editor_url':'/editor?embedded=1&standalone=1&editor_project='+project_id}
+    return {'project_id':project_id,'editor_url':'/editor?embedded=1&standalone=1&editor_project='+project_id+('&guide=1' if isinstance(source.get('learning_guide'),dict) else '')}
 
 @app.get('/api/editor/projects/{project_id}')
 def editor_project(project_id:str):

@@ -44,13 +44,22 @@ if [[ ! -d services/editor/vendor/velxio/.git ]]; then
   git -C services/editor/vendor/velxio apply ../../patches/velxio-portable-conversion.patch
   git -C services/editor/vendor/velxio apply ../../patches/velxio-toolbar-cards.patch
   git -C services/editor/vendor/velxio apply ../../patches/velxio-independent-editor.patch
+  git -C services/editor/vendor/velxio apply ../../patches/velxio-arduino-lessons.patch
 fi
-# Apply the new independent-home bridge to existing installations only if cleanly applicable.
-if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/velxio-independent-editor.patch 2>/dev/null; then
-  if git -C services/editor/vendor/velxio apply --check ../../patches/velxio-independent-editor.patch; then
-    git -C services/editor/vendor/velxio apply ../../patches/velxio-independent-editor.patch
+# A later patch can alter earlier patch context. Check the newest state first.
+if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/velxio-arduino-lessons.patch 2>/dev/null; then
+  if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/velxio-independent-editor.patch 2>/dev/null; then
+    if git -C services/editor/vendor/velxio apply --check ../../patches/velxio-independent-editor.patch; then
+      git -C services/editor/vendor/velxio apply ../../patches/velxio-independent-editor.patch
+    else
+      echo '기존 편집기 변경을 보존했습니다. README의 벤더 백업·재구성 절차를 확인하세요.' >&2
+      exit 1
+    fi
+  fi
+  if git -C services/editor/vendor/velxio apply --check ../../patches/velxio-arduino-lessons.patch; then
+    git -C services/editor/vendor/velxio apply ../../patches/velxio-arduino-lessons.patch
   else
-    echo '기존 편집기 변경을 보존했습니다. README의 벤더 백업·재구성 절차를 확인하세요.' >&2
+    echo '학습 가이드 패치 충돌: 기존 변경을 보존했습니다. 벤더 백업·재구성 절차를 확인하세요.' >&2
     exit 1
   fi
 fi

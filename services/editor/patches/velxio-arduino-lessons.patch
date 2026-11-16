@@ -1,0 +1,275 @@
+diff --git a/frontend/src/components/embeddedMotionBridge.ts b/frontend/src/components/embeddedMotionBridge.ts
+--- a/frontend/src/components/embeddedMotionBridge.ts
++++ b/frontend/src/components/embeddedMotionBridge.ts
+@@ -4,7 +4,9 @@
+   | { handled: true; error?: string };
+ 
+ let motionSource: Record<string, unknown> | undefined;
+-export function setMotionSource(source: Record<string, unknown> | undefined) { motionSource = source; }
++const sourceListeners=new Set<()=>void>();
++export function subscribeMotionSource(listener:()=>void) { sourceListeners.add(listener);return ()=>{sourceListeners.delete(listener);}; }
++export function setMotionSource(source: Record<string, unknown> | undefined) { motionSource = source;sourceListeners.forEach(listener=>listener()); }
+ export function getMotionSource() { return motionSource; }
+ 
+ /** Legacy drafts have no comparable revision and must not replace a robot circuit. */
+diff --git a/frontend/src/components/circuitiny/assemblyGuide.ts b/frontend/src/components/circuitiny/assemblyGuide.ts
+--- a/frontend/src/components/circuitiny/assemblyGuide.ts
++++ b/frontend/src/components/circuitiny/assemblyGuide.ts
+@@ -25,17 +25,21 @@
+   return grouped;
+ }
+ 
++/** Read the loaded project, including projects opened through a short editor ID. */
++export function guideFromSource(source: unknown): { steps: GroupedAssemblyStep[]; note: string } {
++  const assembly=(source as any)?.assembly;
++  if (!Array.isArray(assembly?.steps)) return {steps:[],note:''};
++  const steps=assembly.steps.filter((s:any)=>s && typeof s.from==='string' && typeof s.to==='string' && (s.kind==='insert'||s.kind==='jumper')) as AssemblyStep[];
++  return {steps:groupAssemblySteps(steps),note:typeof assembly.note==='string'?assembly.note:''};
++}
++
+ export function guideSteps(hash: string): { steps: GroupedAssemblyStep[]; note: string } {
+   try {
+-    const encoded = new URLSearchParams(hash.replace(/^#/, '')).get('project');
+-    if (!encoded) return { steps: [], note: '' };
+-    const data = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), c => c.charCodeAt(0))));
+-    const assembly = data.embeddedVision?.assembly;
+-    if (!Array.isArray(assembly?.steps)) return { steps: [], note: '' };
+-    const steps = assembly.steps.filter((s: any) => typeof s.from === 'string' && typeof s.to === 'string' && (s.kind === 'insert' || s.kind === 'jumper')) as AssemblyStep[];
+-    // Place components before adding jumper wires, preserving each group's original order.
+-    return { steps: groupAssemblySteps(steps), note: typeof assembly.note === 'string' ? assembly.note : '' };
+-  } catch { return { steps: [], note: '' }; }
++    const encoded=new URLSearchParams(hash.replace(/^#/, '')).get('project');
++    if (!encoded) return {steps:[],note:''};
++    const data=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded),c=>c.charCodeAt(0))));
++    return guideFromSource(data.embeddedVision);
++  } catch {return {steps:[],note:''};}
+ }
+ 
+ export function findStepWire(step: AssemblyStep, wires: GuideWire[]): GuideWire | undefined {
+diff --git a/frontend/src/components/circuitiny/CircuitinyEditor.tsx b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
++import { useEffect, useLayoutEffect, useRef, useState, useMemo, useSyncExternalStore } from 'react';
+ import Viewer3D from './Viewer3D';
+ import {SelectionCard} from './SelectionCard';
+ import {EnclosureControls,EnclosureDetails} from './EnclosureView';
+@@ -18,7 +18,7 @@
+ import { getSensorControlForComponent } from '../../simulation/sensorControlConfig';
+ import { readPinInfo } from '../../utils/readPinInfo';
+ import { sharedTool, SHARED_PIN_EVENT } from './sharedTools';
+-import { guideSteps, findStepWire, readableRef, guideWarning } from './assemblyGuide';
++import { guideSteps, guideFromSource, findStepWire, readableRef, guideWarning } from './assemblyGuide';
+ import { guideConnectionColor, guideConnectionNumber } from './guideGraphic';
+ import { GuideGraphic } from './GuideGraphic';
+ import { useBreadboardHoverPreview } from './useBreadboardHoverPreview';
+@@ -27,7 +27,8 @@
+ import {restoreAssembly} from './assemblyPlanner';
+ import {requestAssembly} from './assemblyClient';
+ import {assemblyRoutingCache} from './assemblyRoutingCache';
+-import {getMotionSource} from '../embeddedMotionBridge';
++import {getMotionSource,subscribeMotionSource} from '../embeddedMotionBridge';
++import {readLearningGuide,LessonTabs,LessonPreparation,LessonRun,type LessonPhase} from './LessonGuide';
+ import {buildVlxPayload} from '../../utils/vlxFile';
+ import {
+   rotateSelected,
+@@ -50,15 +51,19 @@
+ 
+ export function CircuitinyEditor({ onEdit, toolbarHost }: { onEdit: () => void; toolbarHost?:HTMLElement|null }) {
+   const hoverPreview = useBreadboardHoverPreview();
+-  const [guide] = useState(() => guideSteps(window.location.hash));
+-  const [guideOpen, setGuideOpen] = useState(false);
++  const source=useSyncExternalStore(subscribeMotionSource,getMotionSource,()=>undefined);
++  const guide=useMemo(()=>source?guideFromSource(source):guideSteps(window.location.hash),[source]);
++  const lesson=useMemo(()=>readLearningGuide(source),[source]);
++  const [guideOpen, setGuideOpen] = useState(()=>new URLSearchParams(location.search).get('guide')==='1');
++  const [guidePhase,setGuidePhase]=useState<LessonPhase>('prepare');
+   const [optimizing,setOptimizing]=useState(false);
+   const optimizer=useRef<AbortController|null>(null);
+   useEffect(()=>()=>optimizer.current?.abort(),[]);
+   const [guideIndex, setGuideIndex] = useState(0);
++  useEffect(()=>{setGuideIndex(0);setGuidePhase('prepare');},[lesson?.id]);
+   const [guideFocusRevision, setGuideFocusRevision] = useState(0);
+   const guidePanel = useRef<HTMLElement>(null);
+-  useLayoutEffect(() => { if (guidePanel.current) guidePanel.current.scrollTop = 0; }, [guideIndex, guideOpen]);
++  useLayoutEffect(() => { if (guidePanel.current) guidePanel.current.scrollTop = 0; }, [guideIndex, guideOpen, guidePhase]);
+   const [details, setDetails] = useState(false),
+     [start, setStart] = useState(''),
+     [end, setEnd] = useState(''),
+@@ -344,12 +349,16 @@
+       }}
+     >
+       <div className={guideOpen ? 'ev-3d-viewport ev-3d-viewport-guide' : 'ev-3d-viewport'}>
+-        <Viewer3D guideConnections={guideOpen && guideStep && !guideProblem ? guideStep.connections : []} guideFocusRevision={guideFocusRevision} />
++        <Viewer3D guideConnections={guideOpen && (!lesson || guidePhase==='wiring') && guideStep && !guideProblem ? guideStep.connections : []} guideFocusRevision={guideFocusRevision} />
+       </div>
+       {toolbarHost?createPortal(toolbar,toolbarHost):toolbar}
+-      {guideOpen && guideStep && <aside ref={guidePanel} className="ev-c3d-guide" aria-label="단계별 조립 가이드">
+-        <div className="ev-guide-header"><strong>조립 가이드</strong><button disabled={!!guideProblem} onClick={() => setGuideFocusRevision(n => n + 1)}>3D 연결 위치 확대</button><span>{guideIndex + 1} / {guide.steps.length}</span></div>
+-        <p className="ev-guide-safety">실제 조립 전 전원을 분리하세요. 이 안내는 사진 원본이 아닌 새 설계 기준입니다.</p>
++      {guideOpen && guideStep && <aside ref={guidePanel} className={lesson?'ev-c3d-guide ev-lesson-guide':'ev-c3d-guide'} aria-label="단계별 조립 가이드">
++        <div className="ev-guide-header"><strong>{lesson?lesson.title:'조립 가이드'}</strong>{(!lesson || guidePhase==='wiring') && <button disabled={!!guideProblem} onClick={() => setGuideFocusRevision(n => n + 1)}>3D 연결 위치 확대</button>}<span>{!lesson || guidePhase==='wiring' ? `${guideIndex+1} / ${guide.steps.length}` : guidePhase==='prepare' ? '준비물' : '실행 확인'}</span></div>
++        {lesson && <LessonTabs phase={guidePhase} onChange={setGuidePhase}/>}
++        <p className="ev-guide-safety">실제 조립 전 전원을 분리하세요. 이 안내는 준비된 예제·새 설계의 연결 기준입니다.</p>
++        {lesson && guidePhase==='prepare' && <LessonPreparation lesson={lesson} onStart={()=>{setGuidePhase('wiring');setGuideFocusRevision(n=>n+1);}}/>}
++        {lesson && <div hidden={guidePhase!=='run'}><LessonRun key={lesson.id} lesson={lesson} running={running}/></div>}
++        {(!lesson || guidePhase==='wiring') && <>
+         <h3>{guideStep.kind === 'insert' ? '부품 다리를 빵판에 꽂으세요' : '점퍼선을 연결하세요'}</h3>
+         <p className="ev-guide-caption">3D 화면은 완성된 회로입니다. 아래 그림은 현재 단계의 연결 위치를 확대합니다.</p>
+         {!guideProblem && <GuideGraphic step={guideStep} connections={guideStep.connections} wires={wires} type={guidePart?.metadataId || (guideStep.from.startsWith('U1.') ? 'board' : '')} color={guideWire?.color}/>}
+@@ -362,6 +371,8 @@
+         {guideProblem && <p className="ev-guide-warning" role="alert">{guideProblem}</p>}
+         <details><summary>빵판 연결 원리</summary><p>{guide.note || '같은 열의 다섯 구멍은 서로 연결됩니다. 가운데 홈 양쪽은 서로 연결되지 않습니다.'}</p><p>실제 빵판의 전원 레일이 중간에서 분리되어 있는지도 확인하세요.</p></details>
+         <div className="ev-guide-actions"><button disabled={guideIndex === 0} onClick={() => { setGuideIndex(guideIndex - 1); setGuideFocusRevision(n => n + 1); }}>이전</button><button disabled={guideIndex === guide.steps.length - 1} onClick={() => { setGuideIndex(guideIndex + 1); setGuideFocusRevision(n => n + 1); }}>다음 단계</button></div>
++        {lesson && guideIndex===guide.steps.length-1 && <button className="ev-lesson-next" onClick={()=>setGuidePhase('run')}>배선 완료 · 실행 확인 →</button>}
++        </>}
+       </aside>}
+       {wireMode && !running && (
+         <div className="ev-c3d-pin-panel">
+diff --git a/frontend/src/components/circuitiny/CircuitinyEditor.css b/frontend/src/components/circuitiny/CircuitinyEditor.css
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.css
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.css
+@@ -333,3 +333,7 @@
+   visibility: visible;
+   pointer-events: auto;
+ }
++
++.ev-lesson-tabs{display:flex;gap:6px;margin:10px 0 14px;flex-wrap:wrap}.ev-lesson-tabs button{flex:1;min-height:42px;padding:8px;font-size:13px;white-space:normal}.ev-lesson-tabs button[aria-pressed=true],.ev-lesson-next{background:#236c53!important;color:#fff!important;border-color:#236c53!important}.ev-lesson-body h3{font-size:16px;margin:18px 0 10px}.ev-lesson-body p,.ev-lesson-body li{font-size:14px;line-height:1.7}.ev-lesson-body ul,.ev-lesson-body ol{padding-left:22px}.ev-lesson-materials{list-style:none;padding:0!important}.ev-lesson-materials li{padding:6px 0;border-bottom:1px solid #dce4df}.ev-lesson-materials b{display:inline-block;min-width:44px;color:#376554}.ev-lesson-next{width:100%;min-height:44px;margin-top:16px;white-space:normal}.ev-lesson-checks{display:grid;gap:10px}.ev-lesson-checks label{display:flex;align-items:flex-start;gap:10px;font-size:14px;line-height:1.6;cursor:pointer}.ev-lesson-checks input{flex-shrink:0;width:18px;height:18px;margin-top:3px}.ev-lesson-body code{font-size:12px;overflow-wrap:anywhere}.ev-lesson-runtime{border-left:3px solid #328b66;padding-left:10px}
++
++.ev-c3d-guide.ev-lesson-guide{top:12px;max-height:calc(100% - 24px)}.ev-lesson-guide .ev-guide-visual svg{max-height:220px}.ev-lesson-guide .ev-guide-visual figcaption{font-size:11px;line-height:1.5}@media(max-width:700px){.ev-c3d-guide.ev-lesson-guide{top:auto;bottom:12px;max-height:46%}}
+diff --git a/frontend/src/components/circuitiny/GuideGraphic.tsx b/frontend/src/components/circuitiny/GuideGraphic.tsx
+--- a/frontend/src/components/circuitiny/GuideGraphic.tsx
++++ b/frontend/src/components/circuitiny/GuideGraphic.tsx
+@@ -1,5 +1,5 @@
+ import type { AssemblyStep } from './assemblyGuide';
+-import { readableRef } from './assemblyGuide';
++import { readableRef,findStepWire } from './assemblyGuide';
+ import { graphicColumns, graphicPlacements, guideConnectionColor, guideConnectionNumber } from './guideGraphic';
+ import type { Wire } from '../../types/wire';
+ 
+@@ -16,6 +16,12 @@
+ export function GuideGraphic({step, connections, wires, type, color}: {step: AssemblyStep; connections: AssemblyStep[]; wires: Wire[]; type: string; color?: string}) {
+   const placements = graphicPlacements(step, connections, wires);
+   const columns = placements && graphicColumns(placements);
++  if (step.kind==='jumper' && !step.from.startsWith('BB1.') && !step.to.startsWith('BB1.') && findStepWire(step,wires)) return <figure className="ev-guide-visual" aria-label="부품 사이 연결 그림">
++    <svg viewBox="0 0 420 140" role="img" aria-label={readableRef(step.from)+' → '+readableRef(step.to)}>
++      {[40,260].map((x,i)=><g key={x}><rect x={x} y="16" width="120" height="108" rx="10" fill={i?'#fbfaf5':'#edf6f1'} stroke="#cbdad1"/><text x={x+60} y="45" textAnchor="middle" className="ev-guide-svg-name">{(i?step.to:step.from).split('.')[0]}</text><text x={x+60} y="86" textAnchor="middle" className="ev-guide-svg-pin">{(i?step.to:step.from).split('.').slice(1).join('.')} 핀</text></g>)}
++      <path d="M165 70H252m-8-6 8 6-8 6" stroke={color||'#297e63'} strokeWidth="4" fill="none"/>
++    </svg><figcaption>{readableRef(step.from)} → {readableRef(step.to)}. 양 끝을 한 단계에서 연결합니다. 실제 위치는 3D 포인터로 확인하세요.</figcaption>
++  </figure>;
+   if (!placements || !columns?.length) return <p className="ev-guide-graphic-unavailable" role="status">현재 연결을 확인할 수 없어 확대 그림을 표시하지 않습니다.</p>;
+   const inserting = step.kind === 'insert';
+   const rows = 'ABCDEFGHIJ'.split('');
+diff --git a/frontend/src/components/EmbeddedVisionBridge.tsx b/frontend/src/components/EmbeddedVisionBridge.tsx
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -101,7 +101,7 @@
+    setKey(storageKey);
+    setMotionSource(source);
+    onReady?.(true,restored,translatedSimulationNotice(source.recipe),isInspection);
+-   setTitle(source.function?.summary||original.name||'새 회로');
++   setTitle(source.learning_guide?.title||source.function?.summary||original.name||'새 회로');
+    setBehavior(isInspection?'':initialSimulationBehavior(source));
+    setReturnUrl(independent?'/':analysisReturnUrl(hostedWorkspace(),source.analysis_origin));
+    setNotice(source.standalone_notice||source.simulation_notice||'');
+@@ -126,7 +126,7 @@
+  },[]);
+  return <header className="ev-topbar">
+   <div className="ev-project">
+-   <div className="ev-eyebrow"><a href={returnUrl} target={new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">{standalone?'← 편집기 홈':'← 사진 분석'}</a><span>{standalone?'EMBEDDED EDITOR':'EMBEDDED VISION'} / {inspection?'STRUCTURE':'SIMULATOR'}</span></div>
++   <div className="ev-eyebrow"><a href={returnUrl} target={standalone||new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">{standalone?'← 편집기 홈':'← 사진 분석'}</a><span>{standalone?'EMBEDDED EDITOR':'EMBEDDED VISION'} / {inspection?'STRUCTURE':'SIMULATOR'}</span></div>
+    <h1>{title}</h1>{behavior&&!standalone&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
+   </div>
+   <EmbeddedToolCard title="프로젝트 저장" className="ev-project-actions">
+diff --git a/frontend/src/components/circuitiny/LessonGuide.tsx b/frontend/src/components/circuitiny/LessonGuide.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/LessonGuide.tsx
+@@ -0,0 +1,34 @@
++import {useState} from 'react';
++
++export type LessonPhase='prepare'|'wiring'|'run';
++export type LearningGuide={id:string;title:string;summary:string;goals:string[];materials:{ref:string;name:string;quantity:number}[];jumper_count:number;code_notes:{token:string;meaning:string}[];run_steps:string[];checks:string[];challenge:string};
++export function readLearningGuide(source:unknown):LearningGuide|null {
++ const guide=(source as any)?.learning_guide;
++ const strings=(a:unknown)=>Array.isArray(a)&&a.every(x=>typeof x==='string');
++ if(!guide||guide.version!==1||!['id','title','summary','challenge'].every(k=>typeof guide[k]==='string')||!['goals','run_steps','checks'].every(k=>strings(guide[k]))||!Array.isArray(guide.materials)||!guide.materials.every((x:any)=>x&&typeof x.ref==='string'&&typeof x.name==='string'&&Number.isInteger(x.quantity)&&x.quantity>0)||!Array.isArray(guide.code_notes)||!guide.code_notes.every((x:any)=>x&&typeof x.token==='string'&&typeof x.meaning==='string')||!Number.isInteger(guide.jumper_count)||guide.jumper_count<0)return null;
++ return guide;
++}
++export function LessonTabs({phase,onChange}:{phase:LessonPhase;onChange:(phase:LessonPhase)=>void}) {
++ return <nav className="ev-lesson-tabs" aria-label="예제 따라 하기 순서">{([['prepare','① 준비물'],['wiring','② 배선'],['run','③ 실행 확인']] as const).map(([id,label])=><button key={id} aria-pressed={phase===id} onClick={()=>onChange(id)}>{label}</button>)}</nav>;
++}
++export function LessonPreparation({lesson,onStart}:{lesson:LearningGuide;onStart:()=>void}) {
++ return <section className="ev-lesson-body" aria-label="예제 준비물">
++  <h3>어떤 회로인가요?</h3><p>{lesson.summary}</p>
++  <h3>준비할 부품</h3><ul className="ev-lesson-materials">{lesson.materials.map(p=><li key={p.ref}><b>{p.ref}</b> {p.name} × {p.quantity}</li>)}<li>점퍼선 {lesson.jumper_count}개</li></ul>
++  <p>실물로 따라 만들 때는 UNO용 USB 케이블도 준비하세요. 화면에는 완성된 회로가 미리 배치되어 있습니다.</p>
++  <details><summary>이 예제에서 배우는 내용</summary><ul>{lesson.goals.map(goal=><li key={goal}>{goal}</li>)}</ul></details>
++  <button className="ev-lesson-next" onClick={onStart}>부품·배선 따라 연결하기 →</button>
++ </section>;
++}
++export function LessonRun({lesson,running}:{lesson:LearningGuide;running:boolean}) {
++ const [checked,setChecked]=useState<number[]>([]);
++ return <section className="ev-lesson-body" aria-label="예제 실행 확인">
++  <p className="ev-lesson-runtime" role="status">{running?'시뮬레이션 실행 중 · 아래 동작을 직접 확인하세요.':'상단 ‘시뮬레이션 실행’을 누르면 준비된 코드가 실행됩니다.'}</p>
++  <h3>실행 순서</h3><ol>{lesson.run_steps.map(step=><li key={step}>{step}</li>)}</ol>
++  <h3>내가 확인한 동작 {checked.length} / {lesson.checks.length}</h3><p>실제로 확인한 항목을 체크하세요. 자동 검사 결과가 아닙니다.</p>
++  <div className="ev-lesson-checks">{lesson.checks.map((text,index)=><label key={text}><input type="checkbox" checked={checked.includes(index)} onChange={()=>setChecked(prev=>prev.includes(index)?prev.filter(x=>x!==index):[...prev,index])}/><span>{text}</span></label>)}</div>
++  <details><summary>코드가 하는 일</summary>{lesson.code_notes.map(note=><p key={note.token}><code>{note.token}</code><br/>{note.meaning}</p>)}</details>
++  <details><summary>값을 바꿔 도전해 보기</summary><p>{lesson.challenge}</p></details>
++  <p>회로와 코드를 수정하기 전에는 실행을 정지하세요. 완성 후 상단 ‘프로젝트 저장’으로 보관할 수 있습니다.</p>
++ </section>;
++}
+diff --git a/frontend/src/__tests__/editor-lessons.test.ts b/frontend/src/__tests__/editor-lessons.test.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/__tests__/editor-lessons.test.ts
+@@ -0,0 +1,47 @@
++// @vitest-environment jsdom
++import {it,expect,vi} from 'vitest';
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import {renderToStaticMarkup} from 'react-dom/server';
++import {guideFromSource,guideSteps} from '../components/circuitiny/assemblyGuide';
++import {getMotionSource,setMotionSource,subscribeMotionSource} from '../components/embeddedMotionBridge';
++import {LessonPreparation,LessonRun,readLearningGuide} from '../components/circuitiny/LessonGuide';
++import {GuideGraphic} from '../components/circuitiny/GuideGraphic';
++
++const lesson={version:1,id:'blink',title:'LED 깜빡이기',summary:'켜고 끄기',goals:['출력 제어'],materials:[{ref:'U1',name:'아두이노 UNO',quantity:1}],jumper_count:2,code_notes:[{token:'delay(500)',meaning:'0.5초 기다림'}],run_steps:['시뮬레이션 실행'],checks:['LED가 깜빡입니다.'],challenge:'시간 바꾸기'};
++
++it('provides guide data after a short-ID project loads, without a project hash',()=>{
++ setMotionSource(undefined);const listener=vi.fn(),stop=subscribeMotionSource(listener);
++ expect(guideSteps('').steps).toEqual([]);
++ const source={learning_guide:lesson,assembly:{steps:[{from:'R1.1',to:'BB1.23t.b',kind:'insert'},{from:'R1.2',to:'BB1.29t.b',kind:'insert'},{from:'U1.5',to:'BB1.23t.a',kind:'jumper'}],note:'다리 함께'}};
++ setMotionSource(source);expect(listener).toHaveBeenCalledOnce();
++ const guide=guideFromSource(getMotionSource());expect(guide.steps).toHaveLength(2);expect(guide.steps[0].connections).toHaveLength(2);
++ expect(readLearningGuide(getMotionSource())?.id).toBe('blink');
++ stop();setMotionSource(undefined);expect(listener).toHaveBeenCalledOnce();
++ expect(readLearningGuide({learning_guide:{...lesson,materials:[null]}})).toBeNull();
++});
++
++it('shows preparation and user-operated outcome checks with code hidden in details',async()=>{
++ vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
++ const host=document.createElement('div');document.body.append(host);const root=createRoot(host),onStart=vi.fn();
++ try{
++  await act(async()=>{root.render(createElement(LessonPreparation,{lesson,onStart}));});
++  expect(host.textContent).toContain('아두이노 UNO');
++  await act(async()=>{host.querySelector('button')!.click();});expect(onStart).toHaveBeenCalledOnce();
++  await act(async()=>{root.render(createElement(LessonRun,{lesson,running:false}));});
++  expect((host.querySelector('input') as HTMLInputElement).checked).toBe(false);
++  expect(host.textContent).toContain('자동 검사 결과가 아닙니다.');
++  expect(host.querySelectorAll('details')[0].open).toBe(false);
++  await act(async()=>{(host.querySelector('input') as HTMLInputElement).click();});
++  expect(host.querySelector('h3:nth-of-type(2)')?.textContent).toContain('1 / 1');
++ }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals();}
++});
++
++it('draws direct LCD pin connections only while the actual wire is present',()=>{
++ const step={from:'U1.12',to:'LCD1.RS',kind:'jumper' as const};
++ const wire={id:'J1',start:{componentId:'U1',pinName:'12',x:0,y:0},end:{componentId:'LCD1',pinName:'RS',x:0,y:0},color:'#159957',waypoints:[]};
++ const html=renderToStaticMarkup(createElement(GuideGraphic,{step,connections:[step],wires:[wire],type:'board'}));
++ expect(html).toContain('부품 사이 연결 그림');expect(html).toContain('RS 핀');
++ const missing=renderToStaticMarkup(createElement(GuideGraphic,{step,connections:[step],wires:[],type:'board'}));
++ expect(missing).not.toContain('<svg');
++});

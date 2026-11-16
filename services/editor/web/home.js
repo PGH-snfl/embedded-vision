@@ -12,7 +12,21 @@ async function example(model){
  try{const response=await fetch('/api/editor/examples/'+encodeURIComponent(model));if(!response.ok)throw Error('예제를 불러오지 못했습니다.');await openEditor(await response.json());}
  catch(error){status.textContent=error.message;}
 }
-document.querySelector('#new-project').onclick=()=>example('arduino-uno');
+async function lesson(id){
+ status.textContent='배선·코드·학습 가이드를 준비하고 있습니다…';
+ try{const response=await fetch('/api/editor/lessons/'+encodeURIComponent(id));if(!response.ok)throw Error('학습 예제를 불러오지 못했습니다.');await openEditor(await response.json());}
+ catch(error){status.textContent=error.message;}
+}
+document.querySelector('#new-project').onclick=()=>lesson('uno-led-blink');
+try{
+ const response=await fetch('/api/editor/lessons');if(!response.ok)throw Error('학습 예제 목록을 읽지 못했습니다.');
+ for(const item of await response.json()){
+  const card=document.createElement('article'),level=document.createElement('span'),title=document.createElement('h3'),summary=document.createElement('p'),button=document.createElement('button');
+  level.className='lesson-level';level.textContent=item.level;title.textContent=item.title;summary.textContent=item.summary;button.textContent='가이드와 함께 열기 →';button.onclick=()=>lesson(item.id);button.setAttribute('aria-label',item.title+' 가이드와 함께 열기');
+  card.append(level,title,summary,button);document.querySelector('#lessons').append(card);
+ }
+}catch(error){document.querySelector('#lesson-status').textContent=error.message;}
+
 document.querySelector('#project-file').onchange=async event=>{
  const file=event.target.files[0];if(!file)return;
  try{if(file.size>20*1024*1024)throw Error('프로젝트 파일은 20MB 이하로 선택하세요.');await openEditor(JSON.parse(await file.text()));}
