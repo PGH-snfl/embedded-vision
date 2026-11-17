@@ -1,0 +1,324 @@
+diff --git a/frontend/src/components/circuitiny/assemblyGuide.ts b/frontend/src/components/circuitiny/assemblyGuide.ts
+--- a/frontend/src/components/circuitiny/assemblyGuide.ts
++++ b/frontend/src/components/circuitiny/assemblyGuide.ts
+@@ -84,3 +84,9 @@
+   if (connections.some(s => !resolveGuidePin(project, s.from) || !resolveGuidePin(project, s.to))) return '3D에서 핀 위치를 확인하지 못해 강조를 숨겼습니다. 부품 핀과 빵판 구멍을 직접 확인하세요.';
+   return '';
+ }
++
++
++/** Numbers identify the two endpoints of ONE complete jumper, not two actions. */
++export function guideConnectionSentence(step: AssemblyStep): string {
++  return `① ${readableRef(step.from)} → ② ${readableRef(step.to)}을 점퍼선 하나로 연결하세요.`;
++}
+diff --git a/frontend/src/components/circuitiny/GuideGraphic.tsx b/frontend/src/components/circuitiny/GuideGraphic.tsx
+--- a/frontend/src/components/circuitiny/GuideGraphic.tsx
++++ b/frontend/src/components/circuitiny/GuideGraphic.tsx
+@@ -1,6 +1,7 @@
+ import type { AssemblyStep } from './assemblyGuide';
+ import { readableRef,findStepWire } from './assemblyGuide';
+ import { graphicColumns, graphicPlacements, guideConnectionColor, guideConnectionNumber } from './guideGraphic';
++import {GuideFlowDot} from './GuideFlowDot';
+ import type { Wire } from '../../types/wire';
+ 
+ function PartIcon({type}: {type: string}) {
+@@ -19,7 +20,7 @@
+   if (step.kind==='jumper' && !step.from.startsWith('BB1.') && !step.to.startsWith('BB1.') && findStepWire(step,wires)) return <figure className="ev-guide-visual" aria-label="부품 사이 연결 그림">
+     <svg viewBox="0 0 420 140" role="img" aria-label={readableRef(step.from)+' → '+readableRef(step.to)}>
+       {[40,260].map((x,i)=><g key={x}><rect x={x} y="16" width="120" height="108" rx="10" fill={i?'#fbfaf5':'#edf6f1'} stroke="#cbdad1"/><text x={x+60} y="45" textAnchor="middle" className="ev-guide-svg-name">{(i?step.to:step.from).split('.')[0]}</text><text x={x+60} y="86" textAnchor="middle" className="ev-guide-svg-pin">{(i?step.to:step.from).split('.').slice(1).join('.')} 핀</text></g>)}
+-      <path d="M165 70H252m-8-6 8 6-8 6" stroke={color||'#297e63'} strokeWidth="4" fill="none"/>
++      <path className="ev-guide-draw" pathLength="1" d="M165 70H252" stroke={color||'#297e63'} strokeWidth="4" fill="none"/><path d="M244 64l8 6-8 6" stroke={color||'#297e63'} strokeWidth="3" fill="none"/><GuideFlowDot path="M165 70H252" color={color||'#297e63'}/>
+     </svg><figcaption>{readableRef(step.from)} → {readableRef(step.to)}. 양 끝을 한 단계에서 연결합니다. 실제 위치는 3D 포인터로 확인하세요.</figcaption>
+   </figure>;
+   if (!placements || !columns?.length) return <p className="ev-guide-graphic-unavailable" role="status">현재 연결을 확인할 수 없어 확대 그림을 표시하지 않습니다.</p>;
+@@ -38,23 +39,23 @@
+     <svg viewBox="0 0 420 232" role="img" aria-label={title}>
+       <rect x="5" y="9" width="139" height="191" rx="10" fill="#edf6f1" stroke="#d4e4da"/>
+       <text x="74" y="32" textAnchor="middle" className="ev-guide-svg-heading">{inserting ? '연결할 부품' : '① 연결할 부품'}</text>
+-      <PartIcon type={type}/>
++      <g className="ev-guide-part-enter"><PartIcon type={type}/></g>
+       <text x="74" y="143" textAnchor="middle" className="ev-guide-svg-name">{step.from.split('.')[0]}</text>
+       <text x="74" y="163" textAnchor="middle" className="ev-guide-svg-pin">{inserting ? '모든 다리 함께' : step.from.split('.').slice(1).join('.') + ' 핀'}</text>
+       <rect x="192" y="9" width="220" height="210" rx="10" fill="#fbfaf5" stroke="#d8ded7"/>
+       <text x="302" y="28" textAnchor="middle" className="ev-guide-svg-heading">{inserting ? '빵판 확대' : '② 빵판 확대'}</text>
+       <rect x="204" y="116" width="196" height="13" rx="5" fill="#dce5df"/><text x="302" y="126" textAnchor="middle" fontSize="8" fill="#596d60">가운데 홈</text>
++      {!inserting && <><path className="ev-guide-draw" pathLength="1" d={`M145 110 C165 110 170 ${yFor(placements[0].hole.row)} ${xFor(placements[0].hole.column)} ${yFor(placements[0].hole.row)}`} fill="none" stroke={wireColor} strokeWidth="3"/><GuideFlowDot path={`M145 110 C165 110 170 ${yFor(placements[0].hole.row)} ${xFor(placements[0].hole.column)} ${yFor(placements[0].hole.row)}`} color={wireColor}/></>}
+       {columns.map(col => <text key={col} x={xFor(col)} y="45" textAnchor="middle" fontSize="10" fill="#4d6356" fontWeight={placements.some(p => p.hole.column === col) ? '700' : '400'}>{col}</text>)}
+       {rows.map(row => <g key={row}><text x="207" y={yFor(row)+3} textAnchor="middle" fontSize="9" fill="#4d6356">{row}</text>{columns.map(col => {
+         const index = placements.findIndex(p => p.hole.column === col && p.hole.row === row);
+         const marked = index >= 0;
+         const markColor = inserting ? guideConnectionColor(index) : guideConnectionColor(1);
+-        return <g key={col}><circle cx={xFor(col)} cy={yFor(row)} r={marked ? 6 : 3.5} fill={marked ? markColor : '#43544c'} stroke={marked ? '#fff' : '#ccd5cb'} strokeWidth={marked ? 1.4 : .6}/>{marked && <text x={xFor(col)} y={yFor(row)+2.5} textAnchor="middle" fontSize="7" fill="white" fontWeight="700">{inserting ? index+1 : 2}</text>}</g>;
++        return <g key={col}><circle className={marked?'ev-guide-pin-pulse':undefined} cx={xFor(col)} cy={yFor(row)} r={marked ? 6 : 3.5} fill={marked ? markColor : '#43544c'} stroke={marked ? '#fff' : '#ccd5cb'} strokeWidth={marked ? 1.4 : .6}/>{marked && <text x={xFor(col)} y={yFor(row)+2.5} textAnchor="middle" fontSize="7" fill="white" fontWeight="700">{inserting ? index+1 : 2}</text>}</g>;
+       })}</g>)}
+-      {!inserting && <><path d={`M145 110 C160 110 164 ${yFor(placements[0].hole.row)} 190 ${yFor(placements[0].hole.row)}`} fill="none" stroke={wireColor} strokeWidth="3"/><path d={`M184 ${yFor(placements[0].hole.row)-4} l7 4 -7 4`} fill="none" stroke={wireColor} strokeWidth="2"/></>}
+       <text x="302" y="216" textAnchor="middle" fontSize="10" fill="#34543d" fontWeight="700">{inserting ? '번호에 맞춰 모든 다리 연결' : `② ${target} 구멍`}</text>
+     </svg>
+-    <figcaption>확대 안내 그림 · 부품 모양과 크기는 단순화했습니다. 실제 핀 위치는 3D 표시와 부품 표기를 확인하세요.{inserting && ' 모든 다리를 한 번에 꽂습니다.'}</figcaption>
++    <figcaption>배선 연결 안내 애니메이션 · ①·②는 한 배선의 연결 위치 번호입니다. 부품 모양과 크기는 단순화했습니다. 실제 핀 위치는 3D 표시와 부품 표기를 확인하세요.{inserting && ' 모든 다리를 한 번에 꽂습니다.'}</figcaption>
+     {inserting && <div className="ev-guide-leg-list" aria-label="부품의 다리와 빵판 구멍">{placements.map((p, index) => <span key={p.pin} style={{color:guideConnectionColor(index)}}><b>{guideConnectionNumber(index)}</b> {pinLabel(p.pin)} → {p.hole.row}{p.hole.column}</span>)}</div>}
+   </figure>;
+ }
+diff --git a/frontend/src/components/circuitiny/CircuitinyEditor.tsx b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -19,7 +19,7 @@
+ import { getSensorControlForComponent } from '../../simulation/sensorControlConfig';
+ import { readPinInfo } from '../../utils/readPinInfo';
+ import { sharedTool, SHARED_PIN_EVENT } from './sharedTools';
+-import { guideSteps, guideFromSource, findStepWire, readableRef, guideWarning } from './assemblyGuide';
++import { guideSteps, guideFromSource, guideConnectionSentence, findStepWire, readableRef, guideWarning } from './assemblyGuide';
+ import { guideConnectionColor, guideConnectionNumber } from './guideGraphic';
+ import { GuideGraphic } from './GuideGraphic';
+ import { useBreadboardHoverPreview } from './useBreadboardHoverPreview';
+@@ -346,20 +346,23 @@
+         <div className="ev-guide-header"><strong>{lesson?lesson.title:'조립 가이드'}</strong>{(!lesson || guidePhase==='wiring') && <button disabled={!!guideProblem} onClick={() => setGuideFocusRevision(n => n + 1)}>3D 연결 위치 확대</button>}<span>{!lesson || guidePhase==='wiring' ? `${guideIndex+1} / ${guide.steps.length}` : guidePhase==='prepare' ? '준비물' : '실행 확인'}</span></div>
+         {lesson && <LessonTabs phase={guidePhase} onChange={setGuidePhase}/>}
+         <p className="ev-guide-safety">실제 조립 전 전원을 분리하세요. 이 안내는 준비된 예제·새 설계의 연결 기준입니다.</p>
+-        {lesson && guidePhase==='prepare' && <LessonPreparation lesson={lesson} onStart={()=>{setGuidePhase('wiring');setGuideFocusRevision(n=>n+1);}}/>}
+-        {lesson && <div hidden={guidePhase!=='run'}><LessonRun key={lesson.id} lesson={lesson} running={running}/></div>}
++        {lesson && guidePhase==='prepare' && <div className="ev-guide-phase-enter"><LessonPreparation lesson={lesson} onStart={()=>{setGuidePhase('wiring');setGuideFocusRevision(n=>n+1);}}/></div>}
++        {lesson && <div className="ev-guide-phase-enter" hidden={guidePhase!=='run'}><LessonRun key={lesson.id} lesson={lesson} running={running}/></div>}
+         {(!lesson || guidePhase==='wiring') && <>
+-        <h3>{guideStep.kind === 'insert' ? '부품 다리를 빵판에 꽂으세요' : '점퍼선을 연결하세요'}</h3>
++        <div className="ev-guide-step-content" key={guideIndex+':'+guideStep.from+':'+guideStep.to+':'+guideFocusRevision}>
++        <div className="ev-guide-step-heading"><h3>{guideStep.kind==='insert'?'부품 다리를 함께 꽂으세요':'점퍼선 연결 · 한 단계'}</h3><button aria-label="현재 단계 애니메이션 다시 보기" disabled={!!guideProblem} onClick={()=>setGuideFocusRevision(n=>n+1)}>↻ 다시 보기</button></div>
++        {!guideProblem && guideStep.kind==='jumper' && <p className="ev-guide-connection-sentence" aria-live="polite"><strong>{guideConnectionSentence(guideStep)}</strong></p>}
++        {guideProblem && <p className="ev-guide-warning" role="alert">{guideProblem}</p>}
+         <p className="ev-guide-caption">3D 화면은 완성된 회로입니다. 아래 그림은 현재 단계의 연결 위치를 확대합니다.</p>
+         {!guideProblem && <GuideGraphic step={guideStep} connections={guideStep.connections} wires={wires} type={guidePart?.metadataId || (guideStep.from.startsWith('U1.') ? 'board' : '')} color={guideWire?.color}/>}
+-        {guideStep.kind === 'insert' ? <div aria-label="부품 다리 연결 위치">{guideStep.connections.map((connection, i) => <p key={connection.from} style={{color:guideConnectionColor(i)}}><b>{guideConnectionNumber(i)} {readableRef(connection.from)} → {readableRef(connection.to)}</b></p>)}</div> : <p><b className="ev-guide-blue">① {readableRef(guideStep.from)}</b><br/>→ <b className="ev-guide-orange">② {readableRef(guideStep.to)}</b></p>}
+-        <p>{guideStep.kind === 'insert' ? '표시한 위치에 모든 다리를 동시에 꽂으세요. LED는 긴 다리와 짧은 다리의 방향을 확인하세요.' : '표시된 두 위치를 점퍼선으로 연결합니다. 선 색은 구분을 위한 권장 색입니다.'}</p>
++        {guideStep.kind === 'insert' ? <div aria-label="부품 다리 연결 위치">{guideStep.connections.map((connection, i) => <p key={connection.from} style={{color:guideConnectionColor(i)}}><b>{guideConnectionNumber(i)} {readableRef(connection.from)} → {readableRef(connection.to)}</b></p>)}</div> : null}
++        <p>{guideStep.kind === 'insert' ? '표시한 위치에 모든 다리를 동시에 꽂으세요. LED는 긴 다리와 짧은 다리의 방향을 확인하세요.' : '연결선이 ①에서 ②로 이어지는 모습을 보고 양 끝을 함께 연결하세요. 선 색은 구분을 위한 권장 색입니다.'}</p>
+         {guidePart?.metadataId === 'resistor' && <p>준비물: {guidePart.id} 저항 {String(guidePart.properties.value || '값 확인 필요')} Ω</p>}
+         {guidePart?.metadataId === 'photoresistor-sensor' && <p>조도 센서는 빵판 옆에 두고 점퍼선으로 연결합니다. VCC는 전원, GND는 접지, AO는 밝기에 따른 전압 출력입니다. 이 모듈은 가상 사양이므로 실제 핀·전압과 출력 방향을 확인하세요.</p>}
+         {guidePart?.metadataId.startsWith('pushbutton') && <p>이 가상 버튼은 1.l과 1.r, 2.l과 2.r이 각각 항상 연결되고, 서로 다른 번호는 누를 때 연결됩니다. 실제 부품의 접점 배열은 측정해 확인하세요.</p>}
+         {guideWire?.color && guideStep.kind === 'jumper' && <p>화면의 선 색: <span className="ev-guide-swatch" style={{background:guideWire.color}}/> {guideWire.color}</p>}
+-        {guideProblem && <p className="ev-guide-warning" role="alert">{guideProblem}</p>}
+         <details><summary>빵판 연결 원리</summary><p>{guide.note || '같은 열의 다섯 구멍은 서로 연결됩니다. 가운데 홈 양쪽은 서로 연결되지 않습니다.'}</p><p>실제 빵판의 전원 레일이 중간에서 분리되어 있는지도 확인하세요.</p></details>
++        </div>
+         <div className="ev-guide-actions"><button disabled={guideIndex === 0} onClick={() => { setGuideIndex(guideIndex - 1); setGuideFocusRevision(n => n + 1); }}>이전</button><button disabled={guideIndex === guide.steps.length - 1} onClick={() => { setGuideIndex(guideIndex + 1); setGuideFocusRevision(n => n + 1); }}>다음 단계</button></div>
+         {lesson && guideIndex===guide.steps.length-1 && <button className="ev-lesson-next" onClick={()=>setGuidePhase('run')}>배선 완료 · 실행 확인 →</button>}
+         </>}
+diff --git a/frontend/src/components/circuitiny/CircuitinyEditor.css b/frontend/src/components/circuitiny/CircuitinyEditor.css
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.css
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.css
+@@ -337,3 +337,25 @@
+ .ev-lesson-tabs{display:flex;gap:6px;margin:10px 0 14px;flex-wrap:wrap}.ev-lesson-tabs button{flex:1;min-height:42px;padding:8px;font-size:13px;white-space:normal}.ev-lesson-tabs button[aria-pressed=true],.ev-lesson-next{background:#236c53!important;color:#fff!important;border-color:#236c53!important}.ev-lesson-body h3{font-size:16px;margin:18px 0 10px}.ev-lesson-body p,.ev-lesson-body li{font-size:14px;line-height:1.7}.ev-lesson-body ul,.ev-lesson-body ol{padding-left:22px}.ev-lesson-materials{list-style:none;padding:0!important}.ev-lesson-materials li{padding:6px 0;border-bottom:1px solid #dce4df}.ev-lesson-materials b{display:inline-block;min-width:44px;color:#376554}.ev-lesson-next{width:100%;min-height:44px;margin-top:16px;white-space:normal}.ev-lesson-checks{display:grid;gap:10px}.ev-lesson-checks label{display:flex;align-items:flex-start;gap:10px;font-size:14px;line-height:1.6;cursor:pointer}.ev-lesson-checks input{flex-shrink:0;width:18px;height:18px;margin-top:3px}.ev-lesson-body code{font-size:12px;overflow-wrap:anywhere}.ev-lesson-runtime{border-left:3px solid #328b66;padding-left:10px}
+ 
+ .ev-c3d-guide.ev-lesson-guide{top:12px;max-height:calc(100% - 24px)}.ev-lesson-guide .ev-guide-visual svg{max-height:220px}.ev-lesson-guide .ev-guide-visual figcaption{font-size:11px;line-height:1.5}@media(max-width:700px){.ev-c3d-guide.ev-lesson-guide{top:auto;bottom:12px;max-height:46%}}
++
++/* All animations describe one complete connection; endpoint numbers are never stages. */
++.ev-guide-step-content,.ev-guide-phase-enter{animation:ev-guide-enter .24s ease-out both;}
++.ev-guide-step-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;}
++.ev-guide-step-heading button{flex-shrink:0;min-height:32px;padding:5px 8px;font-size:12px;}
++.ev-guide-connection-sentence{padding:10px 12px;border-left:3px solid #297e63;background:#edf6f1;border-radius:5px;line-height:1.8;overflow-wrap:anywhere;}
++.ev-guide-draw{stroke-dasharray:1;stroke-dashoffset:1;animation:ev-guide-draw 1s ease-out forwards;}
++.ev-guide-motion-dot{animation:ev-guide-dot-fade 1.8s linear both;}
++.ev-guide-pin-pulse{transform-box:fill-box;transform-origin:center;animation:ev-guide-pin-pulse 1.4s ease-out;}
++.ev-guide-part-enter{animation:ev-guide-seat .6s ease-out both;}
++.ev-guide-pin-label{animation:ev-guide-label .9s ease-out;}
++@keyframes ev-guide-enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
++@keyframes ev-guide-draw{to{stroke-dashoffset:0}}
++@keyframes ev-guide-dot-fade{0%{opacity:0}10%,82%{opacity:1}100%{opacity:0}}
++@keyframes ev-guide-pin-pulse{0%,100%{transform:scale(1)}40%{transform:scale(1.35)}}
++@keyframes ev-guide-seat{from{opacity:.4;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
++@keyframes ev-guide-label{from{opacity:.45}to{opacity:.88}}
++@media(prefers-reduced-motion:reduce){
++ .ev-guide-step-content,.ev-guide-phase-enter,.ev-guide-draw,.ev-guide-pin-pulse,.ev-guide-part-enter,.ev-guide-pin-label{animation:none;transform:none;}
++ .ev-guide-draw{stroke-dashoffset:0;}
++ .ev-guide-motion-dot{display:none;animation:none;}
++}
+diff --git a/frontend/src/components/circuitiny/Viewer3D.tsx b/frontend/src/components/circuitiny/Viewer3D.tsx
+--- a/frontend/src/components/circuitiny/Viewer3D.tsx
++++ b/frontend/src/components/circuitiny/Viewer3D.tsx
+@@ -29,6 +29,7 @@
+ import type { Project } from './project/schema';
+ import type { AssemblyStep } from './assemblyGuide';
+ import { guideConnectionColor, guideConnectionNumber } from './guideGraphic';
++import {GuideWireMotion} from './GuideWireMotion';
+ import { guidePointerLayout } from './guidePointer';
+ import { guideCameraView, splitNearbyGuideLabels } from './guideCamera';
+ import { alignTopView } from './sceneCamera';
+@@ -972,27 +973,15 @@
+     const view = guideCameraView(camera, resolved.map(p => p!.position), size);
+     if (!view) { applied.current = revision; return; }
+     applied.current = revision;
+-    const focus = () => {
+-      camera.position.copy(view.position);
+-      if (camera instanceof THREE.OrthographicCamera && 'zoom' in view && typeof view.zoom === 'number') {
+-        camera.zoom = view.zoom;
+-        camera.updateProjectionMatrix();
+-      }
+-      camera.lookAt(view.target);
+-      if (controls && 'target' in controls) {
+-        const orbit = controls as unknown as {target: THREE.Vector3; update: () => void};
+-        orbit.target.copy(view.target);
+-        orbit.update();
+-      }
+-    };
++    const focus = () => startCameraMotion(camera,controls,{position:view.position.clone(),target:view.target.clone(),zoom:'zoom' in view?view.zoom:camera instanceof THREE.OrthographicCamera?camera.zoom:1},performance.now(),420);
+     focus();
+     // FitScene may still be handling a resize; let an explicit focus win, unless
+     // the user has begun moving the camera since pressing the focus button.
+     const timer = setTimeout(focus, 160);
+-    const cancel = () => clearTimeout(timer);
++    const cancel = () => {clearTimeout(timer);cancelCameraMotion(camera);};
+     gl.domElement.addEventListener('pointerdown', cancel);
+     gl.domElement.addEventListener('wheel', cancel);
+-    return () => { clearTimeout(timer); gl.domElement.removeEventListener('pointerdown', cancel); gl.domElement.removeEventListener('wheel', cancel); };
++    return () => { cancel(); gl.domElement.removeEventListener('pointerdown', cancel); gl.domElement.removeEventListener('wheel', cancel); };
+   }, [revision, pinKey, camera, controls, gl, size]);
+   return null;
+ }
+@@ -1093,6 +1082,7 @@
+               />
+             ))}
+             <Wires3D />
++            <GuideWireMotion key={guideConnections.map(c=>c.from+'>'+c.to).join('|')+':'+guideFocusRevision} project={project} connections={guideConnections}/>
+             <PhotoAssemblyGuides />
+             {!photoFocus&&<BreadboardNetPreview3D preview={hoverPreview} project={project} />}
+             <WireGround />
+@@ -1105,10 +1095,10 @@
+               const length = direction.length();
+               const orientation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
+               const transform = insertion && markers.length > 1 ? (index % 2 === 0 ? 'translate(calc(-100% - 8px),-50%)' : 'translate(8px,-50%)') : splitLabels ? (index === 0 ? 'translate(calc(-100% - 8px),-50%)' : 'translate(8px,-50%)') : (index === 0 ? 'translate(-50%,-120%)' : 'translate(-50%,10%)');
+-              return <group key={marker.ref + index} position={resolved.position}>
++              return <group key={marker.ref+index+':'+guideFocusRevision} position={resolved.position}>
+                 <mesh renderOrder={100}><sphereGeometry args={[0.0011, 20, 20]} /><meshBasicMaterial color={color} transparent opacity={0.72} depthTest={false} depthWrite={false} /></mesh>
+                 <mesh position={[leader.x/2,leader.y/2,leader.z/2]} quaternion={orientation} renderOrder={101}><cylinderGeometry args={[0.0003,0.0003,length,8]} /><meshBasicMaterial color={color} transparent opacity={leader.opacity} depthTest={false} depthWrite={false} /></mesh>
+-                <Html position={[leader.x,leader.y,leader.z]} style={{pointerEvents:'none'}}><div style={{background:color,color:'white',opacity:.88,fontSize:12,fontWeight:700,padding:'4px 6px',border:'2px solid white',boxShadow:'0 2px 8px #0008',borderRadius:7,textAlign:'center',whiteSpace:'normal',width:'max-content',maxWidth:144,overflowWrap:'anywhere',transform}}>{marker.label}</div></Html>
++                <Html position={[leader.x,leader.y,leader.z]} style={{pointerEvents:'none'}}><div className="ev-guide-pin-label" style={{background:color,color:'white',opacity:.88,fontSize:12,fontWeight:700,padding:'4px 6px',border:'2px solid white',boxShadow:'0 2px 8px #0008',borderRadius:7,textAlign:'center',whiteSpace:'normal',width:'max-content',maxWidth:144,overflowWrap:'anywhere',transform}}>{marker.label}</div></Html>
+               </group>;
+             })}
+           </group>
+diff --git a/frontend/src/components/circuitiny/GuideFlowDot.tsx b/frontend/src/components/circuitiny/GuideFlowDot.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/GuideFlowDot.tsx
+@@ -0,0 +1,4 @@
++/** Instructional motion from endpoint 1 to 2. It never represents electric current. */
++export function GuideFlowDot({path,color}:{path:string;color:string}){
++ return <circle className="ev-guide-motion-dot" r="5" fill="white" stroke={color} strokeWidth="2" aria-hidden="true"><animateMotion path={path} dur="1.6s" repeatCount="1" fill="freeze"/></circle>;
++}
+diff --git a/frontend/src/components/circuitiny/guideMotion.ts b/frontend/src/components/circuitiny/guideMotion.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/guideMotion.ts
+@@ -0,0 +1,33 @@
++import type {Project} from './project/schema';
++import type {AssemblyStep} from './assemblyGuide';
++import {resolveGuidePin} from './assemblyGuide';
++import {connectedWirePath,type V} from './connectedWiring';
++
++/** Only an existing, visible wire supplies a route. Never invent a shortcut. */
++export function guideWireRoute(project:Project,step:AssemblyStep):V[]|null{
++ if(step.kind!=='jumper')return null;
++ const a=resolveGuidePin(project,step.from),b=resolveGuidePin(project,step.to);
++ if(!a||!b)return null;
++ const net=project.nets.find(n=>!n.hidden&&n.endpoints.length===2&&n.endpoints.includes(a.ref)&&n.endpoints.includes(b.ref));
++ if(!net)return null;
++ const route=connectedWirePath(project,net);if(!route)return null;
++ return net.endpoints[0]===a.ref?route.points.map(p=>[...p] as V):route.points.map(p=>[...p] as V).reverse();
++}
++export function prepareGuideRoute(points:V[]){
++ if(points.length<2||points.some(p=>p.length!==3||p.some(x=>!Number.isFinite(x))))return null;
++ const lengths=[0];for(let i=1;i<points.length;i++)lengths.push(lengths[i-1]+Math.hypot(...points[i].map((v,j)=>v-points[i-1][j])));
++ const total=lengths.at(-1)!;return Number.isFinite(total)&&total>1e-9?{points,lengths,total}:null;
++}
++export function sampleGuideRoute(route:NonNullable<ReturnType<typeof prepareGuideRoute>>,progress:number):V{
++ const distance=Math.max(0,Math.min(1,progress))*route.total;
++ for(let i=1;i<route.points.length;i++)if(distance<=route.lengths[i]){
++  const amount=(distance-route.lengths[i-1])/(route.lengths[i]-route.lengths[i-1]||1);
++  return route.points[i-1].map((v,j)=>v+(route.points[i][j]-v)*amount) as V;
++ }
++ return [...route.points.at(-1)!];
++}
++/** One complete 1→2 pass, then hide. Replaying is an explicit user action. */
++export function guideMotionFrame(elapsedMs:number,reduced=false){
++ const time=Math.max(0,elapsedMs);if(reduced||time>=2100)return null;
++ return {progress:Math.min(1,time/1800),opacity:Math.min(1,time/120,(2100-time)/300)};
++}
+diff --git a/frontend/src/components/circuitiny/GuideWireMotion.tsx b/frontend/src/components/circuitiny/GuideWireMotion.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/circuitiny/GuideWireMotion.tsx
+@@ -0,0 +1,35 @@
++import {useEffect,useMemo,useRef,useState} from 'react';
++import {useFrame} from '@react-three/fiber';
++import {Line} from '@react-three/drei';
++import * as T from 'three';
++import type {Project} from './project/schema';
++import type {AssemblyStep} from './assemblyGuide';
++import type {V} from './connectedWiring';
++import {guideMotionFrame,guideWireRoute,prepareGuideRoute,sampleGuideRoute} from './guideMotion';
++import {reducedViewMotion} from './photoViewMotion';
++
++function WirePass({points,reduced}:{points:V[];reduced:boolean}){
++ const group=useRef<T.Group>(null),dot=useRef<T.Mesh>(null),began=useRef<number|null>(null);
++ const key=JSON.stringify(points),route=useMemo(()=>prepareGuideRoute(points),[key]);
++ useEffect(()=>{began.current=null;},[key,reduced]);
++ useFrame(({clock})=>{
++  if(!group.current||!dot.current||!route)return;
++  const now=clock.elapsedTime*1000;if(began.current===null)began.current=now;
++  const frame=guideMotionFrame(now-began.current,reduced);group.current.visible=!!frame;
++  if(frame){dot.current.position.set(...sampleGuideRoute(route,frame.progress));(dot.current.material as T.MeshBasicMaterial).opacity=frame.opacity;}
++ });
++ if(!route||reduced)return null;
++ return <group ref={group} name="guide-connection-animation" raycast={()=>{}}>
++  <Line points={points} color="#4c9dce" lineWidth={2.4} transparent opacity={.45} depthTest={false} raycast={()=>{}}/>
++  <mesh ref={dot} renderOrder={120} raycast={()=>{}}><sphereGeometry args={[.0017,12,12]}/><meshBasicMaterial color="#fff7cc" transparent opacity={0} depthTest={false} depthWrite={false}/></mesh>
++ </group>;
++}
++export function GuideWireMotion({project,connections}:{project:Project;connections:AssemblyStep[]}){
++ const [reduced,setReduced]=useState(reducedViewMotion);
++ useEffect(()=>{
++  if(typeof window.matchMedia!=='function')return;
++  const media=window.matchMedia('(prefers-reduced-motion: reduce)'),update=()=>setReduced(media.matches);
++  media.addEventListener?.('change',update);return()=>media.removeEventListener?.('change',update);
++ },[]);
++ return <group name="guide-wire-motion">{connections.map(step=>{const points=guideWireRoute(project,step);return points?<WirePass key={step.from+'>'+step.to} points={points} reduced={reduced}/>:null;})}</group>;
++}
+diff --git a/frontend/src/__tests__/guide-animation.test.ts b/frontend/src/__tests__/guide-animation.test.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/__tests__/guide-animation.test.ts
+@@ -0,0 +1,37 @@
++// @vitest-environment jsdom
++import {it,expect,vi} from 'vitest';
++import {createElement} from 'react';
++import {renderToStaticMarkup} from 'react-dom/server';
++vi.mock('../components/circuitiny/catalog',()=>({catalog:{
++ getBoard:()=>({name:'UNO',pins:[{id:'5',label:'5',position:[0,0,0],normal:[0,1,0],type:'digital_io'}]}),
++ getComponent:()=>({pins:[{id:'23t__a',label:'A23',position:[.1,0,0],normal:[0,1,0],type:'digital_io'}]})
++}}));
++import {guideWireRoute,prepareGuideRoute,sampleGuideRoute,guideMotionFrame} from '../components/circuitiny/guideMotion';
++import {guideConnectionSentence,groupAssemblySteps} from '../components/circuitiny/assemblyGuide';
++import {GuideGraphic} from '../components/circuitiny/GuideGraphic';
++const step={from:'U1.5',to:'BB1.23t.a',kind:'jumper' as const};
++function project():any{return {board:'uno',boardPosition:[0,0,0],boards:[{instance:'U1',componentId:'uno',config:{pinOwner:'board'}}],components:[{instance:'BB1',componentId:'bb',position:[.2,0,0]}],nets:[{id:'J1',endpoints:['board.5','BB1.23t__a'],route:[[.03,.02,.01]]}]};}
++it('keeps one full 1→2 sentence and one guide step per jumper',()=>{
++ const text=guideConnectionSentence(step);
++ expect(text).toBe('① 제어 보드 U1 5 핀 → ② 빵판 A23 구멍을 점퍼선 하나로 연결하세요.');expect(text.split('→')).toHaveLength(2);expect(text).not.toContain('\n');
++ const groups=groupAssemblySteps([step]);expect(groups).toHaveLength(1);expect(groups[0].connections).toEqual([step]);
++});
++it('animates the existing routed wire in instruction order without changing the circuit',()=>{
++ const p=project(),before=JSON.stringify(p),points=guideWireRoute(p,step)!;
++ expect(points[0]).toEqual([0,0,0]);expect(points.at(-1)![0]).toBeCloseTo(.3);expect(points).toContainEqual([.03,.02,.01]);expect(JSON.stringify(p)).toBe(before);
++ p.nets[0].endpoints.reverse();const reverse=guideWireRoute(p,step)!;expect(reverse[0]).toEqual([0,0,0]);expect(reverse.at(-1)![0]).toBeCloseTo(.3);
++ p.nets[0].hidden=true;expect(guideWireRoute(p,step)).toBeNull();p.nets[0].hidden=false;p.components=[];expect(guideWireRoute(p,step)).toBeNull();expect(guideWireRoute(project(),{...step,kind:'insert'})).toBeNull();
++});
++it('moves through real bends at equal distances without spline shortcuts',()=>{
++ const route=prepareGuideRoute([[0,0,0],[3,0,0],[3,4,0]])!;
++ expect(sampleGuideRoute(route,2/7)).toEqual([2,0,0]);expect(sampleGuideRoute(route,3/7)).toEqual([3,0,0]);expect(sampleGuideRoute(route,5/7)).toEqual([3,2,0]);expect(sampleGuideRoute(route,-1)).toEqual([0,0,0]);expect(sampleGuideRoute(route,2)).toEqual([3,4,0]);
++ expect(prepareGuideRoute([[0,0,0],[0,0,0]])).toBeNull();expect(prepareGuideRoute([[0,0,0],[NaN,0,0]])).toBeNull();
++});
++it('plays one complete pass, finishes, and respects reduced motion',()=>{
++ expect(guideMotionFrame(0)?.progress).toBe(0);expect(guideMotionFrame(900)?.progress).toBe(.5);expect(guideMotionFrame(1800)?.progress).toBe(1);expect(guideMotionFrame(2100)).toBeNull();expect(guideMotionFrame(999999)).toBeNull();expect(guideMotionFrame(500,true)).toBeNull();
++});
++it('renders a single animation path only while the actual connection exists',()=>{
++ const wire={id:'J1',start:{componentId:'U1',pinName:'5',x:0,y:0},end:{componentId:'BB1',pinName:'23t.a',x:0,y:0},waypoints:[],color:'#159957'};
++ const html=renderToStaticMarkup(createElement(GuideGraphic,{step,connections:[step],wires:[wire],type:'board'}));expect(html).toContain('animateMotion');expect(html).toContain('repeatCount="1"');expect(html).toContain('ev-guide-draw');
++ const missing=renderToStaticMarkup(createElement(GuideGraphic,{step,connections:[step],wires:[],type:'board'}));expect(missing).not.toContain('animateMotion');
++});

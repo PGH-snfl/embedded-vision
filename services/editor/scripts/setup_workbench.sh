@@ -46,7 +46,10 @@ if [[ ! -d services/editor/vendor/velxio/.git ]]; then
   git -C services/editor/vendor/velxio apply ../../patches/velxio-independent-editor.patch
   git -C services/editor/vendor/velxio apply ../../patches/velxio-arduino-lessons.patch
   git -C services/editor/vendor/velxio apply ../../patches/velxio-compact-toolbars.patch
+  git -C services/editor/vendor/velxio apply ../../patches/velxio-guide-animation.patch
 fi
+# New guide animation changes context used by the existing guide and toolbar patches.
+if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/velxio-guide-animation.patch 2>/dev/null; then
 # Check the newest patch first because it changes context used by older patches.
 if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/velxio-compact-toolbars.patch 2>/dev/null; then
 # A later patch can alter earlier patch context. Check the newest state first.
@@ -70,6 +73,13 @@ fi
     git -C services/editor/vendor/velxio apply ../../patches/velxio-compact-toolbars.patch
   else
     echo '도구 모음 패치 충돌: 기존 변경을 보존했습니다. 벤더 백업·재구성 절차를 확인하세요.' >&2
+    exit 1
+  fi
+fi
+  if git -C services/editor/vendor/velxio apply --check ../../patches/velxio-guide-animation.patch; then
+    git -C services/editor/vendor/velxio apply ../../patches/velxio-guide-animation.patch
+  else
+    echo '가이드 애니메이션 패치 충돌: 기존 변경을 보존했습니다. 벤더 백업·재구성 절차를 확인하세요.' >&2
     exit 1
   fi
 fi
