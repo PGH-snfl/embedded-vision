@@ -1,0 +1,399 @@
+diff --git a/frontend/src/components/EmbeddedWorkbench.css b/frontend/src/components/EmbeddedWorkbench.css
+--- a/frontend/src/components/EmbeddedWorkbench.css
++++ b/frontend/src/components/EmbeddedWorkbench.css
+@@ -315,3 +315,74 @@
+  .ev-card-tools .ev-info>div{position:fixed;left:16px;right:16px;top:84px;width:auto;max-height:calc(100dvh - 108px);}
+  .ev-card-tools .ev-project-toolbar button,.ev-card-tools .ev-pane-heading button,.ev-card-tools .ev-scoped-menu .emb-trigger{min-height:44px;}
+ }
++
++/* Compact editor chrome: one row of related groups; the scene keeps the space. */
++.ev-compact-tools>.ev-topbar{display:flex;flex-wrap:nowrap;align-items:center;gap:10px;padding:8px 12px;overflow:visible;}
++.ev-compact-tools .ev-project{order:0;flex:0 1 170px;min-width:90px;}
++.ev-compact-tools .ev-project h1{font-size:15px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
++.ev-compact-tools .ev-eyebrow{margin-bottom:3px;font-size:10px;}
++.ev-compact-tools .ev-eyebrow>span{display:none;}
++.ev-compact-tools .ev-project-toolbar{order:1;display:flex;flex:1 1 auto;flex-wrap:nowrap;align-items:center;gap:8px;width:auto;padding:0;min-width:0;}
++.ev-compact-tools .ev-tool-card{flex:0 0 auto;align-self:stretch;padding:4px 8px;border:0;border-left:1px solid #dbe6df;border-radius:0;background:transparent;}
++.ev-compact-tools .ev-tool-card-title{margin:0 0 4px;font-size:10px;line-height:1.2;letter-spacing:0;}
++.ev-compact-tools .ev-tool-card-body{display:flex;flex-wrap:nowrap;gap:5px;align-items:center;}
++.ev-compact-tools .ev-project-actions{order:2;flex:0 0 auto;max-width:none;}
++.ev-compact-tools .ev-project-toolbar button,.ev-compact-tools .ev-project-actions button,
++.ev-compact-tools .ev-scoped-menu .emb-trigger,.ev-compact-tools .ev-pane-heading button,
++.ev-compact-tools .ev-circuit-edit-tools button,.ev-compact-tools .ev-circuit-edit-tools summary,
++.ev-compact-tools .ev-compact-menu>summary{min-height:32px;height:32px;max-width:none;padding:5px 9px;font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;white-space:nowrap;overflow-wrap:normal;flex-shrink:0;}
++.ev-compact-tools .ev-project-toolbar .ev-run-controls{display:flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;gap:5px;}
++.ev-compact-tools .ev-project-toolbar .ev-run-controls .ev-run{flex:0 0 auto;min-width:74px;padding:5px 10px;}
++.ev-compact-tools .ev-project-toolbar .ev-view-switch{flex-wrap:nowrap;gap:3px;}
++.ev-compact-tools .ev-project-toolbar .ev-view-switch button{flex:0 0 auto;}
++.ev-compact-tools .ev-cloud-status{display:none;}
++.ev-compact-menu{position:relative;display:block;flex:0 0 auto;font-size:12px;}
++.ev-compact-menu>summary{display:flex;align-items:center;justify-content:center;gap:5px;list-style:none;cursor:pointer;border:1px solid #ceded2;border-radius:7px;color:#305d40;background:#fff;}
++.ev-compact-menu>summary::-webkit-details-marker{display:none;}
++.ev-compact-menu[open]>summary{background:#e1f2e7;border-color:#79ac8b;}
++.ev-compact-tools .ev-compact-menu>.ev-compact-panel{position:fixed;inset:auto;left:var(--ev-menu-left,12px);top:var(--ev-menu-top,70px);width:var(--ev-menu-width,320px);min-width:0;max-width:calc(100vw - 24px);max-height:calc(100dvh - var(--ev-menu-top,70px) - 12px);overflow:auto;box-sizing:border-box;z-index:900;display:grid;gap:8px;padding:12px;background:#fff;border:1px solid #ceded2;border-radius:10px;box-shadow:0 10px 30px #193b2b26;white-space:normal;text-align:left;}
++.ev-compact-tools .ev-compact-panel button,.ev-compact-tools .ev-compact-panel summary{height:auto;min-height:34px;white-space:normal;text-align:left;}
++.ev-compact-tools .ev-compact-panel>.ev-runtime{display:block;position:static;flex-basis:auto;width:auto;max-width:none;font-size:12px;line-height:1.6;white-space:normal;}
++.ev-compact-tools .ev-runtime-error>summary{background:#fff0eb;color:#a32920;border-color:#d39687;}
++.ev-compact-tools .ev-compact-panel .ev-functional-controls{margin:0;max-width:100%;}
++.ev-compact-tools .ev-compact-panel .ev-functional-controls>div{max-width:100%!important;max-height:none!important;}
++.ev-compact-tools .ev-compact-panel .ev-c3d-more{margin:0;}
++.ev-compact-tools .ev-compact-panel .ev-c3d-more[open]>div{position:static;inset:auto;width:auto;min-width:0;max-width:100%;max-height:none;box-shadow:none;margin-top:6px;}
++.ev-compact-tools .ev-compact-panel .emb-menu{position:static;inset:auto;width:100%;min-width:0;box-shadow:none;}
++.ev-compact-tools .ev-circuit-pane-tools{display:flex;align-items:center;flex-wrap:nowrap;gap:8px;margin:6px;padding:6px 8px;min-height:44px;border-radius:8px;overflow:visible;}
++.ev-compact-tools .ev-circuit-pane-tools>.ev-pane-heading{display:contents;}
++.ev-compact-tools .ev-canvas-actions,.ev-compact-tools .ev-dimension-switch{display:flex;align-items:center;flex-wrap:nowrap;gap:4px;}
++.ev-compact-tools .ev-circuit-edit-tools{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;}
++.ev-compact-tools .ev-circuit-edit-tools>.ev-c3d-tools{display:flex;align-items:center;flex-wrap:nowrap;width:max-content;min-width:0;gap:5px;padding:0;margin:0;border:0;background:transparent;box-shadow:none;}
++.ev-toolbar-divider{display:block;width:1px;height:24px;background:#dbe6df;margin:0 3px;flex-shrink:0;}
++.ev-compact-tools .ev-circuit-help{display:flex;flex:0 0 auto;padding:0;margin:0;background:transparent;}
++.ev-compact-tools .ev-circuit-pane-tools strong{font-size:11px;}
++.ev-compact-tools .ev-code-pane-tools{margin:6px;padding:6px 8px;min-height:44px;}
++.ev-compact-tools .ev-code-pane-tools .ev-pane-heading,.ev-compact-tools .ev-code-actions{flex-wrap:nowrap;gap:6px;min-height:32px;}
++.ev-compact-tools .ev-code-actions{min-width:0;overflow-x:auto;scrollbar-width:thin;}
++@media(max-width:1100px){
++ .ev-compact-tools>.ev-topbar{flex-wrap:wrap;gap:6px 10px;}
++ .ev-compact-tools .ev-project{flex:1 1 120px;}
++ .ev-compact-tools .ev-project-actions{order:1;}
++ .ev-compact-tools .ev-project-toolbar{order:2;flex:1 1 100%;width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;padding-bottom:2px;}
++ .ev-compact-tools .ev-circuit-pane-tools{gap:5px;padding:5px;}
++ .ev-compact-tools .ev-circuit-help>details>summary{font-size:0;gap:0;}
++ .ev-compact-tools .ev-circuit-help>details>summary::before{content:'기타';font-size:12px;}
++ .ev-compact-tools .ev-circuit-help>details>summary>span{font-size:12px;margin-left:4px;}
++}
++@media(max-width:600px){
++ .ev-compact-tools>.ev-topbar{padding:6px 8px;}
++ .ev-compact-tools .ev-tool-card{padding:2px 6px;}
++ .ev-compact-tools .ev-project-toolbar .ev-tool-card-body>button{flex:0 0 auto;}
++ .ev-compact-tools .ev-project-toolbar button,.ev-compact-tools .ev-pane-heading button,.ev-compact-tools .ev-circuit-edit-tools button,.ev-compact-tools .ev-circuit-edit-tools summary,.ev-compact-tools .ev-compact-menu>summary{min-height:38px;height:38px;}
++ .ev-compact-tools .ev-circuit-pane-tools>.ev-pane-heading>strong{display:none;}
++ .ev-compact-tools .ev-canvas-actions .ev-add-part{font-size:0;padding:5px 8px;}
++ .ev-compact-tools .ev-canvas-actions .ev-add-part::before{content:'＋ 부품';font-size:12px;}
++}
++
++.ev-compact-menu:not([open])>.ev-compact-panel{display:none;}
++
++.ev-compact-tools .ev-tool-card-title{font-size:11px;}
++.ev-compact-tools .emb-menu .emb-item{height:auto;min-height:32px;white-space:normal;overflow-wrap:anywhere;align-items:flex-start;}
++.ev-compact-tools .emb-menu .emb-item>span:first-child{min-width:0;flex:1;}
++.ev-compact-tools .emb-menu .emb-shortcut{flex:0 0 auto;white-space:nowrap;}
+diff --git a/frontend/src/components/EmbeddedVisionBridge.tsx b/frontend/src/components/EmbeddedVisionBridge.tsx
+--- a/frontend/src/components/EmbeddedVisionBridge.tsx
++++ b/frontend/src/components/EmbeddedVisionBridge.tsx
+@@ -1,3 +1,4 @@
++import {CompactMenu} from './CompactMenu';
+ /** Embedded Vision local integration, 2026-10-27. AGPL-3.0, same as Velxio. */
+ import {useEffect,useState,useRef} from 'react';
+ import {withPhotoMounts} from './circuitiny/photoMounts';
+@@ -127,23 +128,24 @@
+  return <header className="ev-topbar">
+   <div className="ev-project">
+    <div className="ev-eyebrow"><a href={returnUrl} target={standalone||new URLSearchParams(location.search).get('autorun')==='1'?'_self':'_blank'} rel="noreferrer">{standalone?'← 편집기 홈':'← 사진 분석'}</a><span>{standalone?'EMBEDDED EDITOR':'EMBEDDED VISION'} / {inspection?'STRUCTURE':'SIMULATOR'}</span></div>
+-   <h1>{title}</h1>{behavior&&!standalone&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
++   <h1 title={title}>{title}</h1>{behavior&&!standalone&&<><p>초기 새 설계: {behavior}</p><small className="ev-initial-behavior-note">{INITIAL_BEHAVIOR_NOTE}</small></>}
+   </div>
++
++  {actions&&<div className="ev-project-toolbar" role="group" aria-label="회로·코드 공통 도구" data-action-scope="project">{actions}</div>}
+   <EmbeddedToolCard title="프로젝트 저장" className="ev-project-actions">
+    {hostedWorkspace()&&<button className="ev-cloud-save" disabled={!key||!cloud.current||cloudSaving} onClick={async()=>{if(!cloud.current)return;setCloudSaving(true);try{const payload={...buildVlxPayload({name:'embedded-circuit'}),embeddedVision:getMotionSource()};const revision=await cloud.current.save(payload);setCloudStatus('서버에 저장됨 · r'+revision);}catch(e){setCloudStatus(String(e));}finally{setCloudSaving(false);}}}>{cloudSaving?'저장 중…':'작업공간에 저장'}</button>}
+    {cloudStatus&&<span className="ev-cloud-status" role="status">{cloudStatus}</span>}
+    <span className="ev-badge">{inspection?'사진 기반 구조 · 형상 근사':'가상 회로 · 실물 미검증'}</span>
+    <button className="ev-download" disabled={!key} onClick={()=>triggerDownloadVlx({name:'embedded-circuit'})}>↓ 프로젝트 저장</button>
+-   <details className="ev-info"><summary>설계 정보·저장 안내</summary><div>
++   <CompactMenu label="설계 정보·저장 안내" triggerText="정보" className="ev-info"><div>
+     <strong>{standalone?'프로젝트 정보':'사진 분석에서 만든 새 설계'}</strong><p>{notice||'원본 배선을 복원한 결과가 아닙니다. 실제 부품과 핀을 대조하세요.'}</p>
+     <p>{message}</p><p role="status">{cloudStatus}</p><p>편집 내용은 이 브라우저에 자동 저장됩니다. 프로젝트 파일(.vlx)로도 저장할 수 있습니다. SaaS에서는 ‘작업공간에 저장’을 눌러 서버에도 보관하세요. 서버 저장본은 다시 열 때 먼저 불러옵니다. KiCad에는 자동 반영되지 않습니다.</p>
+     <p>로컬 컴파일은 Arduino UNO를 지원합니다. 다른 보드와 외부 라이브러리는 현재 지원하지 않습니다.</p>
+     {recoveryKey&&((new URLSearchParams(location.search).get('motion')==='1'||Number(getMotionSource()?.watering_circuit_version)>=2)?<button onClick={()=>{const saved=localStorage.getItem(recoveryKey);if(saved){const url=URL.createObjectURL(new Blob([saved],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='previous-draft.vlx';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}}>이전 초안 다운로드</button>:<button disabled={running} onClick={async()=>{const saved=localStorage.getItem(recoveryKey);if(saved){try{await importVlxFile(new File([saved],'browser-draft.vlx',{type:'application/json'}));setCloudStatus('브라우저 초안 복원됨 · 서버에 반영하려면 작업공간에 저장하세요.');}catch{setCloudStatus('브라우저 초안을 불러오지 못했습니다.');}}}}>브라우저 초안 복원</button>)}
+     {key&&<button onClick={()=>{if(confirm('이 편집 내용을 버리고 최초 제안으로 되돌릴까요?')){resetting.current=true;localStorage.removeItem(key);location.reload();}}}>최초 제안으로 복원</button>}
+     <a href="https://github.com/davidmonterocrespo24/velxio" target="_blank" rel="noreferrer">Powered by Velxio · AGPL-3.0</a>
+-   </div></details>
++   </div></CompactMenu>
+   </EmbeddedToolCard>
+-  {actions&&<div className="ev-project-toolbar" role="group" aria-label="회로·코드 공통 도구" data-action-scope="project">{actions}</div>}
+   {failed&&<p className="ev-import-error" role="alert">{message}</p>}
+   {!key&&!failed&&<p role="status" aria-live="polite">{message}</p>}
+  </header>;
+diff --git a/frontend/src/pages/EditorPage.tsx b/frontend/src/pages/EditorPage.tsx
+--- a/frontend/src/pages/EditorPage.tsx
++++ b/frontend/src/pages/EditorPage.tsx
+@@ -1,3 +1,4 @@
++import {CompactMenu} from '../components/CompactMenu';
+ import { sharedTool } from '../components/circuitiny/sharedTools';
+ import { useStore as useCircuitinyStore } from '../components/circuitiny/store';
+ import { EmbeddedVisionBridge } from '../components/EmbeddedVisionBridge';
+@@ -606,26 +607,28 @@
+   ) : undefined;
+ 
+   return (
+-    <div className={embedded ? `app embedded-workbench ev-card-tools${toolsOpen?' ev-tools-open':''}` : 'app'}>
++    <div className={embedded ? `app embedded-workbench ev-card-tools ev-compact-tools${toolsOpen?' ev-tools-open':''}` : 'app'}>
+       <EnvironmentRuntime/>
+       <FunctionalRuntime/>
+       {embedded ? <>
+        <EmbeddedVisionBridge onReady={(ready,restored,simulationNotice,inspectionMode)=>{setInspection(!!inspectionMode);setSimulationUnavailable(simulationNotice);setAutoRunAllowed(ready&&!restored&&!simulationNotice);setImportReady(ready);}} actions={<>
+-        <EmbeddedToolCard title={inspection?'프로젝트 메뉴':'시스템 전환·파일'} className="ev-shared-actions">
++        <EmbeddedToolCard title={inspection?'프로젝트 메뉴':'프로젝트'} className="ev-shared-actions">
+          {!inspection&&<EmbeddedSystemConversion/>}
+          <EditorMenuBar scope="project"/>
+         </EmbeddedToolCard>
+         {!inspection&&<EmbeddedToolCard title="시뮬레이션" className="ev-shared-execution">
+          {!importReady?<small>회로를 불러오는 중입니다.</small>:simulationUnavailable?<small>이 변환 회로에서는 실행할 수 없습니다.</small>:<EditorToolbar compact ready={importReady} autoRunAllowed={autoRunAllowed} consoleOpen={consoleOpen} setConsoleOpen={setConsoleOpen} compileLogs={compileLogs} setCompileLogs={setCompileLogs}/>}
+-         {importReady&&!inspection&&<FunctionalControls/>}
+-         <button className="ev-output-toggle" disabled={!!simulationUnavailable} aria-expanded={resultsOpen} onClick={()=>{setResultsOpen(!resultsOpen);setConsoleOpen(false);if(isMobile)setMobileView('circuit');}}>보드 출력 {resultsOpen?'접기':'보기'}</button>
++         <CompactMenu label="입력·출력">
++          {importReady&&!inspection&&<FunctionalControls/>}
++          <button className="ev-output-toggle" disabled={!!simulationUnavailable} aria-expanded={resultsOpen} onClick={()=>{setResultsOpen(!resultsOpen);setConsoleOpen(false);if(isMobile)setMobileView('circuit');}}>보드 출력 {resultsOpen?'접기':'보기'}</button>
++         </CompactMenu>
+         </EmbeddedToolCard>}
+         <EmbeddedToolCard title="작업 화면" className="ev-screen-actions">
+         <div className="ev-view-switch" role="group" aria-label="작업 화면">
+          <button aria-pressed={isMobile ? mobileView==='circuit' : viewMode==='circuit'} onClick={()=>{setViewMode('circuit');setMobileView('circuit');}}>{inspection?'3D 구성 보기':'회로 보기'}</button>
+          {!inspection&&<button aria-pressed={isMobile ? mobileView==='code' : viewMode==='both'} onClick={()=>{setViewMode('both');setMobileView('code');}}>{isMobile?'코드 편집':'코드 함께 보기'}</button>}
+         </div>
+-        <details className="ev-progress-summary"><summary>진행 상태</summary><p>{!importReady?'불러오는 중입니다.':inspection?'외장·내부 분해 메뉴에서 표시 방식을 선택하세요.':circuitRunning?'가상 보드가 실행 중입니다.':resultsOpen?'보드 출력을 확인하고 있습니다.':'회로와 코드를 편집할 수 있습니다.'}</p></details>
++
+         </EmbeddedToolCard>
+        </>} />
+        {simulationUnavailable&&<div className="ev-simulation-unavailable" role="status"><strong>{inspection?'기능 기반 내부 구성 추정':'모터 시뮬레이션 미지원'}</strong><span>{simulationUnavailable}</span></div>}
+@@ -850,9 +853,17 @@
+           }}
+         >
+          <div className={embedded?'ev-circuit-layout':undefined} style={{display:'flex',flexDirection:'column',flex:1,minHeight:0}}>
+-          {embedded&&<section className="ev-circuit-pane-tools" aria-label="회로 도구 영역" data-action-scope="circuit"><div className="ev-pane-heading"><strong>회로</strong><div className="ev-canvas-actions"><button className="ev-add-part" disabled={circuitRunning} onClick={()=>sharedTool('add')}>＋ 부품 추가</button><div className="ev-dimension-switch" role="group" aria-label="회로 표시 방식"><button aria-pressed={assembly3D&&assemblyView==='top'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'top'});}}>2D 보기</button><button aria-pressed={assembly3D&&assemblyView==='iso'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'iso'});}}>3D 보기</button><button onClick={()=>useCircuitinyStore.setState(s=>({fitRevision:s.fitRevision+1}))}>화면 맞춤</button><button aria-pressed={assembly3D&&cameraLocked} disabled={!assembly3D} onClick={()=>useCircuitinyStore.setState(s=>({cameraLocked:!s.cameraLocked}))}>{cameraLocked?'시점 잠금 해제':'시점 잠금'}</button></div></div></div>
++          {embedded&&<section className="ev-circuit-pane-tools" aria-label="회로 도구 영역" data-action-scope="circuit">
++           <div className="ev-pane-heading"><strong>회로</strong><div className="ev-canvas-actions">
++            <button className="ev-add-part" disabled={circuitRunning} onClick={()=>sharedTool('add')}>＋ 부품 추가</button>
++            <div className="ev-dimension-switch" role="group" aria-label="회로 표시 방식">
++             <button aria-pressed={assembly3D&&assemblyView==='top'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'top'});}}>2D 보기</button>
++             <button aria-pressed={assembly3D&&assemblyView==='iso'} onClick={()=>{setAssembly3D(true);useCircuitinyStore.setState({viewMode:'iso'});}}>3D 보기</button>
++             <CompactMenu label="시점"><button onClick={()=>useCircuitinyStore.setState(s=>({fitRevision:s.fitRevision+1}))}>화면 맞춤</button><button aria-pressed={assembly3D&&cameraLocked} disabled={!assembly3D} onClick={()=>useCircuitinyStore.setState(s=>({cameraLocked:!s.cameraLocked}))}>{cameraLocked?'시점 잠금 해제':'시점 잠금'}</button></CompactMenu>
++            </div>
++           </div></div>
+            <div ref={setCircuitToolsHost} className="ev-circuit-edit-tools"/>
+-           <div className="ev-circuit-help"><EditorMenuBar scope="circuit"/><details className="ev-native-circuit-tools" onToggle={event=>setToolsOpen(event.currentTarget.open)}><summary>추가 회로 도구</summary><p>배선을 선택한 뒤 양 끝 조작점을 드래그하세요. 왼쪽 드래그 이동 · 오른쪽 드래그 회전 · 휠 확대/축소</p><div ref={setCanvasHeaderSlot}/></details></div>
++           <div className="ev-circuit-help"><CompactMenu label="기타 회로 도구"><EditorMenuBar scope="circuit"/><details className="ev-native-circuit-tools" onToggle={event=>setToolsOpen(event.currentTarget.open)}><summary>추가 회로 도구</summary><p>배선을 선택한 뒤 양 끝 조작점을 드래그하세요. 왼쪽 드래그 이동 · 오른쪽 드래그 회전 · 휠 확대/축소</p><div ref={setCanvasHeaderSlot}/></details></CompactMenu></div>
+           </section>}
+           <div className={embedded?'ev-circuit-workspace':undefined} style={{ flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 }}>
+             <div className={embedded&&assembly3D?'ev-canvas-engine ev-hidden-2d':'ev-canvas-engine'} aria-hidden={embedded&&assembly3D?true:undefined}>
+diff --git a/frontend/src/components/circuitiny/CircuitinyEditor.tsx b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+--- a/frontend/src/components/circuitiny/CircuitinyEditor.tsx
++++ b/frontend/src/components/circuitiny/CircuitinyEditor.tsx
+@@ -1,3 +1,4 @@
++import {CompactMenu} from '../CompactMenu';
+ import { useEffect, useLayoutEffect, useRef, useState, useMemo, useSyncExternalStore } from 'react';
+ import Viewer3D from './Viewer3D';
+ import {SelectionCard} from './SelectionCard';
+@@ -233,21 +234,7 @@
+   };
+   const toolbar=(
+       <div className="ev-c3d-tools">
+-        <strong>회로 편집</strong>
+-        <PhotoAppearanceControls/>
+-        <EnclosureControls/>
+-        <EnvironmentPalette running={running}/>
+-        {photoObjects.length>0&&<button onClick={()=>useStore.setState(s=>({viewMode:'iso',reverseViewRevision:s.reverseViewRevision+1}))}>반대쪽 보기</button>}
+-        <details className="ev-c3d-more"><summary>＋ 3D 구조물</summary><div>
+-          <button disabled={running} onClick={()=>addStructure('box')}>상자 추가</button>
+-          <button disabled={running} onClick={()=>addStructure('cylinder')}>원통 추가</button>
+-          <small>전기 연결이 없는 가상 구조물입니다.</small>
+-        </div></details>
+-        {photoObjects.length>0&&<><button disabled={running||optimizing} onClick={optimizeAssembly}>{optimizing?'배치·배선 계산 중…':'배치·배선 최적화'}</button><button aria-pressed={interiorView} onClick={()=>useStore.setState({interiorView:!interiorView})}>{interiorView?'내부 보기 켜짐':'내부 보기'}</button>{mounted.length>0&&<button disabled={running} onClick={restoreLayout}>이전 배치 복원</button>}</>}
+-        {designedObjects.length>0&&<details className="ev-c3d-more"><summary>설계 보완 {designedObjects.length}개</summary><div><small>반대편·하부까지 완성한 새 설계 · 원본 형상 미확인</small>{designedObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
+-        {mounted.length>0&&<details className="ev-c3d-more"><summary>장착 부품 {mounted.length}개</summary><div>{mounted.map(p=><button key={p.id} onClick={()=>useStore.getState().select(p.id)}>{p.id} · {String(p.properties?.evRoverLabel||('name' in p?p.name:'시스템 부품'))}</button>)}</div></details>}
+-        {assemblyRouting&&<details className="ev-c3d-more"><summary>배치·배선 결과</summary><p>케이블 경로 합계 {(assemblyRouting.wireLengthMm/1000).toFixed(2)} m · 경로 미해결 {assemblyRouting.unresolved.length}개</p>{assemblyRouting.unresolved.map(e=><p key={e.id}>{e.id}: {e.reason}</p>)}<p>표시 치수에서 계산한 경로입니다. 실제 절단 길이·고정 홀·케이스 인출구는 확인이 필요합니다.</p></details>}
+-        {photoObjects.length>0&&<details className="ev-c3d-more"><summary>사진 구조물 {photoObjects.length}개</summary><div><small>사진에서 추정한 형상 · 실제 크기 미확인</small>{photoObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
++        <span className="ev-toolbar-divider" aria-hidden="true"/>
+         {guide.steps.length > 0 && <button aria-pressed={guideOpen} onClick={() => { setGuideOpen(!guideOpen); setDetails(false); }}>
+           {guideOpen ? '조립 가이드 닫기' : '단계별 조립 가이드'}
+         </button>}
+@@ -279,6 +266,7 @@
+             onChange={(e) => useStore.setState({ wireColor: e.target.value })}
+           />
+         </label>}
++        <CompactMenu label="편집">
+         {(component || board) && <>
+         <button
+           disabled={running || !selected}
+@@ -302,21 +290,24 @@
+         >
+           ↷ 다시 적용
+         </button>
+-        <details className="ev-c3d-more">
+-          <summary>보기·도구</summary>
+-          <div>
+-            <button
+-              onClick={() =>
+-                useStore.setState((s) => ({
+-                  viewMode: s.viewMode === 'top' ? 'iso' : 'top',
+-                }))
+-              }
+-            >
+-              위/입체 보기
+-            </button>
+-            <button onClick={() => useStore.setState((s) => ({ fitRevision: s.fitRevision + 1 }))}>
+-              화면 맞춤
+-            </button>
++        </CompactMenu>
++        <CompactMenu label="구조·오브젝트">
++        <PhotoAppearanceControls/>
++        <EnclosureControls/>
++        <EnvironmentPalette running={running}/>
++        {photoObjects.length>0&&<button onClick={()=>useStore.setState(s=>({viewMode:'iso',reverseViewRevision:s.reverseViewRevision+1}))}>반대쪽 보기</button>}
++        <details className="ev-c3d-more"><summary>＋ 3D 구조물</summary><div>
++          <button disabled={running} onClick={()=>addStructure('box')}>상자 추가</button>
++          <button disabled={running} onClick={()=>addStructure('cylinder')}>원통 추가</button>
++          <small>전기 연결이 없는 가상 구조물입니다.</small>
++        </div></details>
++        {photoObjects.length>0&&<><button disabled={running||optimizing} onClick={optimizeAssembly}>{optimizing?'배치·배선 계산 중…':'배치·배선 최적화'}</button><button aria-pressed={interiorView} onClick={()=>useStore.setState({interiorView:!interiorView})}>{interiorView?'내부 보기 켜짐':'내부 보기'}</button>{mounted.length>0&&<button disabled={running} onClick={restoreLayout}>이전 배치 복원</button>}</>}
++        {designedObjects.length>0&&<details className="ev-c3d-more"><summary>설계 보완 {designedObjects.length}개</summary><div><small>반대편·하부까지 완성한 새 설계 · 원본 형상 미확인</small>{designedObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
++        {mounted.length>0&&<details className="ev-c3d-more"><summary>장착 부품 {mounted.length}개</summary><div>{mounted.map(p=><button key={p.id} onClick={()=>useStore.getState().select(p.id)}>{p.id} · {String(p.properties?.evRoverLabel||('name' in p?p.name:'시스템 부품'))}</button>)}</div></details>}
++        {assemblyRouting&&<details className="ev-c3d-more"><summary>배치·배선 결과</summary><p>케이블 경로 합계 {(assemblyRouting.wireLengthMm/1000).toFixed(2)} m · 경로 미해결 {assemblyRouting.unresolved.length}개</p>{assemblyRouting.unresolved.map(e=><p key={e.id}>{e.id}: {e.reason}</p>)}<p>표시 치수에서 계산한 경로입니다. 실제 절단 길이·고정 홀·케이스 인출구는 확인이 필요합니다.</p></details>}
++        {photoObjects.length>0&&<details className="ev-c3d-more"><summary>사진 구조물 {photoObjects.length}개</summary><div><small>사진에서 추정한 형상 · 실제 크기 미확인</small>{photoObjects.map(p=><button key={p.id} disabled={running} onClick={()=>useStore.getState().select(p.id)}>{String(p.properties?.label||p.id)}</button>)}</div></details>}
++        </CompactMenu>
++        <CompactMenu label="추가 도구">
+             <button onClick={() => useOscilloscopeStore.getState().toggleOscilloscope()}>
+               파형 보기
+             </button>
+@@ -331,8 +322,7 @@
+             </button>
+             <button onClick={onEdit}>기존 2D 편집기 열기</button>
+             <a href="https://github.com/mfranzon/circuitiny" target="_blank" rel="noreferrer">Circuitiny 3D editor · MIT</a>
+-          </div>
+-        </details>
++        </CompactMenu>
+       </div>
+   );
+   return (
+diff --git a/frontend/src/components/editor/EditorToolbar.tsx b/frontend/src/components/editor/EditorToolbar.tsx
+--- a/frontend/src/components/editor/EditorToolbar.tsx
++++ b/frontend/src/components/editor/EditorToolbar.tsx
+@@ -1,3 +1,4 @@
++import {CompactMenu} from '../CompactMenu';
+ import { useState, useCallback, useRef, useEffect } from 'react';
+ import { shouldAutoRunPhoto } from './embeddedPhotoAutoRun';
+ import {captureAssemblyVisual} from '../circuitiny/assemblyScene';
+@@ -1814,15 +1815,18 @@
+     return () => offs.forEach((off) => off());
+   }, []);
+ 
++  const compactRunLabel=!ready ? '회로 불러오는 중…' : motionMode ? '▶ 운동 미리보기' : verifying ? (functionalChecking?'동작 시험 중…':'회로 확인 중…') : compiling ? '코드 준비 중…' : running || anyBoardRunning ? '● 실행 중' : '▶ 시뮬레이션 실행';
+   return (
+     <>
+       {compact && <div className="ev-run-controls">
+-        <button className="ev-run" onClick={() => isMultiBoard ? handleRunAll() : handleRun()}
++        <button className="ev-run" aria-label={compactRunLabel} title={compactRunLabel} onClick={() => isMultiBoard ? handleRunAll() : handleRun()}
+           disabled={!ready || compiling || verifying || (!motionMode && (isBoardless ? digitalRunning : isMultiBoard ? compileAllRunning || anyBoardRunning : running || !activeBoard))}>
+-          {!ready ? '회로 불러오는 중…' : motionMode ? '▶ 운동 미리보기' : verifying ? (functionalChecking?'동작 시험 중…':'회로 확인 중…') : compiling ? '코드 준비 중…' : running || anyBoardRunning ? '● 실행 중' : '▶ 시뮬레이션 실행'}
++          {compactRunLabel.replace('시뮬레이션 실행','실행').replace('운동 미리보기','운동').replace('회로 불러오는 중…','불러오는 중…')}
+         </button>
+         <button onClick={handleStop} disabled={isBoardless ? !digitalRunning : !anyBoardRunning}>■ 정지</button>
++        <CompactMenu label={message?.type==='error'?'실행 오류':'실행 상태'} triggerText={message?.type==='error'?'오류':'상태'} className={message?.type==='error'?'ev-runtime-error':''}>
+         <span className="ev-runtime" role="status">{message?.type==='error' ? message.text : motionMode ? '회로와 코드를 편집한 뒤 운동 모델을 확인하세요 · 전기 동작 검증은 별도' : verifying ? (functionalChecking?'생성 코드의 입력·출력 동작 시험 중':'배선 검사 중') : compiling ? '코드를 보드 실행 파일로 변환합니다' : running || anyBoardRunning ? '가상 보드가 동작하고 있습니다' : ready && !autoRunAllowed && new URLSearchParams(window.location.search).get('autorun')==='1' ? '저장된 편집 내용을 복원했습니다. 확인 후 실행을 누르세요.' : '실행하면 코드를 자동으로 준비합니다'}</span>
++        </CompactMenu>
+       </div>}
+       {!compact && <div className="editor-toolbar-wrapper" style={{ position: 'relative' }}>
+         <div className="editor-toolbar" ref={toolbarRef}>
+diff --git a/frontend/src/components/editor/EditorMenuBar.tsx b/frontend/src/components/editor/EditorMenuBar.tsx
+--- a/frontend/src/components/editor/EditorMenuBar.tsx
++++ b/frontend/src/components/editor/EditorMenuBar.tsx
+@@ -36,6 +36,7 @@
+   type EditorCommandId,
+ } from '../../lib/editorCommands';
+ import './EditorMenuBar.css';
++import {compactMenuPosition} from '../compactMenuPosition';
+ 
+ type Item =
+   | {
+@@ -70,6 +71,18 @@
+   const { t } = useTranslation();
+   const [open, setOpen] = useState<'file' | 'edit' | 'view' | 'account' | 'help' | null>(null);
+   const rootRef = useRef<HTMLDivElement>(null);
++  useEffect(()=>{
++    if(!open || !rootRef.current?.closest('.ev-compact-tools') || rootRef.current.closest('.ev-compact-panel'))return;
++    const position=()=>{
++      const trigger=rootRef.current?.querySelector<HTMLElement>('.emb-trigger[aria-expanded=true]');
++      const panel=rootRef.current?.querySelector<HTMLElement>('.emb-menu');
++      if(!trigger||!panel)return;
++      const box=compactMenuPosition(trigger.getBoundingClientRect(),{width:window.innerWidth,height:window.innerHeight},300);
++      Object.assign(panel.style,{position:'fixed',left:box.left+'px',top:box.top+'px',right:'auto',bottom:'auto',width:box.width+'px',minWidth:'0',maxHeight:box.maxHeight+'px',overflow:'auto',zIndex:'900'});
++    };
++    position();window.addEventListener('resize',position);window.addEventListener('scroll',position,true);
++    return()=>{window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true);};
++  },[open]);
+ 
+   // Re-render when owners (un)register their commands.
+   useSyncExternalStore(subscribeEditorCommands, getEditorCommandsVersion);
+diff --git a/frontend/src/components/CompactMenu.tsx b/frontend/src/components/CompactMenu.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/CompactMenu.tsx
+@@ -0,0 +1,20 @@
++import {useEffect,useRef,type ReactNode} from 'react';
++import {compactMenuPosition} from './compactMenuPosition';
++
++/** Fixed popovers escape horizontal toolbars; opening a menu never resizes the canvas. */
++export function CompactMenu({label,triggerText=label,children,className=''}:{label:string;triggerText?:string;children:ReactNode;className?:string}) {
++ const ref=useRef<HTMLDetailsElement>(null);
++ const position=()=>{
++  const root=ref.current;if(!root?.open)return;
++  const rect=root.querySelector('summary')!.getBoundingClientRect();
++  const {left,top,width}=compactMenuPosition(rect,{width:window.innerWidth,height:window.innerHeight});
++  root.style.setProperty('--ev-menu-left',left+'px');root.style.setProperty('--ev-menu-top',top+'px');root.style.setProperty('--ev-menu-width',width+'px');
++ };
++ useEffect(()=>{
++  const close=(event:PointerEvent)=>{if(ref.current?.open&&!ref.current.contains(event.target as Node))ref.current.open=false;};
++  const key=(event:KeyboardEvent)=>{if(event.key==='Escape'&&ref.current?.open){ref.current.open=false;ref.current.querySelector('summary')?.focus();event.stopPropagation();}};
++  document.addEventListener('pointerdown',close);document.addEventListener('keydown',key);window.addEventListener('resize',position);window.addEventListener('scroll',position,true);
++  return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',key);window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true);};
++ },[]);
++ return <details ref={ref} className={'ev-compact-menu '+className} onToggle={position}><summary aria-label={label} title={label}>{triggerText}<span aria-hidden="true">⌄</span></summary><div className="ev-compact-panel" aria-label={label+' 도구'}>{children}</div></details>;
++}
+diff --git a/frontend/src/components/compactMenuPosition.ts b/frontend/src/components/compactMenuPosition.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/compactMenuPosition.ts
+@@ -0,0 +1,7 @@
++/** Keep floating tools inside the viewport even when their trigger is scrolled. */
++export function compactMenuPosition(rect:{left:number;bottom:number},viewport:{width:number;height:number},preferredWidth=360){
++ const width=Math.max(0,Math.min(preferredWidth,viewport.width-24));
++ const left=Math.max(12,Math.min(rect.left,viewport.width-width-12));
++ const top=Math.max(12,Math.min(rect.bottom+6,viewport.height-100));
++ return {left,top,width,maxHeight:Math.max(0,viewport.height-top-12)};
++}
+diff --git a/frontend/src/__tests__/compact-tools.test.ts b/frontend/src/__tests__/compact-tools.test.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/__tests__/compact-tools.test.ts
+@@ -0,0 +1,32 @@
++// @vitest-environment jsdom
++import {it,expect,vi} from 'vitest';
++import {act,createElement} from 'react';
++import {createRoot} from 'react-dom/client';
++import {CompactMenu} from '../components/CompactMenu';
++import {compactMenuPosition} from '../components/compactMenuPosition';
++
++it('keeps floating menus inside desktop and phone widths and below their trigger',()=>{
++ for(const width of [360,640,1024,1440])for(const left of [-200,12,width-20]){
++  const box=compactMenuPosition({left,bottom:65},{width,height:800});
++  expect(box.left).toBeGreaterThanOrEqual(12);expect(box.left+box.width).toBeLessThanOrEqual(width-12);
++  expect(box.top).toBe(71);expect(box.maxHeight+box.top).toBeLessThanOrEqual(788);
++ }
++ const nearBottom=compactMenuPosition({left:20,bottom:790},{width:360,height:800});
++ expect(nearBottom.top+nearBottom.maxHeight).toBe(788);
++});
++
++it('preserves action handlers and closes floating tools on Escape or outside click',async()=>{
++ vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
++ const host=document.createElement('div');document.body.append(host);const root=createRoot(host),action=vi.fn();
++ try{
++  await act(async()=>root.render(createElement(CompactMenu,{label:'편집'},createElement('button',{onClick:action},'복사'))));
++  const details=host.querySelector('details')!,summary=host.querySelector('summary')!;
++  await act(async()=>{details.open=true;details.dispatchEvent(new Event('toggle'));});
++  expect(details.style.getPropertyValue('--ev-menu-width')).toBe('360px');
++  await act(async()=>host.querySelector('button')!.click());expect(action).toHaveBeenCalledOnce();expect(details.open).toBe(true);
++  await act(async()=>{summary.focus();summary.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));});
++  expect(details.open).toBe(false);expect(document.activeElement).toBe(summary);
++  await act(async()=>{details.open=true;document.body.dispatchEvent(new Event('pointerdown',{bubbles:true}));});
++  expect(details.open).toBe(false);
++ }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals();}
++});

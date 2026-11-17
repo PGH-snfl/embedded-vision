@@ -45,7 +45,10 @@ if [[ ! -d services/editor/vendor/velxio/.git ]]; then
   git -C services/editor/vendor/velxio apply ../../patches/velxio-toolbar-cards.patch
   git -C services/editor/vendor/velxio apply ../../patches/velxio-independent-editor.patch
   git -C services/editor/vendor/velxio apply ../../patches/velxio-arduino-lessons.patch
+  git -C services/editor/vendor/velxio apply ../../patches/velxio-compact-toolbars.patch
 fi
+# Check the newest patch first because it changes context used by older patches.
+if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/velxio-compact-toolbars.patch 2>/dev/null; then
 # A later patch can alter earlier patch context. Check the newest state first.
 if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/velxio-arduino-lessons.patch 2>/dev/null; then
   if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/velxio-independent-editor.patch 2>/dev/null; then
@@ -60,6 +63,13 @@ if ! git -C services/editor/vendor/velxio apply --reverse --check ../../patches/
     git -C services/editor/vendor/velxio apply ../../patches/velxio-arduino-lessons.patch
   else
     echo '학습 가이드 패치 충돌: 기존 변경을 보존했습니다. 벤더 백업·재구성 절차를 확인하세요.' >&2
+    exit 1
+  fi
+fi
+  if git -C services/editor/vendor/velxio apply --check ../../patches/velxio-compact-toolbars.patch; then
+    git -C services/editor/vendor/velxio apply ../../patches/velxio-compact-toolbars.patch
+  else
+    echo '도구 모음 패치 충돌: 기존 변경을 보존했습니다. 벤더 백업·재구성 절차를 확인하세요.' >&2
     exit 1
   fi
 fi
